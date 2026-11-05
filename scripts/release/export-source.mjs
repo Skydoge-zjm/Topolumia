@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const rootFiles = new Set([
-  ".gitattributes", ".gitignore", ".node-version", "README.md", "AGENTS.md", "CLAUDE.md", "DESIGN.md", "LICENSE",
+  ".gitattributes", ".gitignore", ".node-version", "README.md", "AGENTS.md", "CLAUDE.md", "DESIGN.md", "CONTRIBUTING.md", "SECURITY.md", "LICENSE",
   "package.json", "package-lock.json", "tsconfig.backend.json",
   "tsconfig.backend.check.json", "eslint.backend.config.js",
 ]);
@@ -27,8 +27,8 @@ function included(relative, directory) {
     parts.length === 2 && parts[1] === "README.md" && !directory || documentationSections.has(parts[1]);
   if (directory) return true;
   if (parts[0] === "config") return parts.length === 2 && parts[1].endsWith(".example.json");
-  // Markdown under fixtures is synthetic research input used by the app/tests.
-  if (/\.(?:md|mdx|rst)$/i.test(relative) && !relative.startsWith("fixtures/research/") && !relative.startsWith("src/agent/skills/topolumia-paper-reading/")) return false;
+  // Public GitHub templates, synthetic inputs and bundled Agent guidance ship with source.
+  if (/\.(?:md|mdx|rst)$/i.test(relative) && !relative.startsWith(".github/") && !relative.startsWith("fixtures/research/") && !relative.startsWith("src/agent/skills/topolumia-paper-reading/")) return false;
   return !["scripts/align_wordmark_colors.py", "scripts/clean_wordmark.py"].includes(relative);
 }
 

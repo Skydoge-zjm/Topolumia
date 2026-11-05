@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 首次使用 / Getting started
+    url: https://github.com/Skydoge-zjm/Topolumia/blob/main/docs/playbooks/getting-started.md
+    about: 从启动、创建项目到保存材料与审阅 Agent 提议。
+  - name: 安全问题 / Security reports
+    url: https://github.com/Skydoge-zjm/Topolumia/blob/main/SECURITY.md
+    about: 通过私密渠道报告疑似越权、凭据泄露或其他安全问题。

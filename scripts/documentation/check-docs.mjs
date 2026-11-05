@@ -67,6 +67,10 @@ export async function checkDocumentation(root = sourceRoot) {
     if (await exists(file)) files.push(file);
     else errors.push(`缺少入口：${name}`);
   }
+  for (const name of ["DESIGN.md", "CONTRIBUTING.md", "SECURITY.md", ".github/PULL_REQUEST_TEMPLATE.md"]) {
+    const file = path.join(root, name);
+    if (await exists(file)) files.push(file);
+  }
   if (hasDocumentation) {
     const required = ["README.md", "product/overview.md", "product/business", "product/requirements",
       "technical/overview.md", "technical/architecture", "technical/modules", "technical/decisions",
