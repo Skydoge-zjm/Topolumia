@@ -2,6 +2,8 @@
 
 本地优先的科研工作台：连接 Codex、Claude Code 和 OpenCode，通过 MCP 读写科研上下文，管理研究拓扑、实验与来源。Agent 提出的变更经人工审阅后进入正式记录。
 
+项目处于探索开发阶段，当前主要面向本机使用，功能和数据结构仍在迭代。第一次使用可按 [入门教程](docs/playbooks/getting-started.md) 完成从空项目到研究记录的流程。
+
 ## 启动
 
 需要 **Node.js 22.13+（22 / 24 LTS）**、npm 和 Git。
@@ -56,3 +58,7 @@ npm test
 `npm run release:source` 导出当前源码与正式文档到 `artifacts/github/topolumia/`，排除本地任务记录、第三方参考材料、运行数据和 Git 历史。首次公开发布可从此目录创建新仓库。
 
 许可证：[MIT](LICENSE)。第三方依赖与标识保留各自的许可及权利声明。
+
+## 参与项目
+
+[贡献指南](CONTRIBUTING.md) 说明任务分支、PR 和验证约定；代码由维护者审阅并决定合并。欢迎提交 [Bug 报告](https://github.com/Skydoge-zjm/Topolumia/issues/new?template=bug_report.yml) 和 [功能建议](https://github.com/Skydoge-zjm/Topolumia/issues/new?template=feature_request.yml)。疑似漏洞按 [安全报告说明](SECURITY.md) 私下报告。

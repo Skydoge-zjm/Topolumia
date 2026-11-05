@@ -54,6 +54,23 @@ test("formal documentation cannot depend on ignored files even when they exist l
   assert.equal(errors.filter(error => error.includes("不能依赖本机资料")).length, 2);
 });
 
+test("community and design entries are checked for broken links and local-only dependencies", async t => {
+  const { root, write } = await documentedProject(t);
+  await write("CONTRIBUTING.md", "[开发](docs/playbooks/development.md)\n");
+  await write("SECURITY.md", "[维护](docs/playbooks/documentation.md)\n");
+  await write("DESIGN.md", "[本机参考](docs/references/private.md)\n");
+  await write("docs/references/private.md", "# 本机资料\n");
+  await write(".github/PULL_REQUEST_TEMPLATE.md", "[贡献](../CONTRIBUTING.md)\n");
+  const errors = (await checkDocumentation(root)).errors;
+  assert.ok(errors.some(error => error.startsWith("CONTRIBUTING.md") && error.includes("链接不存在")));
+  assert.ok(errors.some(error => error.startsWith("DESIGN.md") && error.includes("不能依赖本机资料")));
+  assert.ok(!errors.some(error => error.startsWith("SECURITY.md") || error.startsWith(".github/")));
+  await write("docs/playbooks/development.md", "# 开发\n");
+  await write("docs/README.md", "[产品](product/overview.md)\n[技术](technical/overview.md)\n[维护](playbooks/documentation.md)\n[开发](playbooks/development.md)\n");
+  await write("DESIGN.md", "# 界面约定\n");
+  assert.deepEqual((await checkDocumentation(root)).errors, []);
+});
+
 test("broken code links, stale anchors, orphan knowledge and bloated shared entries fail", async t => {
   const { root, write } = await documentedProject(t);
   await write("docs/product/overview.md", "# 科研对象\n[代码](../../src/deleted.ts)\n[过时章节](#不存在)\n");

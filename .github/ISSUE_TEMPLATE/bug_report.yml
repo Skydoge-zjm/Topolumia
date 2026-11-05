@@ -1,0 +1,58 @@
+name: Bug 报告 / Bug report
+description: 报告可复现的功能、界面或安装问题。
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请搜索已有 issue，并尽量使用空项目和合成材料复现。
+        不要上传密钥、Cookie、整个 runtime 或未公开研究材料。
+        疑似漏洞请按 [安全报告说明](https://github.com/Skydoge-zjm/Topolumia/blob/main/SECURITY.md) 私下报告。
+  - type: input
+    id: revision
+    attributes:
+      label: 版本或提交号 / Version or commit
+      description: 可运行 git rev-parse --short HEAD；使用发布包时填写包版本。
+      placeholder: "例如：21e4fa5 / v0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境 / Environment
+      description: 系统、Node.js、npm；界面问题补充浏览器，Agent 问题补充 CLI 版本、模型及认证状态。
+      placeholder: |
+        OS:
+        Node.js / npm:
+        Browser, if relevant:
+        Agent CLI / version / model, if relevant:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 写明项目初始状态、操作顺序和最小示例；如需特定配置，仅提供脱敏字段。
+      placeholder: |
+        1. 在空项目中……
+        2. 点击或运行……
+        3. 出现……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果 / Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 日志、截图或最小示例 / Evidence
+      description: 仅附相关错误及其前后少量日志。截图检查账号、路径、主机和研究内容是否需要脱敏；不需要的字段可以留空。

@@ -6,6 +6,8 @@
 
 | 你要做什么 | 优先阅读 | 何时继续展开 |
 | --- | --- | --- |
+| 第一次使用工作台 | [入门教程](playbooks/getting-started.md) | 从空项目建立问题、材料、候选审阅和记录 |
+| 报告问题、提交贡献或安全报告 | [贡献指南](../CONTRIBUTING.md) · [安全报告](../SECURITY.md) | 开发与验证复用下面的专题入口 |
 | 了解产品、用户与范围 | [产品总览](product/overview.md) | 需要具体规则时进入业务；准备验收时进入需求 |
 | 理解整个系统 | [技术总览](technical/overview.md) | 按数据流进入相关模块，不必遍历目录 |
 | 设计科研节点 | [科研模型](product/business/research-model.md) → [工作区需求](product/requirements/research-workspace.md) | 修改实现时读 [节点模块](technical/modules/research-nodes/README.md) |
@@ -38,7 +40,7 @@
 
 ## 公开范围与维护
 
-本入口、product、technical 和 playbooks 是正式项目文档，与代码在同一 Git 仓库维护并随源码公开。[根开发入口](../AGENTS.md) 保持简短，项目知识按任务从本页展开。
+本入口、product、technical 和 playbooks 是正式项目文档，与代码在同一 Git 仓库维护并随源码公开。根目录的贡献与安全说明面向外部参与者；[根开发入口](../AGENTS.md) 保持简短，项目知识按任务从本页展开。
 
 docs/work 下的任务记录和 docs/references 下的第三方参考资料仅保留本机，由 Git 与源码导出排除。正式文档不能依赖这些目录中的文件；有长期价值的结论应写入对应产品、技术或操作文档。
 
