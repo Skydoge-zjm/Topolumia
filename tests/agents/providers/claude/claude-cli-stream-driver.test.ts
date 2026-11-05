@@ -8,19 +8,20 @@ import { ClaudeCliStreamDriver } from "../../../../src/adapters/agents/claude/cl
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const claudeFixture = path.join(root, "fixtures", "native", "claude-cli.js");
 
-async function permissionFixture(t, timeout = 2000) {
+async function permissionFixture(t, timeout = 5000) {
   const events = [];
   const driver = new ClaudeCliStreamDriver({ id: "claude-approval", label: "Claude Code", provider: "claude", command: process.execPath, launcherArgs: [claudeFixture], model: "gpt-6-luna" }, { requestTimeoutMs: timeout, onEvent: event => events.push(event) });
   t.after(() => driver.close()); await driver.start({ cwd: root });
-  const wait = async (count = 1) => { for (let n = 0; n < 250; n++) { const a = events.filter(e => e.type === "approval.requested"); if (a.length >= count) return a; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error("Missing native permission"); };
+  const wait = async (count = 1) => { for (let n = 0; n < 1000; n++) { const a = events.filter(e => e.type === "approval.requested"); if (a.length >= count) return a; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error("Missing native permission"); };
   return { driver, events, wait };
 }
 
 test("Claude duplex approval waits beyond execution timeout and carries session-only grants into the next CLI process", async t => {
-  const f = await permissionFixture(t, 1000);
+  const timeout = 5000;
+  const f = await permissionFixture(t, timeout);
   const result = f.driver.prompt({ turnId: "approval", content: [{ type: "text", text: "approval-check" }] });
   const [a] = await f.wait();
-  await new Promise(resolve => setTimeout(resolve, 1150));
+  await new Promise(resolve => setTimeout(resolve, timeout + 150));
   await f.driver.resolvePermission(a.payload.requestId, "allow_session");
   assert.equal((await result).stopReason, "end_turn");
   assert.ok(f.events.some(e => e.type === "assistant.message.completed" && e.payload.text.includes('"behavior":"allow"')));

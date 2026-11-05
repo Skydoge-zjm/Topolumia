@@ -23,7 +23,7 @@ export function approvalRisk(approval: Partial<AgentApproval>, workspaceRoot: st
     const directory = approval.cwd === undefined || approval.cwd === null ? root : path.resolve(root, approval.cwd);
     const inside = paths.every(file => {
       if (typeof file !== "string" || !file || file.includes("\0") || /[*?{}]/.test(file)) return false;
-      if (process.platform !== "win32" && path.win32.isAbsolute(file)) return false;
+      if (process.platform !== "win32" && path.win32.isAbsolute(file) && !path.isAbsolute(file)) return false;
       const relative = path.relative(root, actualPath(path.resolve(directory, file)));
       return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
     });

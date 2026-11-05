@@ -127,7 +127,14 @@ test("settings API applies a patch without requiring a config-file edit", async 
   } finally {
     app?.sourceRefresh?.stop();
     await app?.agentSessionGateway?.closeAll?.();
+    await app?.agentMedia?.close();
+    await app?.researchCommands?.assets.close();
+    await app?.toolEnvironment?.catalog.close();
+    await app?.toolEnvironment?.research.close();
+    await app?.sshEnvironments?.close();
+    await app?.sshConnections?.close();
     if (app?.server) await new Promise((resolve) => app.server.close(resolve));
-    await rm(root, { recursive: true, force: true });
+    app?.collaboration?.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5 });
   }
 });

@@ -547,7 +547,7 @@ export class SshConnectionService {
         !methods || methods.includes(name === "agent" ? "publickey" : name);
       if (
         !partial &&
-        target.auth !== "password" &&
+        ["agent", "system"].includes(target.auth) &&
         target.agent &&
         !triedAgent &&
         allowed("agent")

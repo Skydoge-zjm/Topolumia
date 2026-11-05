@@ -50,6 +50,14 @@ npm run docs:check
 
 实验集成单独使用 package.json 中 setup:experiment-test-env 与 test:experiment-integration；其依赖及真实端点不是普通回归测试前提。
 
+## GitHub Actions
+
+[CI](../../.github/workflows/ci.yml) 在 main 推送和拉取请求时只运行一套 Ubuntu / Node.js 22 检查：安装、文档链接、类型、lint、前端测试、构建与后端回归。同一分支、同一环境的新提交会取消旧任务，避免重复消耗 runner。
+
+开发阶段不自动展开操作系统与 Node.js 版本矩阵。需要兼容性验证时，在 Actions 的 Run workflow 中选择 Windows 或 Node.js 24，仍然每次只运行所选的一套环境。发布前勾选 source release and dependency audit，额外检查文档检查器、源码导出边界、导出目录文档及高危依赖公告。
+
+后端回归里的 SSH 使用本机临时服务和合成密钥，原生 Agent 使用协议 fixture；这些测试不需要真实模型账号或远程科研服务器。测试路径应按实际文件系统解析，关闭拥有的数据库与异步资源后才能删除临时目录。
+
 ## 结果表述
 
 区分类型检查、构建、逻辑测试、浏览器行为与真实科研质量。后端 [转译配置](../../tsconfig.backend.json) 启用 noCheck；[检查配置](../../tsconfig.backend.check.json) 只覆盖指定关键边界，不宣称完整 strict。

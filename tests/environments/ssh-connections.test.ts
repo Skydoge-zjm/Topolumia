@@ -26,7 +26,7 @@ async function fixture(
   {
     authentication = (ctx) => ctx.accept(),
     vault = { available: false },
-    hostKey = ssh2.utils.generateKeyPairSync("ed25519").private,
+    hostKey = ssh2.utils.generateKeyPairSync("ecdsa", { bits: 256 }).private,
   } = {},
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), "topolumia-ssh-test-"));
@@ -203,7 +203,15 @@ test("SSH password stays out of public profiles and is remembered only on explic
 });
 
 test("SSH encrypted private keys request their passphrase without exposing key content", async (t) => {
-  const pair = ssh2.utils.generateKeyPairSync("ed25519", {
+  let agentRequests = 0;
+  class UnusedAgent extends ssh2.BaseAgent {
+    getIdentities(callback) {
+      agentRequests++;
+      callback(new Error("The explicitly selected key must not use an SSH agent"));
+    }
+  }
+  const pair = ssh2.utils.generateKeyPairSync("ecdsa", {
+    bits: 256,
     passphrase: "fixture-key-passphrase",
     cipher: "aes256-cbc",
   });
@@ -211,6 +219,8 @@ test("SSH encrypted private keys request their passphrase without exposing key c
     authentication: (ctx) =>
       ctx.method === "publickey" ? ctx.accept() : ctx.reject(["publickey"]),
   });
+  const resolveTarget = f.service.target.bind(f.service);
+  f.service.target = async (profile) => ({ ...await resolveTarget(profile), agent: new UnusedAgent() });
   const keyPath = path.join(f.root, "generated-key");
   await writeFile(keyPath, pair.private, { mode: 0o600 });
   const p = await f.service.save(
@@ -234,6 +244,7 @@ test("SSH encrypted private keys request their passphrase without exposing key c
     values: ["fixture-key-passphrase"],
   });
   await f.wait((p) => p.status === "connected");
+  assert.equal(agentRequests, 0);
   assert.equal(JSON.stringify(await f.read()).includes(pair.private), false);
 });
 
@@ -317,7 +328,7 @@ test("SSH alias parsing uses argv and returns sanitized resolution", async () =>
 });
 
 test("SSH respects revoked system host keys and refuses them without a trust prompt", async (t) => {
-  const pair = ssh2.utils.generateKeyPairSync("ed25519");
+  const pair = ssh2.utils.generateKeyPairSync("ecdsa", { bits: 256 });
   const f = await fixture(t, { hostKey: pair.private });
   f.service.commandRunner = async () => ({
     ok: true,

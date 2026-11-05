@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,7 +23,7 @@ async function waitFor(
   throw new Error("Diagnostic fixture did not settle");
 }
 async function fixture(t) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "topolumia-catalog-"));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "topolumia-catalog-")));
   const prefixes = [
     path.join(root, "base"),
     path.join(root, "env with spaces"),

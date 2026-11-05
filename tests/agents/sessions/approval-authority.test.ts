@@ -45,6 +45,8 @@ test("native permission escalation checks current role permissions before reachi
     assert.equal(await approve(fixture.requestId, "reject", "reject"), 200);
   }
   emit({ type: "approval.requested", turnId: turn.id, payload: { requestId: "project-edit", category: "file-change", paths: [path.join(app.config.project.root, "new.py")], options } });
+  assert.equal(approvalRisk({ category: "file-change", paths: [path.join(app.config.project.root, "new.py")] }, app.config.project.root), "project-write");
+  if (process.platform !== "win32") assert.equal(approvalRisk({ category: "file-change", paths: ["C:\\external\\new.py"] }, app.config.project.root), "elevated");
   assert.equal(await approve("project-edit"), 200);
   const broadOptions = [{ optionId: "session", kind: "allow_session" }, { optionId: "always", kind: "allow_always" }, { optionId: "deny-always", kind: "reject_always" }];
   emit({ type: "approval.requested", turnId: turn.id, payload: { requestId: "broad-edit", category: "file-change", paths: [path.join(app.config.project.root, "new.py")], options: [...options, ...broadOptions] } });
