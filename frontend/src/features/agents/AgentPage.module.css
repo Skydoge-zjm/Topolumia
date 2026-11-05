@@ -1,0 +1,15 @@
+.page {
+  min-height: 0;
+}
+
+.title {
+  align-items: center;
+}
+
+.title h1 {
+  letter-spacing: -0.02em;
+}
+
+.title button {
+  white-space: nowrap;
+}

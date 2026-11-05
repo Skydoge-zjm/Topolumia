@@ -1,0 +1,18 @@
+export type ResearchLink = { label: string; url: string; kind: string };
+export type Metric = { name: string; value: number; unit: string; split: string; direction: string };
+export type ResearchObjectRef = { kind: "node" | "group"; id: string };
+export type GroupMember = { nodeId: string; role?: string; note?: string };
+export type Group = { id: string; core: { nodeName: string; summary?: string; category?: string; tags?: string[] }; parentId: string | null; members: GroupMember[]; primaryRelations: { incomingRelationId?: string; outgoingRelationId?: string }; revision: number; membershipRevision: number; relationRevision: number };
+export type ResearchNode = { id: string; kind: string; code?: string; label: string | { zh?: string; en?: string }; summary: string | { zh?: string; en?: string }; status: string; data?: Record<string, any> };
+export type RecordAction = { id?: string; text: string; assignee: string; dueDate: string | null; status: string };
+export type ResearchRecord = { id: string; type: string; title: string; scheduledAt: string | null; occurredAt: string | null; timezone: string;
+  participants: string[]; agenda: string; body: string; decisions: string[]; openQuestions: string[]; actions: RecordAction[]; links: ResearchLink[];
+  linkedNodes: Array<Pick<ResearchNode, "id" | "kind" | "label" | "summary"> & { version: string; capturedAt: string }>;
+  seriesId: string | null; status: string; revision: number; createdAt: string; updatedAt: string; author: { name: string }; excerpt?: string };
+export type ResearchSeries = { id: string; title: string; type: string; participants: string[]; frequency: string; interval: number; timezone: string; startDate: string; localTime: string; active: boolean; revision: number };
+export const text = (value: ResearchNode["label"] | undefined, en = false) => typeof value === "string" ? value : value?.[en ? "en" : "zh"] ?? value?.zh ?? value?.en ?? "";
+export const lines = (value: string) => value.split(/\r?\n/);
+export const safeUrl = (value: string) => { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; } };
+export const nodeUrl = (id: string) => `/topology/nodes/${encodeURIComponent(id)}`;
+export const objectUrl = (owner: ResearchObjectRef) => owner.kind === "group" ? `/topology/groups/${encodeURIComponent(owner.id)}` : nodeUrl(owner.id);
+export const objectBase = (owner: ResearchObjectRef) => `/api/research-objects/${owner.kind}/${encodeURIComponent(owner.id)}`;

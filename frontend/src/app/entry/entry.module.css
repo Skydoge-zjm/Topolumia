@@ -1,0 +1,331 @@
+/* Entry page: a single green field, the product statement, and a miniature topology. */
+.entry {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  background: var(--color-green);
+  color: #f5fbf6;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px clamp(20px, 5vw, 64px);
+}
+.wordmark {
+  display: block;
+  width: 150px;
+  height: 40px;
+  object-fit: cover;
+  object-position: center;
+}
+.spacer {
+  flex: 1;
+}
+.ghost {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 6px;
+  background: transparent;
+  color: #f5fbf6;
+  font-size: 14px;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.ghost:hover {
+  border-color: rgb(255 255 255 / 48%);
+  background: rgb(255 255 255 / 8%);
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: clamp(24px, 5vw, 72px);
+  width: min(1240px, 100%);
+  margin: 0 auto;
+  padding: clamp(24px, 6vh, 72px) clamp(20px, 5vw, 64px);
+}
+.copy h1 {
+  max-width: 16em;
+  margin: 0 0 20px;
+  word-break: keep-all;
+  text-wrap: balance;
+  color: #fff;
+  font: 650 clamp(24px, 3.6vw, 44px) / 1.2 var(--font-ui);
+  letter-spacing: -0.01em;
+}
+.copy p {
+  max-width: 34em;
+  margin: 0 0 32px;
+  color: #c4ddd2;
+  font-size: 16px;
+  line-height: 1.65;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 20px;
+}
+.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--color-green);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+.primary:hover {
+  background: var(--color-mint-pale);
+}
+.primary svg {
+  transition: transform 0.15s ease;
+}
+.primary:hover svg {
+  transform: translateX(2px);
+}
+.local {
+  color: #9cc3b3;
+  font-size: 12px;
+}
+.capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(20px, 3vw, 40px);
+  width: min(1240px, 100%);
+  margin: 0 auto;
+  padding: 32px clamp(20px, 5vw, 64px) 48px;
+  border-top: 1px solid rgb(255 255 255 / 12%);
+}
+.capabilities article {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+.capabilities svg {
+  color: #8fd3b6;
+}
+.capabilities h2 {
+  margin: 4px 0 0;
+  color: #fff;
+  font-size: 16px;
+}
+.capabilities p {
+  margin: 0;
+  color: #b3d0c3;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Miniature topology. Plot outlines and relations stay quiet; node dots carry family colour. */
+.illustration {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 420px;
+}
+.plot {
+  fill: rgb(255 255 255 / 4%);
+  stroke: rgb(255 255 255 / 22%);
+  stroke-dasharray: 4 4;
+}
+.plotTag {
+  fill: rgb(255 255 255 / 14%);
+}
+.node {
+  fill: #fbfdfb;
+}
+.relation {
+  fill: none;
+  stroke: #8fd3b6;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 8;
+  opacity: 0.7;
+  animation: flow 5.5s linear infinite;
+}
+@keyframes flow {
+  to {
+    stroke-dashoffset: -56;
+  }
+}
+/* Login: brand field on the left, a plain form on the canvas colour on the right. */
+.login {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(400px, 0.9fr);
+  min-height: 100vh;
+  background: var(--color-canvas);
+}
+.loginArt {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 24px;
+  padding: 24px clamp(24px, 4vw, 56px);
+  background: var(--color-green);
+}
+.loginArt .illustration {
+  align-self: center;
+}
+.loginMain {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 72px clamp(20px, 5vw, 64px);
+}
+.back {
+  position: absolute;
+  top: 24px;
+  left: clamp(20px, 5vw, 64px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: 14px;
+  text-decoration: none;
+}
+.back:hover {
+  color: var(--color-green2);
+}
+.form {
+  display: grid;
+  gap: 16px;
+  width: min(360px, 100%);
+}
+.formMark {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.form h1 {
+  margin: 0 0 8px;
+  color: var(--color-ink);
+  font: 650 24px / 1.25 var(--font-ui);
+}
+.field {
+  display: grid;
+  gap: 6px;
+  color: var(--color-ink-soft);
+  font-size: 14px;
+}
+.field input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--color-ink);
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field input:focus {
+  border-color: var(--color-mint);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-mint) 22%, transparent);
+}
+.password {
+  position: relative;
+  display: block;
+}
+.password input {
+  padding-right: 44px;
+}
+.password button {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-muted);
+  transform: translateY(-50%);
+}
+.password button:hover {
+  background: var(--color-mint-soft);
+  color: var(--color-green2);
+}
+.hint {
+  margin-top: -10px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #fdecea;
+  color: #a12f25;
+  font-size: 14px;
+}
+.submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-green);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s ease;
+}
+.submit:hover:not(:disabled) {
+  background: var(--color-green2);
+}
+.submit:disabled {
+  opacity: 0.7;
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+  .hero .illustration {
+    max-height: 280px;
+  }
+  .capabilities {
+    grid-template-columns: 1fr;
+  }
+  .login {
+    grid-template-columns: 1fr;
+  }
+  .loginArt {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .relation,
+  .spin {
+    animation: none;
+  }
+  .primary svg,
+  .ghost,
+  .primary,
+  .submit,
+  .field input {
+    transition: none;
+  }
+}

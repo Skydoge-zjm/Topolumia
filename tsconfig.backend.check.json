@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.backend.json",
+  "compilerOptions": { "noCheck": false, "noEmit": true, "strict": false },
+  "include": [
+    "src/lib/errors.ts", "src/http/streams.ts", "src/domain/agents/**/*.ts", "src/domain/research/review-policy.ts",
+    "src/adapters/agents/shared/prompt-images.ts", "src/services/agents/agent-attachment-service.ts",
+    "src/services/agents/agent-image-service.ts", "src/services/agents/agent-history-store.ts",
+    "src/services/agents/agent-session-persistence.ts", "src/services/agents/session-checkpoint.ts",
+    "src/services/agents/agent-candidate-turns.ts", "src/services/agents/approval-policy.ts"
+  ]
+}

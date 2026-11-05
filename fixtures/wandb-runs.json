@@ -1,0 +1,38 @@
+{
+  "entity": "lab-local",
+  "project": "diffusion-sr-reproduction",
+  "runs": [
+    {
+      "id": "wb-g1-42",
+      "name": "G1 · degradation conditioning · seed 42",
+      "state": "finished",
+      "group": "G1",
+      "createdAt": "2026-08-16T01:10:00.000Z",
+      "finishedAt": "2026-08-16T04:18:00.000Z",
+      "config": {"conditioning": "degradation_encoder", "noise_schedule": "baseline", "seed": "42", "dataset": "DIV2K-valid-x4"},
+      "tags": ["reproduction", "conditioning-ablation"],
+      "summary": {"psnr": 27.08, "ssim": 0.774, "lpips": 0.189, "fid": 42.1},
+      "history": {
+        "psnr": [{"step": 0, "value": 22.4}, {"step": 10000, "value": 25.8}, {"step": 20000, "value": 26.7}, {"step": 30000, "value": 26.95}, {"step": 40000, "value": 27.02}, {"step": 50000, "value": 27.08}],
+        "lpips": [{"step": 0, "value": 0.46}, {"step": 10000, "value": 0.27}, {"step": 20000, "value": 0.22}, {"step": 30000, "value": 0.2}, {"step": 40000, "value": 0.193}, {"step": 50000, "value": 0.189}]
+      },
+      "artifacts": [{"path": "media/qualitative-grid.png", "kind": "image", "mimeType": "image/png", "size": 183440, "downloadable": true}]
+    },
+    {
+      "id": "wb-g2-42",
+      "name": "G2 · corrected schedule · seed 42",
+      "state": "finished",
+      "group": "G2",
+      "createdAt": "2026-08-17T01:10:00.000Z",
+      "finishedAt": "2026-08-17T04:24:00.000Z",
+      "config": {"conditioning": "degradation_encoder", "noise_schedule": "logsnr-corrected", "seed": "42", "dataset": "DIV2K-valid-x4"},
+      "tags": ["reproduction", "schedule-ablation"],
+      "summary": {"psnr": 27.52, "ssim": 0.786, "lpips": 0.193, "fid": 43.4},
+      "history": {
+        "psnr": [{"step": 0, "value": 22.4}, {"step": 10000, "value": 26.0}, {"step": 20000, "value": 26.9}, {"step": 30000, "value": 27.2}, {"step": 40000, "value": 27.4}, {"step": 50000, "value": 27.52}],
+        "lpips": [{"step": 0, "value": 0.46}, {"step": 10000, "value": 0.28}, {"step": 20000, "value": 0.23}, {"step": 30000, "value": 0.21}, {"step": 40000, "value": 0.2}, {"step": 50000, "value": 0.193}]
+      },
+      "artifacts": [{"path": "media/qualitative-grid.png", "kind": "image", "mimeType": "image/png", "size": 194820, "downloadable": true}]
+    }
+  ]
+}

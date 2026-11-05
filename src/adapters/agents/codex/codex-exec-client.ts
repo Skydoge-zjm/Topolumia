@@ -1,0 +1,212 @@
+import { spawn } from "node:child_process";
+import readline from "node:readline";
+import path from "node:path";
+import { AppError } from "../../../lib/errors.js";
+
+export function extractJsonObject(text) {
+  let candidate = String(text ?? "").trim();
+  if (candidate.startsWith("```")) {
+    candidate = candidate.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  }
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    throw new AppError("CODEX_OUTPUT_NOT_JSON", "Codex 没有返回可解析的 JSON 对象。", {
+      status: 422,
+      detail: { outputPreview: candidate.slice(0, 240) },
+    });
+  }
+  try {
+    return JSON.parse(candidate.slice(start, end + 1));
+  } catch (error) {
+    throw new AppError("CODEX_OUTPUT_NOT_JSON", "Codex 返回的 JSON 无效。", {
+      status: 422,
+      detail: { reason: error.message, outputPreview: candidate.slice(0, 240) },
+    });
+  }
+}
+
+export class CodexExecClient {
+  constructor(invocation, options = {}) {
+    this.invocation = invocation;
+    this.cwd = options.cwd;
+    this.timeoutMs = options.timeoutMs ?? 180_000;
+    this.maxOutputBytes = options.maxOutputBytes ?? 1_048_576;
+    this.protocolEvents = [];
+    this.agentMessages = [];
+    this.commandExecutions = [];
+    this.stderr = "";
+    this.rawBytes = 0;
+    this.threadId = null;
+    this.usage = null;
+    this.settled = false;
+  }
+
+  run(prompt) {
+    return new Promise((resolve, reject) => {
+      this.resolve = resolve;
+      this.reject = reject;
+      try {
+        this.child = spawn(this.invocation.executable, this.invocation.args, {
+          cwd: this.cwd,
+          env: process.env,
+          windowsHide: true,
+          shell: false,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (error) {
+        reject(new AppError("CODEX_PROCESS_ERROR", "无法启动 codex exec。", {
+          status: 503,
+          detail: { reason: error.message },
+          retryable: true,
+        }));
+        return;
+      }
+
+      this.reader = readline.createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+      this.reader.on("line", (line) => this.#onLine(line));
+      this.child.stderr.on("data", (chunk) => {
+        if (this.stderr.length < this.maxOutputBytes) {
+          this.stderr += chunk.toString("utf8").slice(0, this.maxOutputBytes - this.stderr.length);
+        }
+      });
+      this.child.on("error", (error) => this.#fail(new AppError("CODEX_PROCESS_ERROR", "codex exec 进程错误。", {
+        status: 503,
+        detail: { reason: error.message },
+        retryable: true,
+      })));
+      this.child.on("close", (code, signal) => {
+        if (this.settled) return;
+        if (code !== 0) {
+          this.#fail(new AppError("CODEX_EXEC_FAILED", "codex exec 未完成拓扑探索。", {
+            status: 502,
+            detail: { code, signal, protocolError: this.failureDetail ?? null, stderr: this.stderr.slice(-2_000) },
+            retryable: true,
+          }));
+          return;
+        }
+        this.#finish();
+      });
+      this.timer = setTimeout(() => {
+        this.child?.kill();
+        this.#fail(new AppError("CODEX_TURN_TIMEOUT", "codex exec 拓扑探索超时。", { status: 504, retryable: true }));
+      }, this.timeoutMs);
+      this.timer.unref?.();
+      this.child.stdin.end(prompt, "utf8");
+    });
+  }
+
+  #onLine(line) {
+    if (!line.trim() || this.settled) return;
+    this.rawBytes += Buffer.byteLength(line) + 1;
+    if (this.rawBytes > this.maxOutputBytes) {
+      this.child?.kill();
+      this.#fail(new AppError("CODEX_OUTPUT_TOO_LARGE", "codex exec 事件流超过 MVP 上限。", { status: 502 }));
+      return;
+    }
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch (error) {
+      this.child?.kill();
+      this.#fail(new AppError("CODEX_PROTOCOL_ERROR", "codex exec 输出了无效 JSONL。", {
+        status: 502,
+        detail: { reason: error.message, line: line.slice(0, 240) },
+      }));
+      return;
+    }
+    this.protocolEvents.push(event);
+    if (event.type === "error" || event.type === "turn.failed") {
+      this.failureDetail = event.error?.message ?? event.message ?? JSON.stringify(event);
+    }
+    if (event.type === "thread.started") this.threadId = event.thread_id ?? null;
+    if (event.type === "item.completed" && event.item?.type === "agent_message") {
+      this.agentMessages.push(event.item.text ?? "");
+    }
+    if (event.type === "item.completed" && event.item?.type === "command_execution") {
+      this.commandExecutions.push({
+        id: event.item.id ?? null,
+        command: event.item.command ?? "",
+        output: event.item.aggregated_output ?? "",
+        exitCode: event.item.exit_code,
+        status: event.item.status,
+      });
+    }
+    if (event.type === "turn.completed") this.usage = event.usage ?? null;
+  }
+
+  #finish() {
+    if (this.settled) return;
+    this.settled = true;
+    clearTimeout(this.timer);
+    this.reader?.close();
+    this.resolve({
+      threadId: this.threadId,
+      usage: this.usage,
+      agentMessages: this.agentMessages,
+      commandExecutions: this.commandExecutions,
+      protocolEvents: this.protocolEvents,
+      stderr: this.stderr,
+    });
+  }
+
+  #fail(error) {
+    if (this.settled) return;
+    this.settled = true;
+    clearTimeout(this.timer);
+    this.reader?.close();
+    this.reject(error);
+  }
+
+  interrupt() {
+    if (this.child && !this.child.killed) this.child.kill();
+  }
+}
+
+function includesRelative(text, relativePath) {
+  const normalized = relativePath.replaceAll("\\", "/").toLowerCase();
+  const candidate = String(text).replaceAll("\\", "/").toLowerCase();
+  return candidate.includes(normalized) || candidate.includes(path.posix.basename(normalized));
+}
+
+function displayCommand(command) {
+  const value = String(command ?? "");
+  const match = value.match(/-Command\s+'([\s\S]*)'$/);
+  return (match?.[1] ?? value).replaceAll("'\"'", "'").slice(0, 900);
+}
+
+export function deriveExplorationTrace(materialization, result, { maxCommands = 24 } = {}) {
+  const observedNodeIds = new Set();
+  const observedEdgeIds = new Set();
+  for (const execution of result.commandExecutions) {
+    const combined = `${execution.command}\n${execution.output}`;
+    const readsNodeArea = /topology[\\/]nodes/i.test(execution.command);
+    for (const [nodeId, relativeFile] of Object.entries(materialization.nodeFileById)) {
+      if (includesRelative(execution.command, relativeFile)
+        || (readsNodeArea && combined.includes(`\"id\": \"${nodeId}\"`))
+        || (readsNodeArea && combined.includes(`\"id\":\"${nodeId}\"`))) {
+        observedNodeIds.add(nodeId);
+      }
+    }
+    if (/edges\.jsonl/i.test(execution.command)) {
+      for (const edgeId of materialization.edgeIds) {
+        if (combined.includes(`\"id\":\"${edgeId}\"`) || combined.includes(`\"id\": \"${edgeId}\"`) || combined.includes(edgeId)) {
+          observedEdgeIds.add(edgeId);
+        }
+      }
+    }
+  }
+  return {
+    commands: result.commandExecutions.slice(0, maxCommands).map((item) => displayCommand(item.command)),
+    observedNodeIds: [...observedNodeIds],
+    observedEdgeIds: [...observedEdgeIds],
+    commandExecutions: result.commandExecutions.slice(0, maxCommands).map((item) => ({
+      id: item.id,
+      command: displayCommand(item.command),
+      exitCode: item.exitCode,
+      status: item.status,
+      outputPreview: item.output.slice(0, 360),
+    })),
+    stderrPreview: result.stderr.slice(-1_000),
+  };
+}

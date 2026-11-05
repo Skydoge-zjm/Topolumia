@@ -1,0 +1,17 @@
+project: diffusion-sr-reproduction
+task: x4-super-resolution
+dataset: DIV2K-valid-x4
+checkpoint_step: 50000
+sampler_steps: 50
+metrics:
+  - psnr
+  - ssim
+  - lpips
+  - fid
+factors:
+  conditioning: [off, on]
+  schedule: [baseline, corrected]
+seeds: [13, 42, 73]
+artifact_policy:
+  save_aggregate: true
+  save_per_image: true

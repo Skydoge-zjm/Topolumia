@@ -1,0 +1,116 @@
+import { test, expect } from "@playwright/test";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { startMvpServer } from "../../dist/src/server.js";
+import { nodeKinds } from "../../dist/src/domain/research/node-fields.js";
+let app: any, root: string, token: string, project: any, experiment: any;
+const password = "Browser-Notebook-2026!";
+const request = async (route: string, body?: any) => {
+  const response = await fetch(app.url + route, { method: body ? "POST" : "GET", headers: { "content-type": "application/json", "x-rw-session": token, "x-rw-project-id": project.id }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  if (!response.ok) throw new Error(await response.text()); return response.json();
+};
+test.beforeAll(async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "topolumia-notebook-browser-"));
+  app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false } } });
+  const user = app.collaboration.bootstrapAdmin({ username: "notebook-browser", password });
+  token = app.collaboration.login("notebook-browser", password).token;
+  project = app.collaboration.createProject({ id: "notebook-browser-project", name: "Notebook browser project" }, app.collaboration.actorForUser(user.id, app.config.project.id));
+  await request("/api/research-nodes", { kind: "paper", core: { nodeName: "Paper A", paperTitle: "A scientific paper" } });
+  await request("/api/research-nodes", { kind: "paper", core: { nodeName: "Paper B", paperTitle: "Another scientific paper" } });
+  experiment = await request("/api/research-nodes", { kind: "experiment", core: { nodeName: "Replication experiment", summary: "Actual fixture metrics" }, sourceRefs: [{ kind: "range", value: "wandb:run:lab/study/one" }] });
+  await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "metric", title: "Metrics", payload: { items: [{ name: "PSNR", value: 31.2 }] } });
+  await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "link", title: "Dashboard", payload: { label: "W&B experiment dashboard", url: "https://wandb.ai/lab/study/runs/one", kind: "wandb" } });
+  const runtime = await app.getRuntime(project.id);
+  runtime.registry.experiments.detail = async (ref: string) => ({ run: { ref, label: "Training run 1", status: "FINISHED", metrics: { loss: .25 } }, series: { series: [{ key: "loss", points: [{ x: 0, y: 1 }, { x: 10, y: .25 }], downsampled: false }] }, source: { provider: "wandb", mode: "fixture", observedAt: "2026-10-31T00:00:00Z" } });
+  runtime.state.recordEvent({ type: "agentMessage", actor: "agent", nodeIds: [], sourceRefs: [], payload: { text: "RUNTIME_REPLY_MUST_NOT_APPEAR" } }, { skipValidation: true });
+});
+test.afterAll(async () => {
+  for (const runtime of app.runtimes.values()) { await runtime.agentSessionGateway.closeAll(); await runtime.toolEnvironment.catalog.close(); await runtime.toolEnvironment.research.close(); }
+  await app.sshEnvironments.close(); await app.sshConnections.close(); app.server.closeAllConnections(); await new Promise<void>(resolve => app.server.close(resolve)); await rm(root, { recursive: true, force: true, maxRetries: 3 });
+});
+test.beforeEach(async ({ page }) => {
+  await page.request.post(app.url + "/api/auth/login", { data: { username: "notebook-browser", password } });
+  await page.addInitScript(({ id }) => { localStorage.setItem("research-workbench-project", id); localStorage.setItem("research-workbench-locale", "zh"); }, { id: project.id });
+});
+test("researchers write independent minutes, multiline participants and revisions", async ({ page }) => {
+  await page.goto(app.url + "/#/records");
+  await expect(page.getByRole("heading", { name: "研究记录", exact: true })).toBeVisible();
+  await expect(page.locator("main")).not.toContainText("RUNTIME_REPLY_MUST_NOT_APPEAR");
+  await page.getByRole("link", { name: "新建记录", exact: true }).first().click();
+  await page.getByLabel("记录标题", { exact: true }).fill("十月研究组会");
+  await page.getByLabel("参与者 · 每行一人", { exact: true }).fill("Alice\nBob");
+  await page.getByLabel("记录正文", { exact: true }).fill("## 讨论结果\n复现需要增加三个随机种子。");
+  await page.getByLabel("讨论结论 / 决定 · 每行一项").fill("补齐多 seed 实验");
+  await page.getByRole("button", { name: "保存记录", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "十月研究组会", exact: true })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Alice · Bob");
+  await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+  await page.getByLabel("记录正文", { exact: true }).fill("修订纪要：已确定下一步实验。");
+  await page.getByRole("button", { name: "保存记录", exact: true }).click();
+  await expect(page.locator("main")).toContainText("修订纪要：已确定下一步实验。");
+  await page.getByRole("button", { name: "记录修订版本", exact: true }).click();
+  await page.getByRole("option", { name: /^v1/ }).click();
+  await expect(page.locator("main")).toContainText("复现需要增加三个随机种子。");
+  await expect(page.getByRole("button", { name: "编辑记录", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: "runtime/research-record-detail.png", fullPage: true });
+});
+test("groups collapse to a group node, expand, and open editable scientific details", async ({ page }) => {
+  await page.goto(app.url + "/#/topology");
+  await page.getByRole("button", { name: "新建节点组", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("组名称", { exact: true }).fill("文献组");
+  await dialog.locator("summary").filter({hasText:"选择成员"}).click();
+  await dialog.getByLabel(/Paper A/).check(); await dialog.getByLabel(/Paper B/).check();
+  await dialog.getByRole("button", { name: "保存节点组", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.goto(app.url+"/#/topology");
+  await page.getByRole("button", { name: "收起 文献组", exact: true }).first().click();
+  await expect(page.locator(".research-graph-node.is-group.is-collapsed")).toHaveCount(1);
+  await expect(page.locator(".research-graph-node-main").filter({ hasText: "Paper A" })).toHaveCount(0);
+  await page.reload(); await expect(page.locator(".research-graph-node.is-group")).toHaveCount(1);
+  await page.getByRole("button", { name: "展开 文献组", exact: true }).first().click();
+  await expect(page.locator(".research-graph-node.is-group")).toHaveCount(0);
+  await page.getByRole("button", { name: "适配视图", exact: true }).click();
+  await page.locator(".research-graph-node-main").filter({ hasText: "Paper A" }).click();
+  await expect(page.getByRole("heading", { name: "Paper A", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "编辑核心信息", exact: true }).click();
+  await page.getByLabel("作者 · 每行一人", { exact: true }).fill("Alice and Bob");
+  await page.getByRole("button", { name: "保存核心信息", exact: true }).click();
+  await expect(page.locator("main")).toContainText("Alice and Bob");
+  await page.goto(app.url + "/#/topology/nodes/" + encodeURIComponent(experiment.node.id));
+  await page.getByRole("button", { name: "实验结果", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "31.2", exact: true })).toBeVisible();
+  await expect(page.locator(".research-metric-chart")).toHaveCount(1);
+  await expect(page.getByRole("link", { name: /W&B experiment dashboard/ })).toHaveAttribute("href", "https://wandb.ai/lab/study/runs/one");
+  await expect(page.locator(".research-metric-chart")).toContainText("2 个返回数据点");
+  await page.screenshot({ path: "runtime/research-experiment-results.png", fullPage: true });
+});
+test("recurring monthly activities create distinct planned occurrences without generated minutes", async ({ page }) => {
+  await page.goto(app.url + "/#/records");
+  await page.getByRole("button", { name: "周期活动", exact: true }).click();
+  await page.getByRole("button", { name: "新建周期活动", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("活动名称", { exact: true }).fill("月度组会");
+  await dialog.getByLabel("活动时区", { exact: true }).fill("Asia/Shanghai");
+  await dialog.getByLabel("起始日期", { exact: true }).fill("2030-01-31");
+  await dialog.getByLabel("当地时间", { exact: true }).fill("14:00");
+  await dialog.getByRole("button", { name: "保存周期活动", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "安排下一场", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "月度组会 · 2030-01-31", exact: true })).toBeVisible();
+  await expect(page.locator("main")).toContainText("已安排");
+  await expect(page.locator("main")).toContainText("尚未记录正文");
+  await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+  await expect(page.getByLabel("实际发生时间 · 本机时间", { exact: true })).toHaveValue("");
+});
+test("every node kind opens its typed core and user-created research material", async ({ page }) => {
+  test.setTimeout(60000);
+  for (const kind of Object.keys(nodeKinds)) {
+    const created = await request("/api/research-nodes", { kind, core: { nodeName: `Detail ${kind}` } });
+    await request(`/api/research-objects/node/${encodeURIComponent(created.node.id)}/content-blocks`, { type: "richText", title: "Research note", payload: { format: "markdown", body: `Content for ${kind}` } });
+    await page.goto(app.url + "/#/topology/nodes/" + encodeURIComponent(created.node.id));
+    await expect(page.getByRole("heading", { name: `Detail ${kind}`, exact: true })).toBeVisible();
+    await expect(page.locator(".content-block-list")).toContainText(`Content for ${kind}`);
+  }
+});

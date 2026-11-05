@@ -1,0 +1,37 @@
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { activityKinds, recordStatuses } from "@domain/research/node-fields";
+import { api, projectId } from "@/shared/lib/api";
+import { useUiStore } from "@/shared/state/ui";
+import { SelectMenu } from "@/shared/ui/SelectMenu";
+import { useResearchPermissions } from "../useResearch";
+import { MarkdownBody, LinkList } from "../components/ResearchUi";
+import { nodeUrl, text } from "../model";
+import type { ResearchRecord } from "../model";
+import { RecordEditor } from "./RecordEditor";
+export function RecordDetailPage() { const { id } = useParams(); return <RecordDetail key={id ?? "new"} id={id} />; }
+function RecordDetail({ id }: { id?: string }) {
+  const en = useUiStore(state => state.locale) === "en", permissions = useResearchPermissions(), client = useQueryClient(), navigate = useNavigate();
+  const [editing, setEditing] = useState(false), [revision, setRevision] = useState("");
+  const current = useQuery({ queryKey: ["research-record", projectId(), id], enabled: Boolean(id), queryFn: () => api<ResearchRecord>(`/api/research-records/${id}`) });
+  const history = useQuery({ queryKey: ["research-record-revisions", projectId(), id], enabled: Boolean(id), queryFn: () => api<{ items: Array<{ revision: number; updatedAt: string; status: string }> }>(`/api/research-records/${id}/revisions`) });
+  const old = useQuery({ queryKey: ["research-record-revision", projectId(), id, revision], enabled: Boolean(id && revision), queryFn: () => api<ResearchRecord>(`/api/research-records/${id}/revisions/${revision}`) });
+  const record = revision ? old.data : current.data;
+  const saved = (nextId: string) => { setEditing(false); setRevision(""); void client.invalidateQueries({ queryKey: ["research-record"] }); void client.invalidateQueries({ queryKey: ["research-record-revisions"] }); void client.invalidateQueries({ queryKey: ["research-records"] }); if (!id) navigate(`/records/${nextId}`, { replace: true }); };
+  if (id && current.isPending) return <div className="loading">{en ? "Loading record…" : "载入研究记录…"}</div>;
+  if (current.error) return <section translate="no" className="research-workspace"><p role="alert">{current.error.message}</p><Link to="/records">{en ? "Research records" : "研究记录"}</Link></section>;
+  if (!id || editing) return <section translate="no" className="research-workspace research-detail"><Link className="research-back" to="/records">← {en ? "Research records" : "研究记录"}</Link><header className="research-page-heading"><h1>{id ? (en ? "Edit research record" : "编辑研究记录") : (en ? "New research record" : "新建研究记录")}</h1></header>{permissions.records ? <RecordEditor initial={current.data} en={en} canConfirm={permissions.confirm} onSaved={saved} onCancel={() => id ? setEditing(false) : navigate("/records")} /> : <p>{en ? "Read-only access." : "当前权限仅可查看。"}</p>}</section>;
+  const formatTime = (value: string | null) => value && record ? new Date(value).toLocaleString(en ? "en-GB" : "zh-CN", { timeZone: record.timezone }) : "—";
+  return <section translate="no" className="research-workspace research-detail"><Link className="research-back" to="/records">← {en ? "Research records" : "研究记录"}</Link><div className="research-record-version"><SelectMenu ariaLabel={en ? "Record revision" : "记录修订版本"} value={revision} onChange={setRevision} options={[{ value: "", label: en ? "Current revision" : "当前修订" }, ...(history.data?.items ?? []).filter(item => item.revision !== current.data?.revision).map(item => ({ value: String(item.revision), label: `v${item.revision} · ${new Date(item.updatedAt).toLocaleString()}` }))]} />{revision && <span>{en ? "Read-only historical revision" : "历史修订 · 只读"}</span>}</div>
+    {old.error && <p role="alert">{old.error.message}</p>}{record && <><header className="research-page-heading"><div><h1>{record.title}</h1></div><div className="research-actions"><span className="research-badge">{recordStatuses[record.status]?.[en ? 1 : 0]}</span>{permissions.records && !revision && <button className="button" onClick={() => setEditing(true)}>{en ? "Edit record" : "编辑记录"}</button>}</div></header>
+      <dl className="research-field-details research-card"><div><dt>{en ? "Activity" : "活动类型"}</dt><dd>{activityKinds[record.type]?.[en ? 1 : 0]}</dd></div><div><dt>{en ? "Revision" : "版本"}</dt><dd>{record.revision}</dd></div><div><dt>{en ? "Participants" : "参与者"}</dt><dd>{record.participants.join(" · ") || "—"}</dd></div><div><dt>{en ? "Occurred" : "发生时间"}</dt><dd>{formatTime(record.occurredAt)}</dd></div><div><dt>{en ? "Scheduled" : "计划时间"}</dt><dd>{formatTime(record.scheduledAt)}</dd></div><div><dt>{en ? "Timezone" : "时区"}</dt><dd>{record.timezone}</dd></div><div><dt>{en ? "Recorded" : "录入时间"}</dt><dd>{formatTime(record.createdAt)}</dd></div><div><dt>{en ? "Updated" : "修订时间"}</dt><dd>{formatTime(record.updatedAt)}</dd></div></dl>
+      {record.agenda && <section className="research-card"><h2>{en ? "Agenda / purpose" : "议程 / 记录目的"}</h2><p className="research-pre-wrap">{record.agenda}</p></section>}
+      <section className="research-card"><h2>{en ? "Minutes / notes" : "纪要 / 正文"}</h2><MarkdownBody body={record.body} en={en} /></section>
+      <div className="research-two-columns"><section className="research-card"><h2>{en ? "Decisions" : "讨论结论与决定"}</h2>{record.decisions.length ? <ul>{record.decisions.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="research-empty">{en ? "None recorded." : "尚未记录。"}</p>}</section><section className="research-card"><h2>{en ? "Open questions" : "未决问题"}</h2>{record.openQuestions.length ? <ul>{record.openQuestions.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="research-empty">{en ? "None recorded." : "尚未记录。"}</p>}</section></div>
+      <section className="research-card"><h2>{en ? "Follow-up actions" : "后续行动"}</h2>{record.actions.length ? record.actions.map((action, index) => <div className="research-object-row" key={action.id ?? index}><span>{action.text}<small>{action.assignee || "—"} · {action.dueDate || "—"}</small></span><span className="research-badge">{({ open: ["待完成", "Open"], done: ["已完成", "Done"], cancelled: ["已取消", "Cancelled"] } as Record<string, string[]>)[action.status]?.[en ? 1 : 0]}</span></div>) : <p className="research-empty">{en ? "No follow-up actions." : "尚无后续行动。"}</p>}</section>
+      {record.linkedNodes.length > 0 && <section className="research-card"><h2>{en ? "Referenced research snapshots" : "引用的科研对象快照"}</h2>{record.linkedNodes.map(node => <div key={node.id} className="research-reference-snapshot"><strong>{text(node.label, en)}</strong><p>{text(node.summary, en)}</p><small>{en ? "Captured: " : "引用时间："}{formatTime(node.capturedAt)}</small><Link className="button" to={nodeUrl(node.id)}>{en ? "Open current object" : "查看当前对象"}</Link></div>)}</section>}
+      <section className="research-card"><h2>{en ? "Attachments and links" : "附件与链接"}</h2><LinkList links={record.links} en={en} /></section>
+    </>}
+  </section>;
+}

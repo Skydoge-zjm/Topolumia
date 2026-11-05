@@ -1,0 +1,477 @@
+.environmentSection {
+  min-width: 0;
+}
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.sectionHeading h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--color-ink);
+}
+.currentEnvironment { margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.sectionHeading > div {
+  min-width: 0;
+  max-width: 100%;
+}
+.sectionHeading p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  overflow-wrap: anywhere;
+}
+.sectionHeading strong {
+  color: var(--color-green2);
+  font-weight: 600;
+}
+.treeScroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+.treeTable {
+  width: 100%;
+  min-width: 560px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  text-align: left;
+}
+.nameColumn {
+  width: 43%;
+}
+.versionColumn {
+  width: 18%;
+}
+.statusColumn {
+  width: 20%;
+}
+.actionColumn {
+  width: 19%;
+}
+.treeTable {
+  font-variant-numeric: tabular-nums;
+}
+.treeTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 34px;
+  border-bottom: 1px solid var(--color-line);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: .01em;
+}
+.treeTable tbody tr {
+  transition: background 110ms ease;
+}
+.treeTable tbody tr:hover > * {
+  background: rgb(242 248 244 / 80%);
+}
+.treeTable tbody tr[data-current] > * {
+  background: var(--color-mint-pale);
+}
+.treeTable tbody tr[data-current] > th:first-child {
+  box-shadow: inset 2px 0 var(--color-mint);
+}
+.treeTable tbody tr > td,
+.treeTable tbody tr > th {
+  height: 40px;
+}
+.treeTable th,
+.treeTable td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--color-line-soft);
+  vertical-align: middle;
+  font-size: 12px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.treeTable thead th {
+  height: 38px;
+  color: var(--color-ink-soft);
+  background: var(--color-mint-pale);
+}
+.treeTable tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.treeTable th {
+  text-align: left;
+}
+.rowName {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+}
+.rowName svg {
+  flex: 0 0 auto;
+}
+.rowName > span {
+  overflow-wrap: anywhere;
+}
+.rowName:hover,
+.textButton:hover {
+  color: var(--color-green2);
+}
+.sourceRow {
+  background: var(--color-canvas);
+}
+.sourceRow .rowName {
+  font-weight: 600;
+}
+.environmentRow th .rowName {
+  padding-left: 18px;
+}
+.environmentRow[data-current="true"] {
+  background: var(--color-mint-pale);
+}
+.componentRow th .rowName {
+  padding-left: 42px;
+  font-weight: 400;
+}
+.version {
+  color: var(--color-ink-soft);
+  font-family: inherit;
+}
+.tag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-mint-soft);
+  color: var(--color-green2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.secondary {
+  display: block;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.actionCell {
+  text-align: right;
+  white-space: nowrap;
+}
+.actionCell > .iconButton + .iconButton {
+  margin-left: 5px;
+}
+.actionCell > button {
+  min-height: 28px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.iconButton {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  padding: 5px;
+  min-width: 29px;
+  min-height: 29px;
+  border: 1px solid var(--color-line);
+  border-radius: 5px;
+  background: var(--color-panel);
+  color: var(--color-ink-soft);
+}
+.iconButton:hover {
+  background: var(--color-mint-pale);
+  color: var(--color-green2);
+}
+.textButton {
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--color-green2);
+  background: transparent;
+  font-size: 12px;
+}
+.componentStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+}
+.componentStatus[data-status="ready"],
+.componentStatus[data-status="installed"] {
+  color: var(--color-green2);
+}
+.componentStatus[data-status="error"],
+.componentStatus[data-status="timeout"],
+.componentStatus[data-status="unavailable"] {
+  color: #ad493e;
+}
+.environmentContext > td {
+  background: var(--color-canvas);
+  padding-left: 54px;
+}
+.contextPath {
+  margin-bottom: 9px;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.environmentActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.environmentActions > button {
+  min-height: 29px;
+  font-size: 12px;
+}
+.environmentActions time {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.missingRow .rowName {
+  padding-left: 42px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.componentDetail {
+  padding: 0 24px 12px 54px !important;
+  background: var(--color-canvas);
+}
+.componentDetail section {
+  border-top: 0;
+  padding-top: 9px;
+  margin-top: 0;
+}
+.nestedMessage {
+  padding-left: 38px !important;
+  color: var(--color-ink-soft);
+}
+.nestedMessage button {
+  margin-left: 7px;
+}
+.treeNotice {
+  margin: 0 0 12px;
+  color: var(--color-green2);
+  font-size: 12px;
+}
+.treeNotice[role="alert"] {
+  color: #ad493e;
+}
+.message {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 22px 12px;
+  margin: 0;
+  color: var(--color-ink-soft);
+  font-size: 14px;
+}
+.message[role="alert"] {
+  color: #ad493e;
+}
+.addInterpreter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px 0 18px;
+}
+.addInterpreter label {
+  flex: 1;
+  min-width: 180px;
+  margin: 0;
+}
+.addInterpreter p {
+  margin: 0;
+  width: 100%;
+  font-size: 12px;
+  color: #ad493e;
+}
+.spinning {
+  animation: environment-tree-spin 1.1s linear infinite;
+}
+@keyframes environment-tree-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.packageDialog {
+  position: fixed;
+  z-index: 16;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  width: min(820px, calc(100vw - 28px));
+  height: min(84dvh, 820px);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-panel);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-panel);
+}
+.dialogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 19px 22px 14px;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.dialogHeader h2 {
+  margin: 0 0 6px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+}
+.dialogHeader p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+.packageToolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 22px 9px;
+}
+.packagePath { display: block; margin: 0 20px 16px; overflow-wrap: anywhere; color: var(--tools-muted, var(--color-muted)); font-size: 12px; }
+.search {
+  flex: 1;
+  min-width: 120px;
+}
+.search input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-panel);
+  color: var(--color-ink);
+}
+.packageToolbar button {
+  font-size: 12px;
+}
+.packageMeta {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 22px 11px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.packageBody {
+  overflow: auto;
+  min-height: 0;
+  padding: 0 22px;
+}
+.packageTable {
+  width: 100%;
+  table-layout: fixed;
+  text-align: left;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.packageTable th:first-child {
+  width: 46%;
+}
+.packageTable th:nth-child(2) {
+  width: 34%;
+}
+.packageTable th:last-child {
+  width: 20%;
+}
+.packageTable th,
+.packageTable td {
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--color-line-soft);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.packageTable thead {
+  position: sticky;
+  top: 0;
+  background: var(--color-panel);
+  color: var(--color-ink-soft);
+  font-size: 12px;
+}
+.packageFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--color-line-soft);
+  color: var(--color-ink-soft);
+  font-size: 12px;
+}
+.packageFooter > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.packageFooter button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 4px;
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  .treeTable {
+    min-width: 480px;
+  }
+  .environmentRow th .rowName {
+    padding-left: 9px;
+  }
+  .componentRow th .rowName,
+  .missingRow .rowName {
+    padding-left: 25px;
+  }
+  .environmentContext > td {
+    padding-left: 30px;
+  }
+  .dialogHeader {
+    padding: 16px;
+  }
+  .packageToolbar {
+    padding: 12px 16px 8px;
+  }
+  .packageMeta {
+    padding-inline: 16px;
+  }
+  .packageBody {
+    padding-inline: 10px;
+  }
+  .packageFooter {
+    padding-inline: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinning {
+    animation: none;
+  }
+}

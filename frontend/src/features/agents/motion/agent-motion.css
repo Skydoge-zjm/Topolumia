@@ -1,0 +1,55 @@
+:root {
+  --agent-motion-fast: 110ms;
+  --agent-motion-base: 150ms;
+  --agent-motion-enter: cubic-bezier(0, 0, .38, .9);
+  --agent-motion-standard: cubic-bezier(.2, 0, .38, .9);
+  --agent-motion-exit: cubic-bezier(.2, 0, 1, .9);
+}
+
+.agent-page button { transition: transform 100ms var(--agent-motion-standard), background-color var(--agent-motion-fast), border-color var(--agent-motion-fast); }
+.agent-page button:active:not(:disabled) { transform: scale(.97); transition-duration: 80ms; }
+.agent-page .session { transition: background-color 120ms, box-shadow 120ms; }
+.agent-page .tool-group > summary::after,
+.agent-page .activity-batch > summary::after,
+.agent-page .subagent-group > summary::after { transition: transform var(--agent-motion-base) var(--agent-motion-standard); }
+
+.agent-motion-icon { position: relative; display: inline-grid; place-items: center; flex: none; width: 15px; height: 15px; }
+.agent-motion-icon > [data-motion-exit] { position: absolute; inset: 0; pointer-events: none; }
+.conversation-body[data-motion-enabled="true"] [data-motion-active="true"] { animation: agent-active-pulse 2.2s ease-in-out infinite; }
+@keyframes agent-active-pulse { 0%, 100% { opacity: .72; } 50% { opacity: 1; } }
+.reply-presence { display: inline-block; width: 5px; height: 5px; flex: none; border-radius: 2px; background: var(--color-mint); }
+.conversation-work-status { display: flex; align-items: center; gap: 8px; width: min(820px, 100%); margin: 10px auto; color: var(--color-muted); font-size: 12px; }
+.conversation-work-status[hidden], .conversation-body[data-motion-enabled="false"] .conversation-work-status { display: none; }
+.motion-complete-badge { display: none; align-items: center; flex: none; color: var(--color-mint); }
+[data-motion-completed="true"] > summary .motion-complete-badge { display: inline-flex; }
+.agent-page .tool-group[data-motion-role="approval"][data-state="pending"] > summary { border-radius: 4px; background: rgb(158 108 29 / 7%); color: #896017; }
+.agent-page .tool-group[data-motion-role="approval"][data-state="pending"] > summary .streaming,
+.agent-page .tool-group[data-motion-role="approval"][data-state="pending"] .agent-event-icon { color: #896017; }
+.status-stopping i { background: var(--color-muted); }
+.research-drawer { bottom: var(--agent-composer-height, 0px); }
+.research-drawer[aria-hidden="true"] { pointer-events: none; }
+.agent-page .composer-send { position: relative; }
+.composer-control-arrow, .composer-control-stop { position: absolute; inset: 0; display: grid; place-items: center; transition: opacity 100ms var(--agent-motion-standard), transform 100ms var(--agent-motion-standard); }
+.composer-control-stop { opacity: 0; transform: scale(.85); }
+.composer-send.is-stop .composer-control-stop { opacity: 1; transform: scale(1); }
+.composer-send.is-stop .composer-control-arrow { opacity: 0; transform: scale(.85); }
+.composer-queue li[data-exiting] { pointer-events: none; }
+
+.conversation-nav-mark > span { width: 22px; transform: scaleX(.41); transition: transform var(--agent-motion-fast) var(--agent-motion-standard), background-color var(--agent-motion-fast); }
+.conversation-nav-mark:hover > span, .conversation-nav-mark:focus-visible > span { width: 22px; transform: scaleX(.77); }
+.conversation-nav-mark[aria-current] > span { transform: scaleX(1); }
+.conversation-nav-preview[data-state="delayed-open"] { animation: agent-preview-enter 140ms var(--agent-motion-enter); }
+.conversation-nav-preview[data-state="instant-open"] { animation: agent-preview-swap 80ms var(--agent-motion-enter); }
+.conversation-nav-preview[data-state="closed"] { animation: agent-preview-exit 90ms var(--agent-motion-exit); }
+@keyframes agent-preview-enter { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes agent-preview-swap { from { opacity: .65; } to { opacity: 1; } }
+@keyframes agent-preview-exit { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-2px); } }
+.agent-page .message.user { position: relative; }
+.agent-page .message.user.is-nav-target { box-shadow: var(--shadow-soft); }
+.message-locate-overlay { position: absolute; inset: -4px; border: 2px solid var(--color-mint); border-radius: inherit; background: var(--color-mint-soft); pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-page *, .conversation-nav-preview { animation: none !important; transition: none !important; }
+  .agent-page button:active:not(:disabled) { transform: none; }
+  .agent-page .message.user.is-nav-target { outline: 2px solid var(--color-mint); outline-offset: 3px; }
+}

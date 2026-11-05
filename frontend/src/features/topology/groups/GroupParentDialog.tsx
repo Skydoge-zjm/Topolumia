@@ -1,0 +1,11 @@
+import { useState } from "react";
+import { api } from "@/shared/lib/api";
+import { SelectMenu } from "@/shared/ui/SelectMenu";
+import { ResearchDialog } from "@/features/research/components/ResearchUi";
+import type { Group } from "@/features/research/model";
+export function GroupParentDialog({ group, groups, en, onClose, onSaved }: { group: Group; groups: Group[]; en: boolean; onClose: () => void; onSaved: () => void }) {
+  const [parentId, setParent] = useState(group.parentId ?? ""), [error, setError] = useState(""), [busy, setBusy] = useState(false);
+  const excluded = new Set([group.id]); let changed = true;
+  while (changed) { changed = false; for (const item of groups) if (item.parentId && excluded.has(item.parentId) && !excluded.has(item.id)) { excluded.add(item.id); changed = true; } }
+  return <ResearchDialog title={(en ? "Change parent group: " : "调整上级组：") + group.core.nodeName}  onClose={onClose}><form className="research-form" onSubmit={async event => { event.preventDefault(); setBusy(true); setError(""); try { const parents = [...new Set([group.parentId, parentId].filter(Boolean))]; await api("/api/research-groups/" + encodeURIComponent(group.id) + "/parent", { method: "PATCH", body: JSON.stringify({ parentId: parentId || null, expectedMembershipRevision: group.membershipRevision, expectedParentRevisions: Object.fromEntries(parents.map(id => [id, groups.find(item => item.id === id)?.membershipRevision])) }) }); onSaved(); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } }}><label>{en ? "Parent group" : "上级组"}<SelectMenu ariaLabel={en ? "Parent group" : "上级组"} value={parentId} onChange={setParent} options={[{ value: "", label: en ? "Root level" : "根层级" }, ...groups.filter(item => !excluded.has(item.id)).map(item => ({ value: item.id, label: item.core.nodeName }))]} /></label><p className="research-hint">{en ? "The group and its subgroups move together. Node identities and logical relations are retained." : "本组及其子组一起移动，成员节点身份和科研逻辑关系保留。"}</p>{error && <p role="alert">{error}</p>}<footer><button type="button" className="button" onClick={onClose}>{en ? "Cancel" : "取消"}</button><button className="button primary" disabled={busy}>{en ? "Save hierarchy" : "保存层级"}</button></footer></form></ResearchDialog>;
+}

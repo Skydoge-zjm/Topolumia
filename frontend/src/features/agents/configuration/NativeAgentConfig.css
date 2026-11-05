@@ -1,0 +1,240 @@
+.native-config-dialog {
+  position: fixed;
+  z-index: 120;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100dvh - 40px);
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  color: var(--color-ink);
+  box-shadow: 0 20px 70px rgb(20 59 50 / 16%);
+  font-family: var(--font-ui);
+}
+.native-config-header {
+  position: relative;
+  padding: 24px 26px 18px;
+  flex-shrink: 0;
+}
+.native-config-header h2 {
+  margin: 0 36px 7px 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+.native-config-header p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.native-config-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-ink-soft);
+}
+.native-config-close:hover {
+  background: var(--color-mint-soft);
+}
+.native-config-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.native-config-body {
+  display: grid;
+  gap: 22px;
+  padding: 0 26px 22px;
+  overflow-y: auto;
+}
+.native-config-common {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.native-config-common:disabled {
+  opacity: 0.55;
+}
+.native-settings-list {
+  display: grid;
+  gap: 10px;
+}
+.native-setting-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+  min-height: 38px;
+  gap: 16px;
+}
+.native-setting-label {
+  font-size: 14px;
+}
+.native-setting-control {
+  min-width: 0;
+}
+.native-settings-advanced {
+  margin-top: 5px;
+  border-top: 1px solid var(--color-line-soft);
+}
+.native-settings-advanced > summary {
+  padding: 12px 0 6px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  font-size: 12px;
+  list-style-position: inside;
+}
+.native-settings-advanced > summary:hover {
+  color: var(--color-mint);
+}
+.native-settings-advanced-body {
+  display: grid;
+  gap: 10px;
+  padding: 7px 0 2px 19px;
+  border-left: 2px solid var(--color-mint-soft);
+}
+.native-number-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 38px;
+}
+.native-number-row > label {
+  font-size: 14px;
+}
+.native-number-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.native-number-control input {
+  width: min(100%, 260px);
+}
+.native-number-control > span {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.native-config-source {
+  display: grid;
+  gap: 9px;
+}
+.native-config-source-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.native-config-source-heading label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.native-config-source-heading a {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.native-config-source-heading a:hover {
+  color: var(--color-mint);
+}
+.native-config-source textarea {
+  display: block;
+  width: 100%;
+  height: 234px;
+  min-height: 150px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: var(--color-canvas);
+  color: var(--color-ink-soft);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.7;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  resize: vertical;
+}
+.native-config-source textarea[aria-invalid="true"] {
+  border-color: #c9776d;
+}
+.native-config-error {
+  padding: 10px 12px;
+  margin: 0;
+  border-radius: 6px;
+  background: #fff4f2;
+  color: #9b302c;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.native-config-error p {
+  margin: 0;
+}
+.native-config-reload {
+  margin-top: 6px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.native-config-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 16px 26px;
+  border-top: 1px solid var(--color-line-soft);
+}
+.native-config-footer > span {
+  flex: 1;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.native-config-loading {
+  margin: 0 26px 24px;
+  font-size: 14px;
+  color: var(--color-muted);
+}
+@media (max-width: 520px) {
+  .native-config-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 24px);
+  }
+  .native-config-header {
+    padding: 22px 18px 18px;
+  }
+  .native-config-body {
+    padding: 0 18px 18px;
+    gap: 20px;
+  }
+  .native-setting-row {
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .native-number-row {
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .native-config-footer {
+    padding: 14px 18px;
+  }
+  .native-config-footer > span {
+    font-size: 12px;
+  }
+}

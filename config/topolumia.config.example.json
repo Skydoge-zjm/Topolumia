@@ -1,0 +1,78 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 5510
+  },
+  "frontend": {
+    "host": "127.0.0.1",
+    "port": 5610,
+    "apiUrl": "http://127.0.0.1:5510"
+  },
+  "project": {
+    "id": "diffusion-sr-reproduction",
+    "name": "DiffusionSR Reproduction",
+    "root": ".",
+    "workspacesRoot": "workspaces"
+  },
+  "researchEnvironment": {
+    "kind": "default",
+    "prefix": "",
+    "pythonCommand": "python"
+  },
+  "sourceRefresh": {
+    "enabled": true,
+    "intervalMs": 60000,
+    "freshForMs": 15000,
+    "foregroundThresholdMs": 30000
+  },
+  "experimentGateway": {
+    "listTtlMs": 15000,
+    "detailTtlMs": 30000,
+    "seriesTtlMs": 30000,
+    "contextTtlMs": 30000,
+    "descriptorTtlMs": 30000,
+    "maxListRuns": 300,
+    "maxCacheEntries": 256
+  },
+  "filesystem": {
+    "roots": [
+      "fixtures/research"
+    ],
+    "maxFiles": 80,
+    "maxDepth": 4,
+    "maxTextBytes": 65536,
+    "excerptChars": 1800
+  },
+  "mlflow": {
+    "baseUrl": "",
+    "experimentId": "",
+    "experimentName": "diffusion-sr-reproduction",
+    "tokenEnv": "MLFLOW_TRACKING_TOKEN"
+  },
+  "wandb": {
+    "baseUrl": "",
+    "graphqlPath": "/graphql",
+    "authScheme": "basic",
+    "entity": "your-entity",
+    "project": "diffusion-sr-reproduction",
+    "tokenEnv": "WANDB_API_KEY",
+    "fixtureFile": "fixtures/wandb-runs.json"
+  },
+  "tensorboard": {
+    "logdir": "",
+    "fixtureFile": "fixtures/tensorboard-runs.json",
+    "pythonCommand": "python",
+    "parserScript": "scripts/runtime/tensorboard-event-parser.py",
+    "parserTimeoutMs": 10000,
+    "maxDepth": 4
+  },
+  "docker": {
+    "executionEnabled": false
+  },
+  "agentSessions": {
+    "maxSessions": 50,
+    "maxEventsPerSession": 1000,
+    "historyFile": "runtime/agent-sessions/history.json",
+    "managedWrappersRoot": "managed-wrappers"
+  }
+}

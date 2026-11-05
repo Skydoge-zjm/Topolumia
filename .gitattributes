@@ -1,0 +1,23 @@
+bin/topolumia text eol=lf
+bin/topolumia.cmd text eol=crlf
+
+# Keep local development material out of source archives; include formal docs.
+/docs/work export-ignore
+/docs/references export-ignore
+/docs/**/*.tmp export-ignore
+/design-references export-ignore
+/design-system export-ignore
+/reference-rebuild export-ignore
+/skills export-ignore
+/runtime export-ignore
+/artifacts export-ignore
+/test-results export-ignore
+/playwright-report export-ignore
+/dist export-ignore
+/node_modules export-ignore
+/public/react-dist export-ignore
+/README_zh.md export-ignore
+/managed-wrappers/README_zh.md export-ignore
+/src/adapters/README.md export-ignore
+/scripts/align_wordmark_colors.py export-ignore
+/scripts/clean_wordmark.py export-ignore

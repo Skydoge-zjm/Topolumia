@@ -1,0 +1,29 @@
+.agent-approval { width: min(820px, 100%); min-width: 0; border: 1px solid var(--color-line); border-radius: 10px; margin: 8px auto; overflow: hidden; font-family: inherit; font-size: 14px; }
+.agent-approval code, .agent-approval pre { font-family: inherit; }
+.agent-approval.is-pending { border-color: color-mix(in srgb, var(--color-mint) 45%, var(--color-line)); background: color-mix(in srgb, var(--color-mint) 4%, var(--color-panel)); }
+.agent-approval > header, .agent-approval > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 9px 12px; }
+.agent-approval > summary { cursor: pointer; }
+.agent-approval > header strong, .agent-approval > summary strong { font-weight: 600; }
+.agent-approval small, .approval-location > span { color: var(--color-ink-soft); font-size: 12px; }
+.approval-body { padding: 0 12px 12px; overflow-wrap: anywhere; }
+.approval-reason { margin: 3px 0 8px; line-height: 1.5; }
+.agent-approval pre { margin: 6px 0; padding: 9px 10px; max-height: 250px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; background: var(--color-mint-pale); font-size: 12px; line-height: 1.55; }
+.approval-command { border-left: 2px solid var(--color-mint); }
+.approval-location { display: flex; align-items: baseline; gap: 10px; margin: 6px 0; }
+.approval-paths { margin: 6px 0; padding-left: 20px; }
+.approval-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.approval-actions .button, .approval-saved-rules .button { min-height: 36px; gap: 6px; }
+.approval-actions .button small { font-weight: 400; }
+.approval-session-scope { margin-top: 10px; border-left: 2px solid var(--color-line); padding-left: 10px; }
+.approval-session-scope p { margin: 4px 0; font-size: 12px; }
+.approval-permissions { margin: 10px 0 0; padding: 8px 10px; border: 1px solid var(--color-line); border-radius: 6px; }
+.approval-permissions label { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; margin-right: 16px; }
+.approval-details { margin-top: 8px; }
+.approval-details > summary { cursor: pointer; width: fit-content; padding: 5px 0; color: var(--color-ink-soft); }
+.approval-saved-rules { border-top: 1px solid var(--color-line); padding-top: 4px; }
+.approval-saved-rules p { margin: 5px 0; }
+.approval-feedback { display: block; margin-top: 8px; color: var(--color-ink-soft); }
+.agent-approval.is-resolved { background: transparent; border: 0; margin: 2px auto; }
+.agent-approval.is-resolved > summary { padding: 5px 0; color: var(--color-ink-soft); }
+.agent-approval button:focus-visible, .agent-approval summary:focus-visible, .agent-approval input:focus-visible { outline: 2px solid var(--color-mint); outline-offset: 3px; }
+@media (max-width: 600px) { .approval-actions .button small { display: none; } .approval-location { flex-wrap: wrap; gap: 4px; } }

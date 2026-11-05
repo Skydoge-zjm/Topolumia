@@ -1,0 +1,7 @@
+# Direct dependencies for the isolated experiment-tracking integration suite.
+# Resolve and install these only inside mvp/.venv-test.
+mlflow
+pillow
+pytest
+tensorboard
+wandb
