@@ -14,6 +14,7 @@ import { GroupEditor } from "./GroupEditor";
 import { GroupMembers } from "./GroupMembers";
 import { GroupDeleteDialog } from "./GroupDeleteDialog";
 import { GroupParentDialog } from "./GroupParentDialog";
+import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 type Detail={group:Group;coreRevision:number;blockCollectionRevision:number;blockCount:number;counts:{directNodes:number;childGroups:number;recursiveUniqueNodes:number};pendingCandidates?:Record<string,unknown>[];relations:{id:string;other:{object:ResearchObjectRef;label:string}}[]};
 export function GroupDetailPage(){const{id}=useParams();return <GroupDetail key={projectId()+":"+id}/>;}
 function GroupDetail(){
@@ -22,11 +23,12 @@ function GroupDetail(){
   const query=useQuery({queryKey:["research-group",projectId(),id],queryFn:()=>api<Detail>("/api/research-groups/"+encodeURIComponent(id!))});
   const topology=useQuery({queryKey:["topology",projectId()],queryFn:()=>api<{nodes:ResearchNode[];groups:Group[]}>("/api/topology")});
   const refresh=()=>{for(const key of ["research-group","topology","group-members","object-relations","research-blocks"])void client.invalidateQueries({queryKey:[key,projectId()]});};
-  if(query.isPending)return <p className="loading" role="status">{en?"Loading group…":"载入节点组…"}</p>;
-  if(query.error||!query.data)return <section className="research-workspace"><p role="alert">{query.error?.message??(en?"Group not found.":"节点组不存在。")}</p><Link to="/topology">{en?"Back to topology":"返回拓扑"}</Link></section>;
+  if(query.isPending)return <section className="research-workspace research-detail"><Link className="research-back" to="/topology">← {en?"Research topology":"科研拓扑"}</Link><LoadingSkeleton layout="detail" heading label={en?"Loading group…":"载入节点组…"}/></section>;
+  if(!query.data)return <section className="research-workspace"><p role="alert">{query.error?.message??(en?"Group not found.":"节点组不存在。")}</p><button className="button" onClick={()=>void query.refetch()}>{en?"Retry":"重试"}</button><Link to="/topology">{en?"Back to topology":"返回拓扑"}</Link></section>;
   const data=query.data,group=data.group,nodes=topology.data?.nodes??[],groups=topology.data?.groups??[],owner={kind:"group" as const,id:group.id},tab=params.get("tab")??"members";
   const primary=[["incomingRelationId",en?"Primary incoming":"主入边"],["outgoingRelationId",en?"Primary outgoing":"主出边"]] as const;
   return <section translate="no" className="research-workspace research-detail group-detail"><Link className="research-back" to="/topology">← {en?"Research topology":"科研拓扑"}</Link>
+    {query.error&&<p role="alert">{query.error.message}<button className="button" onClick={()=>void query.refetch()}>{en?"Retry":"重试"}</button></p>}
     <header className="research-page-heading"><div><h1>{group.core.nodeName}</h1></div><div className="research-actions"><Link className="button" to={"/topology?group="+encodeURIComponent(group.id)+"&expand=1"}><Layers size={15}/>{en?"Focus in topology":"在拓扑中聚焦"}</Link>{permissions.nodes&&<button className="button" onClick={()=>setEditing(true)}><Pencil size={15}/>{en?"Edit group":"编辑组信息"}</button>}</div></header>
     <dl className="research-field-details research-card"><div><dt>{en?"Category":"分类"}</dt><dd>{group.core.category||"—"}</dd></div><div><dt>{en?"Direct members":"直接成员"}</dt><dd>{data.counts.directNodes}</dd></div><div><dt>{en?"Subgroups":"子组"}</dt><dd>{data.counts.childGroups}</dd></div><div><dt>{en?"Unique nodes":"范围内节点（去重）"}</dt><dd>{data.counts.recursiveUniqueNodes}</dd></div>{group.core.summary&&<div className="research-wide"><dt>{en?"Summary":"摘要"}</dt><dd>{group.core.summary}</dd></div>}{Boolean(group.core.tags?.length)&&<div><dt>{en?"Tags":"标签"}</dt><dd>{group.core.tags?.join(" · ")}</dd></div>}</dl><div className="group-navigation"><span>{en?"Parent: ":"上级组："}</span>{group.parentId?<Link to={objectUrl({kind:"group",id:group.parentId})}>{groups.find(item=>item.id===group.parentId)?.core.nodeName??group.parentId}</Link>:<span>{en?"Root level":"根层级"}</span>}{permissions.nodes&&<button className="button" onClick={()=>setParent(true)}>{en?"Change parent":"调整上级组"}</button>}</div>
     {primary.some(([field])=>group.primaryRelations[field])&&<div className="group-primary-path">{primary.map(([field,label])=>{const relation=data.relations.find(edge=>edge.id===group.primaryRelations[field]);return relation&&<Link key={field} to={objectUrl(relation.other.object)}><small>{label}</small><span>{relation.other.label}</span><ChevronRight size={15}/></Link>;})}</div>}

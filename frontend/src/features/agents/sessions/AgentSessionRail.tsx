@@ -19,6 +19,7 @@ import {
   sessionGroup,
 } from "@/features/agents/conversation/model/agentPresentation";
 import { AgentIcon } from "../icons/AgentIcon";
+import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 
 export function AgentSessionRail({
   sessions,
@@ -27,6 +28,8 @@ export function AgentSessionRail({
   floating = false,
   en,
   pending,
+  loading = false,
+  failed = false,
   onSelect,
   onCreate,
   onToggle,
@@ -37,6 +40,8 @@ export function AgentSessionRail({
   collapsed: boolean;
   en: boolean;
   pending: boolean;
+  loading?: boolean;
+  failed?: boolean;
   floating?: boolean;
   onSelect: (id: string, eventId?: string) => void;
   onCreate: () => void;
@@ -170,7 +175,7 @@ export function AgentSessionRail({
         </p>
       )}
       <div className="session-list">
-        {!collapsed && fullText && query ? (
+        {loading ? <LoadingSkeleton layout={collapsed ? "session-icons" : "sessions"} label={en ? "Loading conversations…" : "正在读取会话列表…"} /> : failed && !rows.length ? null : !collapsed && fullText && query ? (
           <>
             <small>
               {search.isFetching

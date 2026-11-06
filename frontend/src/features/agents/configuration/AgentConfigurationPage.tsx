@@ -16,6 +16,7 @@ import type { CollaborationContext } from "@/shared/types/api";
 import styles from "@/shared/layout/SetupPage.module.css";
 import { AutocompleteInput } from "@/shared/ui/AutocompleteInput";
 import { NativeAgentConfigEditor } from "./NativeAgentConfigEditor";
+import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 
 interface CheckState {
   status: "unchecked" | "ready" | "unavailable";
@@ -194,11 +195,7 @@ export function AgentConfigurationPage() {
               : "检查全部 Agent"}
         </button>
       </header>
-      {inventory.isLoading && (
-        <div className={styles.loading} role="status" aria-busy="true">
-          {en ? "Loading Agent configuration…" : "正在读取 Agent 配置…"}
-        </div>
-      )}
+      {inventory.isPending && !inventory.data && <LoadingSkeleton layout="configuration" label={en ? "Loading Agent configuration…" : "正在读取 Agent 配置…"} />}
       {inventory.error && (
         <div className={styles.error} role="alert">
           {message(inventory.error)}
@@ -224,7 +221,7 @@ export function AgentConfigurationPage() {
       )}
       {inventory.data && (
         <>
-          <div className={styles.agentsGrid} aria-busy={busy}>
+          <div className={styles.agentsGrid} aria-busy={busy || inventory.isFetching}>
             {inventory.data.agents.map((agent) => (
               <article
                 className={`${styles.panel} ${styles.agentCard}`}

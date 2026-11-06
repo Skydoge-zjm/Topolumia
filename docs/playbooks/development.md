@@ -43,4 +43,6 @@ npm run dev:frontend
 
 拉起服务前检查监听端口和已有进程，优先复用健康服务。需要后台启动时，在 Windows 使用隐藏窗口并将输出放入忽略的 runtime；只停止确认属于本任务的进程。
 
+临时 Vite 浏览器、SSR 或诊断实例必须显式设置各自的 cacheDir，使用忽略目录中的独立缓存，不与运行中的前端开发服务共用依赖预构建目录。仅做 SSR 模块检查时还应关闭客户端依赖扫描。遇到 `504 Outdated Optimize Dep`，先停止冲突实例，再用 `npm run dev:frontend -- --force` 重启开发服务；验证实际页面与依赖请求，HTTP 首页返回 200 不能证明动态页面可用。
+
 应用数据与科研工作目录见 [存储架构](../technical/architecture/data-and-storage.md)。公开发布入口以根 README 为准，正式产品、技术和操作文档随代码分发；本机任务记录与参考资料不参与发布。

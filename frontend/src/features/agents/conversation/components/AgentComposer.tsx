@@ -4,6 +4,7 @@ import type { AgentSession, AgentImageAttachment } from "@/shared/types/api";
 import { attachmentImageUrl } from "../../tools/agentAttachments";
 import { SelectMenu } from "../../../../shared/ui/SelectMenu";
 import { AgentMessageQueue } from "./AgentMessageQueue";
+import { Skeleton } from "@/shared/ui/LoadingSkeleton";
 
 export type AgentSubmission = {
   text: string;
@@ -15,6 +16,7 @@ export type AgentSubmission = {
 };
 export function AgentComposer({
   session,
+  loading = false,
   draft,
   setDraft,
   en,
@@ -41,6 +43,7 @@ export function AgentComposer({
   imageError,
 }: {
   session?: AgentSession;
+  loading?: boolean;
   draft: string;
   setDraft: (text: string) => void;
   en: boolean;
@@ -149,6 +152,7 @@ export function AgentComposer({
           </div>
         )}
         <textarea
+          disabled={!session}
           ref={input}
           aria-label={en ? "Research message" : "研究消息"}
           value={draft}
@@ -226,18 +230,20 @@ export function AgentComposer({
               en ? "Settings for the next message" : "下一条消息使用的设置"
             }
           >
-            <SelectMenu
-              value={model}
+            {loading ? <><Skeleton width={110} height={30} /><Skeleton width={70} height={30} /></> : <><SelectMenu
+              value={session ? model : ""}
               onChange={setModel}
               ariaLabel={en ? "Model" : "模型"}
-              options={models}
+              options={session ? models : [{ value: "", label: "—" }]}
+              disabled={!session}
             />
             <SelectMenu
-              value={effort}
+              value={session ? effort : ""}
               onChange={setEffort}
               ariaLabel={en ? "Reasoning effort" : "推理强度"}
-              options={efforts}
-            />
+              options={session ? efforts : [{ value: "", label: "—" }]}
+              disabled={!session}
+            /></>}
           </div>
           <button
             className={`composer-send ${stop ? "is-stop" : ""}`}

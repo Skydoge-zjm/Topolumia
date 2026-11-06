@@ -19,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, projectId } from "@/shared/lib/api";
 import { useUiStore } from "@/shared/state/ui";
+import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import type { CollaborationContext } from "@/shared/types/api";
 import base from "@/shared/layout/SetupPage.module.css";
 import styles from "./ToolsTable.module.css";
@@ -266,11 +267,7 @@ export function ToolsEnvironmentPage() {
           });
         }}
       />
-      {inventory.isLoading && (
-        <div className={base.loading} role="status" aria-busy="true">
-          {en ? "Loading tools and environment…" : "正在读取工具与环境…"}
-        </div>
-      )}
+      {inventory.isPending && !inventory.data && <LoadingSkeleton layout="rows" label={en ? "Loading tools and environment…" : "正在读取工具与环境…"} />}
       {inventory.error && (
         <div className={base.error} role="alert">
           {errorMessage(inventory.error)}

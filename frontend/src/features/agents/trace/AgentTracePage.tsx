@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router-dom";
+import { memo, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api, projectId } from "@/shared/lib/api";
@@ -6,6 +7,7 @@ import { renderMarkdown, renderReasoningSummary } from "@/shared/lib/markdown";
 import {
   buildAgentTrace,
   traceDetail,
+  type TraceGroup,
 } from "@/features/agents/trace/agentTrace";
 import type { AgentSession } from "@/shared/types/api";
 import { useUiStore } from "@/shared/state/ui";
@@ -14,6 +16,7 @@ import { AgentEventIcon } from "@/features/agents/icons/AgentEventIcon";
 
 import { ToolResult } from "@/features/agents/tools/ToolResult";
 import { PageHeader as Header } from "@/shared/layout/PageHeader";
+import { DeferredContent } from "@/shared/ui/DeferredContent";
 export function AgentTracePage() {
   const { sessionId } = useParams();
   const detail = useQuery({
@@ -30,21 +33,9 @@ export function AgentTracePage() {
         ? 1000
         : false,
   });
-  const events = detail.data?.events ?? [];
   const en = useUiStore((state) => state.locale === "en");
-  const groups = buildAgentTrace(events, en);
+  const groups = useMemo(() => buildAgentTrace(detail.data?.events ?? [], en), [detail.data?.events, en]);
   const dropped = detail.data?.eventRetention?.droppedEvents ?? 0;
-  const statusLabel = (status?: string) =>
-    ({
-      completed: en ? "Done" : "完成",
-      running: en ? "Running" : "运行中",
-      streaming: en ? "Streaming" : "正在生成",
-      failed: en ? "Failed" : "失败",
-      incomplete: en ? "Incomplete" : "不完整",
-      interrupted: en ? "Interrupted" : "已中断",
-      pending: en ? "Pending" : "待处理",
-      resolved: en ? "Resolved" : "已处理",
-    })[status ?? ""] ?? "";
   return (
     <section className="trace-page">
       <Header
@@ -66,68 +57,7 @@ export function AgentTracePage() {
           </p>
         )}
         {groups.length ? (
-          groups.map((group) =>
-            group.kind === "message" ? (
-              <article
-                className={`trace-message ${group.id.startsWith("user:") ? "is-user" : ""}`}
-                key={group.id}
-              >
-                <header>
-                  <strong>{group.title}</strong>
-                  <span className="trace-group-status">
-                    {statusLabel(group.status)}
-                  </span>
-                  <time>{group.occurredAt}</time>
-                </header>
-                <div
-                  className="trace-markdown"
-                  translate="no"
-                  dangerouslySetInnerHTML={{
-                    __html: renderMarkdown(group.text ?? ""),
-                  }}
-                />
-              </article>
-            ) : (
-              <details
-                className={`trace-group trace-group--${group.kind}`}
-                key={group.id}
-              >
-                <summary>
-                  <span className="trace-symbol">
-                    <AgentEventIcon item={group} />
-                  </span>
-                  <strong translate="no">{group.title}</strong>
-                  <span className="trace-group-status">
-                    {statusLabel(group.status)}
-                  </span>
-                  <time>{group.occurredAt}</time>
-                  <span className="trace-chevron">›</span>
-                </summary>
-                <div className="trace-group-body">
-                  {group.kind === "reasoning" ||
-                  (group.kind === "plan" && group.text) ? (
-                    <div
-                      className="trace-markdown"
-                      translate="no"
-                      dangerouslySetInnerHTML={{
-                        __html:
-                          group.kind === "reasoning"
-                            ? renderReasoningSummary(group.text ?? "")
-                            : renderMarkdown(group.text ?? ""),
-                      }}
-                    />
-                  ) : group.kind === "tool" ? (
-                    <ToolResult event={group.events[0]} en={en} />
-                  ) : (
-                    <pre className="trace-final-output" translate="no">
-                      {traceDetail(group.events[0]) ||
-                        (en ? "No additional output." : "无额外输出。")}
-                    </pre>
-                  )}
-                </div>
-              </details>
-            ),
-          )
+          groups.map(group => <TraceEntry key={group.id} group={group} en={en} />)
         ) : (
           <div className="trace-empty">当前会话没有可显示的 Trace。</div>
         )}
@@ -135,3 +65,22 @@ export function AgentTracePage() {
     </section>
   );
 }
+
+function TraceEntry({ group, en }: { group: TraceGroup; en: boolean }) {
+  const [open, setOpen] = useState(false);
+  const status = ({ completed: ["完成", "Done"], running: ["运行中", "Running"], streaming: ["正在生成", "Streaming"], failed: ["失败", "Failed"], incomplete: ["不完整", "Incomplete"], interrupted: ["已中断", "Interrupted"], pending: ["待处理", "Pending"], resolved: ["已处理", "Resolved"] } as Record<string, string[]>)[group.status ?? ""]?.[en ? 1 : 0] ?? "";
+  const metadata = <><strong translate="no">{group.title}</strong><span className="trace-group-status">{status}</span><time>{group.occurredAt}</time></>;
+  if (group.kind === "message") return <article className={`trace-message ${group.id.startsWith("user:") ? "is-user" : ""}`}><header>{metadata}</header><DeferredContent>{() => <TraceMarkdown text={group.text ?? ""} />}</DeferredContent></article>;
+  return <details className={`trace-group trace-group--${group.kind}`} onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}>
+    <summary><span className="trace-symbol"><AgentEventIcon item={group} /></span>{metadata}<span className="trace-chevron">›</span></summary>
+    {open && <div className="trace-group-body">{group.kind === "reasoning" || group.kind === "plan" && group.text
+      ? <TraceMarkdown text={group.text ?? ""} reasoning={group.kind === "reasoning"} />
+      : group.kind === "tool" ? <ToolResult event={group.events[0]} en={en} />
+      : <pre className="trace-final-output" translate="no">{traceDetail(group.events[0]) || (en ? "No additional output." : "无额外输出。")}</pre>}</div>}
+  </details>;
+}
+
+const TraceMarkdown = memo(function TraceMarkdown({ text, reasoning = false }: { text: string; reasoning?: boolean }) {
+  const html = useMemo(() => reasoning ? renderReasoningSummary(text) : renderMarkdown(text), [text, reasoning]);
+  return <div className="trace-markdown" translate="no" dangerouslySetInnerHTML={{ __html: html }} />;
+});
