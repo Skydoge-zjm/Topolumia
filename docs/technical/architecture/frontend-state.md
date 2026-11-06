@@ -16,6 +16,8 @@
 
 模块加载失败最多自动重载一次，仍失败则保留错误和手动重载入口。PageReady 必须放在路由 Suspense 内容内部，在模块成功提交后清除重试标记，不能让等待占位提前清除标记。开发环境中，失败页面在成功热更新后重新载入；错误原因仅在开发环境显示，便于诊断失败的模块。
 
+界面示例使用合成数据：[会话历史加载](../../assets/frontend-loading/agent-history.png)、[窄屏配置加载](../../assets/frontend-loading/configuration-mobile.png)。
+
 ## 会话
 
 原生协议先在后端归一化。前端 [agentSession.ts](../../../frontend/src/features/agents/conversation/model/agentSession.ts) 合并 HTTP 快照和 SSE；[conversationProjector.ts](../../../frontend/src/features/agents/conversation/model/conversationProjector.ts) 组织可显示内容。
