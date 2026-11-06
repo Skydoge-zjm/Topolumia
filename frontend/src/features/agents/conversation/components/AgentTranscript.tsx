@@ -12,6 +12,7 @@ import { agentStorageKey } from "@/features/agents/sessions/agentStorage";
 import { createConversationProjector } from "@/features/agents/conversation/model/conversationProjector";
 import { useConversationViewport } from "@/features/agents/conversation/useConversationViewport";
 import { useTranscriptMotion } from "@/features/agents/motion/useTranscriptMotion";
+import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import type { ConversationItem } from "@/features/agents/conversation/model/agentConversation";
 import type { AgentEvent, AgentSession } from "@/shared/types/api";
 import type { AgentApprovalSelection } from "@domain/agents/agent-approval";
@@ -28,6 +29,9 @@ export function AgentTranscript({
   sessionId,
   en,
   ready,
+  loading,
+  loadError,
+  onRetry,
   working,
   onSource,
   onSaved,
@@ -38,12 +42,16 @@ export function AgentTranscript({
   sessionId?: string;
   en: boolean;
   ready: boolean;
+  loading?: boolean;
+  loadError?: string;
+  onRetry?: () => void;
   working: boolean;
   onSource: (ref: string, version?: string) => void;
   onSaved: (id: string) => void;
   onReview: (id: string, decision: string, revision: unknown) => Promise<void>;
   searchTarget?: { eventId: string; sequence: number };
 }) {
+  const loadingHistory = (loading ?? (!ready && Boolean(sessionId))) && !ready;
   const events = session?.conversationEvents ?? session?.events ?? noEvents;
   const permissions = useResearchPermissions();
   const projector = useRef(createConversationProjector());
@@ -320,13 +328,12 @@ export function AgentTranscript({
         en={en}
         onNavigate={viewport.pause}
       />
-      <div className="conversation-scroll" ref={scrollRef}>
+      <div className="conversation-scroll" ref={scrollRef} role="region" aria-label={en ? "Conversation history" : "会话历史"} aria-busy={loadingHistory}>
         <div className="conversation-content">
-          {!ready && sessionId ? (
-            <div className="loading" role="status">
-              {en ? "Loading conversation…" : "正在读取会话…"}
-            </div>
-          ) : !items.length ? (
+          {loadError && <div className="form-error" role="alert">{loadError}{onRetry && <button className="button" onClick={onRetry}>{en ? "Retry" : "重试"}</button>}</div>}
+          {loadingHistory ? (
+            <LoadingSkeleton layout="conversation" label={en ? "Loading conversation…" : "正在读取会话…"} />
+          ) : loadError && !ready ? null : !items.length ? (
             <div className="conversation-empty">
               <strong>
                 {sessionId ? (en ? "No messages" : "暂无消息") : (en ? "No conversation selected" : "尚未选择会话")}

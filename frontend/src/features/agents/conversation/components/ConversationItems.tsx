@@ -20,6 +20,7 @@ import {
   AgentAttachmentGallery,
 } from "../../tools/AgentImageGallery";
 import { AgentApprovalCard } from "../../approvals/AgentApprovalCard";
+import { DeferredContent } from "@/shared/ui/DeferredContent";
 import type { AgentApprovalSelection } from "@domain/agents/agent-approval";
 
 type Props = {
@@ -36,6 +37,7 @@ type Props = {
   onSave?: (item: ConversationItem) => Promise<void>;
   onSource?: (ref: string, version?: string) => void;
   afterItem?: (item: ConversationItem) => ReactNode;
+  deferMessages?: boolean;
 };
 
 function conversationStatus(status: string | undefined, en: boolean): string {
@@ -115,14 +117,11 @@ function Message({
   en,
   onSave,
   onSource,
-}: Pick<Props, "en" | "onSave" | "onSource"> & { item: ConversationItem }) {
+  deferMessages,
+}: Pick<Props, "en" | "onSave" | "onSource" | "deferMessages"> & { item: ConversationItem }) {
   const [feedback, setFeedback] = useState(""),
     [saving, setSaving] = useState(false),
     [saved, setSaved] = useState(false);
-  const html = useMemo(
-    () => renderMarkdown(item.text ?? "", { en, highlight: !item.streaming }),
-    [item.text, item.streaming, en],
-  );
   const partial =
     item.completion && !["completed", "streaming"].includes(item.completion);
   const copy = async (value: string) => {
@@ -186,22 +185,9 @@ function Message({
           )}
         </header>
       )}
-      <div
-        className="message-body"
-        translate="no"
-        onClick={(event) => {
-          const target = event.target as HTMLElement;
-          const button = target.closest<HTMLElement>("[data-code-copy]");
-          if (button)
-            void copy(
-              button.closest(".code-block")?.querySelector("code")
-                ?.textContent ?? "",
-            );
-          const source = target.closest<HTMLElement>("[data-source-ref]");
-          if (source?.dataset.sourceRef) onSource?.(source.dataset.sourceRef);
-        }}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <DeferredContent eager={!deferMessages || Boolean(item.streaming)}>
+        {() => <MessageBody text={item.text ?? ""} streaming={Boolean(item.streaming)} en={en} onCopy={copy} onSource={onSource} />}
+      </DeferredContent>
       {item.attachments?.length && item.events?.[0]?.sessionId ? (
         <div className="message-attachments">
           <AgentAttachmentGallery
@@ -255,6 +241,19 @@ function Message({
     </article>
   );
 }
+
+const MessageBody = memo(function MessageBody({ text, streaming, en, onCopy, onSource }: {
+  text: string; streaming: boolean; en: boolean; onCopy: (value: string) => Promise<void>; onSource?: Props["onSource"];
+}) {
+  const html = useMemo(() => renderMarkdown(text, { en, highlight: !streaming }), [text, streaming, en]);
+  return <div className="message-body" translate="no" onClick={event => {
+    const target = event.target as HTMLElement;
+    const button = target.closest<HTMLElement>("[data-code-copy]");
+    if (button) void onCopy(button.closest(".code-block")?.querySelector("code")?.textContent ?? "");
+    const source = target.closest<HTMLElement>("[data-source-ref]");
+    if (source?.dataset.sourceRef) onSource?.(source.dataset.sourceRef);
+  }} dangerouslySetInnerHTML={{ __html: html }} />;
+});
 
 const ConversationRow = memo(function ConversationRow({
   item,
@@ -482,6 +481,7 @@ export function ConversationItems({
   items: source,
   groupActivities = true,
   afterItem,
+  deferMessages = source.length > 100,
   ...props
 }: Props) {
   const items = useMemo(
@@ -492,7 +492,7 @@ export function ConversationItems({
     <>
       {items.map((item) => (
         <Fragment key={item.key}>
-          <ConversationRow item={item} {...props} />
+          <ConversationRow item={item} {...props} deferMessages={deferMessages} />
           {afterItem?.(item)}
         </Fragment>
       ))}

@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { useState } from "react";
 import type { TableCellStyle, TableGrid } from "@domain/research/table-presentation";
 
 export type TablePreview = {
@@ -38,8 +39,11 @@ const columnName = (index: number) => {
   while (value > 0) { const remainder = (value - 1) % 26; name = String.fromCharCode(65 + remainder) + name; value = Math.floor((value - 1) / 26); }
   return name;
 };
-export function PresentedTable({ preview }: { preview: TablePreview }) {
-  if (!preview.grid) return <div className="research-table-wrap"><table className="research-table"><thead><tr>{preview.columns.map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{preview.rows.map((row, index) => <tr key={index}>{preview.columns.map(column => <td key={column.key}>{String(row[column.key] ?? "—")}</td>)}</tr>)}</tbody></table></div>;
+const ROWS_PER_PAGE = 100;
+export function PresentedTable({ preview, en = false }: { preview: TablePreview; en?: boolean }) {
+  const [page, setPage] = useState(0);
+  const current = Math.min(page, Math.max(0, Math.ceil(preview.rows.length / ROWS_PER_PAGE) - 1)), offset = current * ROWS_PER_PAGE;
+  if (!preview.grid) return <div><div className="research-table-wrap"><table className="research-table"><thead><tr>{preview.columns.map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{preview.rows.slice(offset, offset + ROWS_PER_PAGE).map((row, index) => <tr key={offset + index}>{preview.columns.map(column => <td key={column.key}>{String(row[column.key] ?? "—")}</td>)}</tr>)}</tbody></table></div>{preview.rows.length > ROWS_PER_PAGE && <nav className="research-pagination" aria-label={en ? "Table rows" : "表格行分页"}><button className="button" disabled={!current} onClick={() => setPage(current - 1)}>{en ? "Previous rows" : "上一页表格"}</button><span>{offset + 1}–{Math.min(offset + ROWS_PER_PAGE, preview.rows.length)} / {preview.rows.length}</span><button className="button" disabled={offset + ROWS_PER_PAGE >= preview.rows.length} onClick={() => setPage(current + 1)}>{en ? "Next rows" : "下一页表格"}</button></nav>}</div>;
   const grid = preview.grid;
   return <div className="research-table-wrap"><table className="research-table research-styled-table">
     {grid.columnWidths && <colgroup>{grid.columnWidths.map((width, index) => <col key={index} style={{ width }} />)}</colgroup>}

@@ -5,16 +5,18 @@ import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { MetricTable, LinkList } from "@/features/research/components/ResearchUi";
 import { text, safeUrl } from "@/features/research/model";
 import type { Metric } from "@/features/research/model";
+import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 export function ExperimentResults({ id, en }: { id: string; en: boolean }) {
   const query = useQuery({ queryKey: ["node-results", projectId(), id], queryFn: () => api<any>(`/api/research-nodes/${encodeURIComponent(id)}/results`) });
   const [metric, setMetric] = useState("");
-  if (query.isPending) return <p role="status">{en ? "Reading experiment results…" : "正在读取实验结果…"}</p>;
-  if (query.error) return <p role="alert">{query.error.message}</p>;
+  if (query.isPending) return <LoadingSkeleton layout="cards" label={en ? "Reading experiment results…" : "正在读取实验结果…"} />;
+  if (query.error && !query.data) return <p role="alert">{query.error.message}<button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button></p>;
   const data = query.data, details: any[] = data.details ?? [], attempts: any[] = data.attempts ?? [];
   const allSeries = details.flatMap(detail => (detail.series?.series ?? detail.run?.series ?? []).map((series: any) => ({ ...series, run: detail.run })));
   const keys = [...new Set<string>(allSeries.map(line => line.key))], selected = keys.includes(metric) ? metric : keys[0];
   const summaryMetrics: Metric[] = Object.entries(data.experiment?.keyMetrics ?? {}).filter(([, value]) => typeof value === "number").map(([name, value]) => ({ name, value: value as number, unit: "", split: "", direction: "none" }));
   return <div className="research-results">
+    {query.error && <p role="alert">{query.error.message}<button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button></p>}
     {(data.warnings ?? []).map((warning: any, index: number) => <p className="research-warning" key={index}>{warning.message}</p>)}
     <section className="research-card"><h2>{en ? "Result metrics" : "结果指标"}</h2><MetricTable metrics={data.authoredMetrics.length ? data.authoredMetrics : summaryMetrics} en={en} /></section>
     {data.experiment && <section className="research-card"><h2>{en ? "Design and limitations" : "设计与局限"}</h2><p>{text(data.experiment.purpose, en)}</p><dl className="research-field-details">{Object.entries(data.experiment.design ?? {}).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>{(data.experiment.controls ?? []).map((item: any, i: number) => <p key={`c${i}`}>{en ? "Control: " : "控制条件："}{text(item, en)}</p>)}{(data.experiment.limitations ?? []).map((item: any, i: number) => <p className="research-warning" key={`l${i}`}>{text(item, en)}</p>)}</section>}

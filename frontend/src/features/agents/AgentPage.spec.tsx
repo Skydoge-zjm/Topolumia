@@ -171,6 +171,7 @@ async function open() {
     </QueryClientProvider>,
   );
   await screen.findByRole("heading", { name: "Session one" });
+  await waitFor(() => expect(screen.getByRole("region", { name: "会话历史" })).toHaveAttribute("aria-busy", "false"));
   return userEvent.setup();
 }
 

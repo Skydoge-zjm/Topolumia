@@ -29,6 +29,8 @@ import { useLocalizedDom } from "@/shared/lib/i18n";
 import { useUiStore } from "@/shared/state/ui";
 import type { CollaborationContext } from "@/shared/types/api";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
+import { LoadingSkeleton, Skeleton } from "@/shared/ui/LoadingSkeleton";
+import { PageBoundary, PageReady } from "@/shared/layout/PageBoundary";
 import { EntryPage } from "./entry/EntryPage";
 import { LoginPage } from "./entry/LoginPage";
 const ProjectsPage = lazy(() =>
@@ -168,7 +170,7 @@ export function App() {
       .catch(() => setAuthenticated(false));
   }, []);
   if (authenticated === null)
-    return <div className="loading">正在连接研究工作台…</div>;
+    return <LoadingSkeleton heading label={locale === "en" ? "Connecting to research workspace…" : "正在连接研究工作台…"} className="page" />;
   if (!authenticated)
     return (
       <Routes>
@@ -197,32 +199,24 @@ export function App() {
       location.pathname,
     )
   )
-    return (
-      <Suspense
-        fallback={
-          <div className="loading">
-            {locale === "en" ? "Loading page…" : "正在载入页面…"}
-          </div>
-        }
-      >
-        <ProjectShell />
-      </Suspense>
-    );
-  return (
-    <Suspense
-      fallback={
-        <div className="loading">
-          {locale === "en" ? "Loading page…" : "正在载入页面…"}
-        </div>
-      }
-    >
-      <Workspace />
-    </Suspense>
-  );
+    return <ProjectShell />;
+  return <Workspace />;
+}
+
+function RouteLoading({ en }: { en: boolean }) {
+  const { pathname } = useLocation();
+  const compactRail = useUiStore(state => state.agentFocus || state.sessionRailCollapsed);
+  const layout = pathname === "/agents" ? "agent" : pathname === "/agent-settings" ? "configuration" : /\/topology\/(nodes|groups)\//.test(pathname) || /\/records\/.+/.test(pathname) ? "detail" : "page";
+  return <section className={pathname === "/agent-settings" ? "page" : layout === "detail" ? "research-workspace research-detail" : "research-workspace"}>{layout === "detail" && <Link className="research-back" to={pathname.startsWith("/topology/") ? "/topology" : "/records"}>← {pathname.startsWith("/topology/") ? en ? "Research topology" : "科研拓扑" : en ? "Research records" : "研究记录"}</Link>}<LoadingSkeleton layout={layout} compactRail={compactRail} heading={layout !== "agent"} label={en ? "Loading page…" : "正在载入页面…"} /></section>;
+}
+
+function ContextError({ error, retry, en }: { error: Error; retry: () => void; en: boolean }) {
+  return <div className="form-error" role="alert">{error.message}<button className="button" onClick={retry}>{en ? "Retry" : "重试"}</button></div>;
 }
 
 function ProjectShell() {
   const context = useContext();
+  const location = useLocation();
   const navigate = useNavigate();
   const { locale, setLocale } = useUiStore();
   const logout = async () => {
@@ -230,8 +224,6 @@ function ProjectShell() {
     navigate("/login");
     window.location.reload();
   };
-  if (context.isLoading)
-    return <div className="loading">正在读取项目上下文…</div>;
   return (
     <div className="project-shell">
       <header className="project-topbar">
@@ -246,21 +238,21 @@ function ProjectShell() {
         <span className="topbar-spacer" />
         <span className="account-chip">
           <span className="avatar avatar--green">
-            {String(
+            {context.data ? String(
               context.data?.actor?.displayName ??
                 context.data?.actor?.username ??
                 "S",
             )
               .slice(0, 1)
-              .toUpperCase()}
+              .toUpperCase() : <Skeleton width={20} height={20} />}
           </span>
           <span>
             <b>
-              {context.data?.actor?.displayName ??
+              {context.data ? context.data.actor?.displayName ??
                 context.data?.actor?.username ??
-                "研究者"}
+                "研究者" : <Skeleton width={90} />}
             </b>
-            <small>{context.data?.actor?.serverRole ?? "researcher"}</small>
+            <small>{context.data ? context.data.actor?.serverRole ?? "researcher" : <Skeleton width={64} height={12} />}</small>
           </span>
         </span>
         <button
@@ -274,11 +266,11 @@ function ProjectShell() {
         </button>
       </header>
       <main className="project-main">
-        <Routes>
+        {context.isPending ? <RouteLoading en={locale === "en"} /> : context.error && !context.data ? <ContextError error={context.error} retry={() => void context.refetch()} en={locale === "en"} /> : <PageBoundary key={location.pathname} en={locale === "en"}><Suspense fallback={<RouteLoading en={locale === "en"} />}><PageReady><Routes>
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/project-create" element={<ProjectCreatePage />} />
           <Route path="/collaboration" element={<CollaborationPage />} />
-        </Routes>
+        </Routes></PageReady></Suspense></PageBoundary>}
       </main>
     </div>
   );
@@ -301,8 +293,6 @@ function Workspace() {
     navigate("/login");
     window.location.reload();
   };
-  if (context.isLoading)
-    return <div className="loading">正在读取项目上下文…</div>;
   return (
     <div className="app">
       <header className="topbar">
@@ -330,21 +320,21 @@ function Workspace() {
               aria-label={locale === "en" ? "Account menu" : "账号菜单"}
             >
               <span className="avatar avatar--green">
-                {String(
+                {context.data ? String(
                   context.data?.actor?.displayName ??
                     context.data?.actor?.username ??
                     "S",
                 )
                   .slice(0, 1)
-                  .toUpperCase()}
+                  .toUpperCase() : <Skeleton width={20} height={20} />}
               </span>
               <span>
                 <strong>
-                  {context.data?.actor?.displayName ??
+                  {context.data ? context.data.actor?.displayName ??
                     context.data?.actor?.username ??
-                    "研究者"}
+                    "研究者" : <Skeleton width={90} />}
                 </strong>
-                <small>{context.data?.actor?.serverRole ?? "researcher"}</small>
+                <small>{context.data ? context.data.actor?.serverRole ?? "researcher" : <Skeleton width={64} height={12} />}</small>
               </span>
               <ChevronDown size={15} />
             </button>
@@ -437,11 +427,11 @@ function Workspace() {
           </nav>
           <div className="sidebar-footer">
             <small>当前研究线</small>
-            <strong>{project?.name ?? "Research Project"}</strong>
+            <strong>{project?.name ?? <Skeleton width={120} />}</strong>
           </div>
         </aside>
         <main className={`main ${isAgentPage ? "agent-workspace-main" : ""}`}>
-          <Routes>
+          {context.isPending ? <RouteLoading en={locale === "en"} /> : context.error && !context.data ? <ContextError error={context.error} retry={() => void context.refetch()} en={locale === "en"} /> : <PageBoundary key={location.pathname} en={locale === "en"}><Suspense fallback={<RouteLoading en={locale === "en"} />}><PageReady><Routes>
             <Route
               path="/login"
               element={<Navigate to="/projects" replace />}
@@ -477,7 +467,7 @@ function Workspace() {
             <Route path="/collaboration" element={<CollaborationPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<ProjectsPage />} />
-          </Routes>
+          </Routes></PageReady></Suspense></PageBoundary>}
         </main>
       </div>
     </div>

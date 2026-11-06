@@ -1,6 +1,6 @@
 import ELK from "elkjs/lib/elk-api.js";
 import type { ElkNode } from "elkjs/lib/elk-api.js";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDownRight, ArrowLeft, ArrowUpLeft, ChevronDown, ChevronRight, ExternalLink, Focus, Layers, Maximize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -66,6 +66,7 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
   const canvas = useRef<HTMLDivElement>(null), world = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState<ContainerLayout>(EMPTY_LAYOUT), layoutRef = useRef(EMPTY_LAYOUT);
   const [camera, setCamera] = useState<Camera>({ x: 30, y: 30, scale: 1 }), cameraRef = useRef(camera), animation = useRef<number | null>(null);
+  const cameraFrame = useRef<number | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 }), [moving, setMoving] = useState(false);
   const [loading, setLoading] = useState(true), [layoutError, setLayoutError] = useState(false), [resetRevision, setResetRevision] = useState(0);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null), [highlighted, setHighlighted] = useState<string | null>(null);
@@ -80,20 +81,27 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
   const viewport = useCallback(() => ({ width: canvas.current?.clientWidth ?? 1, height: canvas.current?.clientHeight ?? 1 }), []);
   const setFocus = useCallback((id: string | null) => { focusedRef.current = id; setFocusedGroup(id); }, []);
   const cancelCamera = useCallback(() => { if (animation.current !== null) { cancelAnimationFrame(animation.current); setCamera({ ...cameraRef.current }); } animation.current = null; setMoving(false); }, []);
+  const publishCamera = useCallback(() => {
+    if (cameraFrame.current === null) cameraFrame.current = requestAnimationFrame(() => {
+      cameraFrame.current = null;
+      setCamera({ ...cameraRef.current });
+    });
+  }, []);
   const moveCamera = useCallback((next: Camera, animate = true) => {
     cancelCamera();
     const start = { ...cameraRef.current }, reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const apply = (value: Camera) => { cameraRef.current = value; if (world.current) world.current.style.transform = transform(value); };
-    if (!animate || reduced) { apply(next); setCamera(next); return; }
+    if (!animate || reduced) { apply(next); if (!initialized.current) setCamera(next); else publishCamera(); return; }
     const began = performance.now(); setMoving(true);
     const tick = (now: number) => {
       const progress = Math.min(1, (now - began) / 280), eased = 1 - (1 - progress) ** 3;
-      apply({ x: start.x + (next.x - start.x) * eased, y: start.y + (next.y - start.y) * eased, scale: start.scale + (next.scale - start.scale) * eased });
+      const value = { x: start.x + (next.x - start.x) * eased, y: start.y + (next.y - start.y) * eased, scale: start.scale + (next.scale - start.scale) * eased };
+      apply(value); setCamera(value);
       if (progress < 1) animation.current = requestAnimationFrame(tick);
       else { animation.current = null; setMoving(false); setCamera(next); }
     };
     animation.current = requestAnimationFrame(tick);
-  }, [cancelCamera]);
+  }, [cancelCamera, publishCamera]);
   const rememberPreview = useCallback((scene: ContainerLayout, source: GroupProjection) => {
     for (const node of source.nodes) if (node.groupId && !node.collapsed && scene.frames[node.id]) {
       const container = scene.frames[node.id], points: Record<string, Point> = {};
@@ -186,7 +194,7 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
     };
     element.addEventListener("wheel", wheel, { passive: false }); return () => element.removeEventListener("wheel", wheel);
   }, [moveCamera]);
-  useEffect(() => () => { if (animation.current !== null) cancelAnimationFrame(animation.current); }, []);
+  useEffect(() => () => { if (animation.current !== null) cancelAnimationFrame(animation.current); if (cameraFrame.current !== null) cancelAnimationFrame(cameraFrame.current); }, []);
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, id?: string) => {
     if (event.button !== 0) return;
@@ -208,8 +216,22 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
   };
   const zoom = (factor: number) => { const size = viewport(), current = cameraRef.current, next = clamp(current.scale * factor, MIN_SCALE, MAX_SCALE); moveCamera({ scale: next, x: size.width / 2 - (size.width / 2 - current.x) * next / current.scale, y: size.height / 2 - (size.height / 2 - current.y) * next / current.scale }); };
   const focusedNode = graph.nodes.find(node => node.id === focusedGroup), activeFrame = focusedGroup ? layout.frames[focusedGroup] : undefined;
+  const visible = useMemo(() => {
+    const margin = 300 / camera.scale;
+    const area = { left: -camera.x / camera.scale - margin, top: -camera.y / camera.scale - margin, right: (viewportSize.width - camera.x) / camera.scale + margin, bottom: (viewportSize.height - camera.y) / camera.scale + margin };
+    const intersects = (left: number, top: number, right: number, bottom: number) => right >= area.left && left <= area.right && bottom >= area.top && top <= area.bottom;
+    const nodes = graph.nodes.filter(node => {
+      const frame = layout.frames[node.id];
+      return frame && (node.id === drag.current?.id || intersects(frame.x, frame.y, frame.x + frame.width, frame.y + frame.height));
+    });
+    const edges = graph.edges.filter(edge => {
+      const from = layout.frames[edge.from], to = layout.frames[edge.to];
+      return from && to && intersects(Math.min(from.x, to.x), Math.min(from.y, to.y), Math.max(from.x + from.width, to.x + to.width), Math.max(from.y + from.height, to.y + to.height));
+    });
+    return { nodes, edges };
+  }, [camera, graph, layout, viewportSize]);
   const depth = (id: string) => { let count = 0, parent = layout.frames[id]?.parentId; while (parent) { count++; parent = layout.frames[parent]?.parentId; } return count; };
-  const containers = graph.nodes.filter(node => node.groupId && layout.frames[node.id]).sort((a, b) => depth(a.id) - depth(b.id));
+  const containers = visible.nodes.filter(node => node.groupId).sort((a, b) => depth(a.id) - depth(b.id));
   const labels = new Map(graph.nodes.map(node => [node.id, text(node.label, en)]));
   const contexts = new Map<string, { id: string; label: string; x: number; y: number; incoming: boolean }>();
   if (focusedGroup && activeFrame && !moving) for (const edge of graph.edges) {
@@ -251,7 +273,7 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
           <marker id="research-arrow" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="currentColor" /></marker>
           <marker id="research-arrow-primary" markerWidth="10" markerHeight="10" refX="8" refY="3.4" orient="auto"><path d="M0,0 L0,6.8 L9,3.4 z" fill="#178d70" /></marker>
         </defs>
-        {graph.edges.map(edge => {
+        {visible.edges.map(edge => {
           const a = layout.frames[edge.from], b = layout.frames[edge.to]; if (!a || !b) return null;
           if (focusedGroup && !isWithin(edge.from, focusedGroup, layout.frames) && !isWithin(edge.to, focusedGroup, layout.frames)) return null;
           const points = edgePoints(a, b), related = !highlighted || edge.from === focusedGroup || edge.to === focusedGroup || isWithin(edge.from, highlighted, layout.frames) || isWithin(edge.to, highlighted, layout.frames);
@@ -261,21 +283,21 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
             <path className="topology-edge-hit" d={points.path} fill="none" stroke="transparent" strokeWidth={16} vectorEffect="non-scaling-stroke" />
             {edge.primary && <path className="topology-edge-glow" d={points.path} fill="none" vectorEffect="non-scaling-stroke" />}
             <path className="topology-edge-line" d={points.path} markerEnd={edge.primary ? "url(#research-arrow-primary)" : "url(#research-arrow)"} vectorEffect="non-scaling-stroke" />
-            <g className="topology-edge-label" transform={`translate(${points.label.x},${points.label.y})`}>
+            {(zoomLevel === "full" || edge.primary) && <g className="topology-edge-label" transform={`translate(${points.label.x},${points.label.y})`}>
               <rect x={0} y={-height / 2} width={width} height={height} rx={height / 2} vectorEffect="non-scaling-stroke" />
               <text x={width / 2} y={0} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 11 / typeScale(camera.scale) }}>{label}</text>
-            </g>
+            </g>}
           </g>;
         })}
       </svg>
-      {graph.nodes.map(node => {
+      {visible.nodes.map(node => {
         const frame = layout.frames[node.id]; if (!frame) return null;
         const sharedNames = node.sharedGroupIds?.map(id => labels.get(objectKey(groupRef(id)))).filter(Boolean).join(en ? ", " : "、");
         if (node.groupId) return <section key={node.id} className={`research-graph-node is-group topology-group-container ${node.collapsed ? "is-collapsed" : "is-expanded"} ${focusedGroup === node.id ? "is-focused" : ""}`} style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }} data-object-kind="group" data-object-id={node.object.id} data-collapsed={String(Boolean(node.collapsed))} data-layout-parent={frame.parentId ?? ""} data-depth={depth(node.id)} aria-label={text(node.label, en)} onMouseEnter={() => setHighlighted(node.id)} onMouseLeave={() => setHighlighted(null)}>
           {node.collapsed ? <button className="topology-group-preview" aria-label={`${en ? "Expand" : "展开"} ${text(node.label, en)}`} onPointerDown={event => startDrag(event, node.id)} onClick={event => { if (suppressClick.current && event.detail !== 0) { suppressClick.current = false; return; } onExpand(node.groupId!); }}>
             <span className="topology-group-preview-head"><Layers size={13} aria-hidden="true" /><strong className="topology-group-preview-title">{text(node.label, en)}</strong></span>
-            <Miniature node={node} positions={previewPositions.current.get(node.id)} en={en} />
-            <span className="topology-group-preview-foot"><span>{node.memberCount} {en ? "nodes" : "个节点"}{node.sharedCount ? (en ? ` · ${node.sharedCount} shared` : ` · ${node.sharedCount} 个共享`) : ""}</span><span className="topology-group-enter">{en ? "Open" : "展开"}<ChevronRight size={13} /></span></span>
+            {zoomLevel !== "far" && <Miniature node={node} positions={previewPositions.current.get(node.id)} en={en} />}
+            {zoomLevel !== "far" && <span className="topology-group-preview-foot"><span>{node.memberCount} {en ? "nodes" : "个节点"}{node.sharedCount ? (en ? ` · ${node.sharedCount} shared` : ` · ${node.sharedCount} 个共享`) : ""}</span><span className="topology-group-enter">{en ? "Open" : "展开"}<ChevronRight size={13} /></span></span>}
           </button> : <>
             <div className="topology-container-header" onPointerDown={event => { if (!(event.target as Element).closest("button,a")) startDrag(event, node.id); }}>
               <div className="topology-container-title"><Layers size={14} aria-hidden="true" /><h3 title={text(node.label, en)}>{text(node.label, en)}</h3><span className="topology-container-count">{node.memberCount} {en ? "nodes" : "个节点"}</span></div>
@@ -287,11 +309,11 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
         const visual = nodeVisual(node.kind), Icon = visual.icon, nested = Boolean(frame.parentId);
         return <div key={node.id} className={`research-graph-node topology-member-node ${node.sharedGroupIds?.length ? "is-shared" : ""} ${nested ? "is-nested" : "is-root"}`} data-object-kind="node" data-object-id={node.object.id} data-layout-parent={frame.parentId ?? ""} data-family={visual.family} style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height, "--family": familyColor(visual.family) } as CSSProperties} onMouseEnter={() => setHighlighted(node.id)} onMouseLeave={() => setHighlighted(null)}>
           <button className="research-graph-node-main" onPointerDown={event => startDrag(event, node.id)} onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } onOpen(node); }}>
-            <span className="topology-node-head"><span className="topology-node-icon" aria-hidden="true"><Icon size={14} /></span><strong title={text(node.summary, en)}>{text(node.label, en)}</strong></span>
-            <span className="topology-node-meta">{(en ? nodeKinds[node.kind]?.en : nodeKinds[node.kind]?.label) ?? node.kind}<i aria-hidden="true">·</i>{node.status}{node.sharedGroupIds?.length ? <><i aria-hidden="true">·</i>{en ? "shared" : "共享"}</> : null}</span>
-            {sharedNames && <span className="topology-shared-membership" title={sharedNames}>{sharedNames}</span>}
+            <span className="topology-node-head">{zoomLevel !== "far" && <span className="topology-node-icon" aria-hidden="true"><Icon size={14} /></span>}<strong title={text(node.summary, en)}>{text(node.label, en)}</strong></span>
+            {zoomLevel !== "far" && <span className="topology-node-meta">{(en ? nodeKinds[node.kind]?.en : nodeKinds[node.kind]?.label) ?? node.kind}<i aria-hidden="true">·</i>{node.status}{node.sharedGroupIds?.length ? <><i aria-hidden="true">·</i>{en ? "shared" : "共享"}</> : null}</span>}
+            {zoomLevel === "full" && sharedNames && <span className="topology-shared-membership" title={sharedNames}>{sharedNames}</span>}
           </button>
-          {onSelect && <input className="graph-node-select" type="checkbox" aria-label={`${en ? "Select" : "选择"} ${text(node.label, en)}`} checked={selection?.includes(node.object.id) ?? false} onPointerDown={event => event.stopPropagation()} onChange={() => onSelect(node.object.id)} />}
+          {onSelect && zoomLevel === "full" && <input className="graph-node-select" type="checkbox" aria-label={`${en ? "Select" : "选择"} ${text(node.label, en)}`} checked={selection?.includes(node.object.id) ?? false} onPointerDown={event => event.stopPropagation()} onChange={() => onSelect(node.object.id)} />}
         </div>;
       })}
     </div>

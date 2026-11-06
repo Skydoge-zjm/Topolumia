@@ -7,6 +7,7 @@ import { api, projectId } from "@/shared/lib/api";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { text } from "../model";
 import type { HistoryEvent } from "./model";
+import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 export function ResearchHistoryPanel({ en }: { en: boolean }) {
   const [search, setSearch] = useState(""), [category, setCategory] = useState(""), [actor, setActor] = useState(""), [outcome, setOutcome] = useState(""), [offset, setOffset] = useState(0);
   const query = useQuery({ queryKey: ["research-history", projectId(), search, category, actor, outcome, offset], queryFn: () => api<{ items: HistoryEvent[]; total: number; nextOffset: number | null }>(`/api/research-history?${new URLSearchParams({ q: search, category, actor, outcome, offset: String(offset) })}`), refetchInterval: 10000 });
@@ -14,9 +15,9 @@ export function ResearchHistoryPanel({ en }: { en: boolean }) {
     <SelectMenu ariaLabel={en ? "History category" : "科研事件类型"} value={category} onChange={value => { setCategory(value); setOffset(0); }} options={[{ value: "", label: en ? "All research events" : "全部科研事件" }, ...Object.entries(historyCategories).map(([value, labels]) => ({ value, label: labels[en ? 1 : 0] }))]} />
     <SelectMenu ariaLabel={en ? "Participants" : "事件参与方"} value={actor} onChange={value => { setActor(value); setOffset(0); }} options={[{ value: "", label: en ? "All participants" : "全部参与方" }, { value: "human", label: en ? "Researchers" : "研究者" }, { value: "agent", label: "Agent" }, { value: "system", label: en ? "System" : "系统" }]} />
     <SelectMenu ariaLabel={en ? "Event outcome" : "科研事件结果"} value={outcome} onChange={value => { setOutcome(value); setOffset(0); }} options={[{ value: "", label: en ? "All outcomes" : "全部结果" }, ...Object.entries(historyOutcomes).map(([value, labels]) => ({ value, label: labels[en ? 1 : 0] }))]} /><span>{query.data?.total ?? 0} {en ? "events" : "项事件"}</span></div>
-    {query.error && <p role="alert">{query.error.message}</p>}{query.isPending && <p role="status">{en ? "Reading research history…" : "载入科研历程…"}</p>}
+    {query.error && <p role="alert">{query.error.message}<button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button></p>}{query.isPending && <LoadingSkeleton layout="rows" label={en ? "Reading research history…" : "载入科研历程…"} />}
     <div className="research-history-list">{query.data?.items.map(event => <HistoryEntry key={event.id} event={event} en={en} />)}</div>
-    {!query.isPending && !query.data?.items.length && <div className="research-empty research-record-empty"><Network size={30} /><h2>{en ? "No research events" : "暂无科研事件"}</h2></div>}
+    {!query.isPending && !query.error && !query.data?.items.length && <div className="research-empty research-record-empty"><Network size={30} /><h2>{en ? "No research events" : "暂无科研事件"}</h2></div>}
     <footer className="research-pagination"><button className="button" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 40))}>{en ? "Previous" : "上一页"}</button><button className="button" disabled={query.data?.nextOffset == null} onClick={() => setOffset(query.data!.nextOffset!)}>{en ? "Next" : "下一页"}</button></footer>
   </div>;
 }

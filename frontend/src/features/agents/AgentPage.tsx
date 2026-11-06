@@ -37,6 +37,7 @@ import {
 import { AgentSessionRail } from "@/features/agents/sessions/AgentSessionRail";
 import { AgentResearchDrawer } from "@/features/agents/research/AgentResearchDrawer";
 import { AgentTranscript } from "@/features/agents/conversation/components/AgentTranscript";
+import { Skeleton } from "@/shared/ui/LoadingSkeleton";
 import { WorkingIndicator } from "@/features/agents/conversation/components/WorkingIndicator";
 import { AgentIcon } from "@/features/agents/icons/AgentIcon";
 import { AgentHistoryStatus } from "./sessions/AgentHistoryStatus";
@@ -72,6 +73,8 @@ export function AgentPage() {
     : (rows.find((row) => !row.archived)?.id ?? rows[0]?.id);
   const detail = useAgentDetail(activeId),
     session = detail.data?.id === activeId ? detail.data : undefined;
+  const summary = rows.find(row => row.id === activeId);
+  const loadingSession = sessions.isPending || Boolean(activeId && detail.isPending);
   const {
     locale,
     agentFocus,
@@ -423,12 +426,12 @@ export function AgentPage() {
         {en ? "Agent conversations" : "Agent 会话"}
       </h1>
       {!creating &&
-        (error || profiles.error || sessions.error || detail.error) && (
+        (error || profiles.error || sessions.error) && (
           <div className="form-error" role="alert">
             {error ||
               profiles.error?.message ||
-              sessions.error?.message ||
-              detail.error?.message}
+              sessions.error?.message}
+            {(profiles.error || sessions.error) && <button className="button" disabled={profiles.isFetching || sessions.isFetching} onClick={() => { if (profiles.error) void profiles.refetch(); if (sessions.error) void sessions.refetch(); }}>{en ? "Retry" : "重试"}</button>}
           </div>
         )}
       {disconnected && (
@@ -455,6 +458,8 @@ export function AgentPage() {
           floating={narrow && railOverlay}
           en={en}
           pending={busy}
+          loading={sessions.isPending && !sessions.data}
+          failed={Boolean(sessions.error)}
           onSelect={select}
           onCreate={() => {
             setProfileId(session?.profileId ?? profile?.id ?? "");
@@ -473,19 +478,17 @@ export function AgentPage() {
           <div className="conversation-head">
             <div className="conversation-title">
               <span className="conversation-mark">
-                <AgentIcon profile={profile} size={15} />
+                {loadingSession ? <Skeleton width={16} height={16} /> : <AgentIcon profile={session ? profile : profiles.data?.profiles.find(item => item.id === summary?.profileId)} size={15} />}
               </span>
               <div>
                 <h2 translate="no">
-                  {session?.title ?? (en ? "Agent conversation" : "Agent 会话")}
+                  {session?.title ?? summary?.title ?? (loadingSession ? <Skeleton width={160} height={18} /> : en ? "Agent conversation" : "Agent 会话")}
                 </h2>
                 <span
                   className={`conversation-status status-${stopping ? "stopping" : (session?.status ?? "idle")}`}
-                  data-session-status={
-                    stopping ? "stopping" : (session?.status ?? "ready")
-                  }
+                  data-session-status={loadingSession ? "loading" : stopping ? "stopping" : (session?.status ?? "unavailable")}
                 >
-                  {session?.status === "running" && !stopping ? (
+                  {loadingSession ? <Skeleton width={64} height={12} /> : !session ? "—" : session.status === "running" && !stopping ? (
                     <WorkingIndicator
                       session={session}
                       events={session.conversationEvents ?? []}
@@ -672,6 +675,9 @@ export function AgentPage() {
             sessionId={activeId}
             session={session}
             ready={Boolean(session)}
+            loading={loadingSession}
+            loadError={detail.error?.message}
+            onRetry={() => void detail.refetch()}
             en={en}
             working={
               session?.status === "running" && !stopping && !disconnected
@@ -686,6 +692,7 @@ export function AgentPage() {
           <AgentComposer
             key={`composer:${activeId}`}
             session={session}
+            loading={loadingSession}
             draft={draft}
             setDraft={setDraft}
             images={images}

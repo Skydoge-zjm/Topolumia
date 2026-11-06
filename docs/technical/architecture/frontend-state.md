@@ -6,6 +6,16 @@
 
 [shared/lib/api.ts](../../../frontend/src/shared/lib/api.ts) 统一请求与项目绑定。跨项目查询键必须包含项目身份；项目切换不能复用其他项目的结果。
 
+## 页面加载
+
+导航与页面外壳先挂载，项目上下文、路由模块和业务数据分别提供等待反馈。路由的 Suspense 与 [PageBoundary](../../../frontend/src/shared/layout/PageBoundary.tsx) 放在正文区域内，页面模块等待或失败都不卸载导航和账号区域。
+
+[LoadingSkeleton](../../../frontend/src/shared/ui/LoadingSkeleton.tsx) 提供布局占位与可访问的忙碌状态，默认等待 150 ms 后显现；减少动态效果时保留占位并关闭脉冲。页面只在缺少目标数据的初次读取时显示骨架，同一查询后台刷新继续显示缓存内容。列表、会话详情、材料和实验结果分别读取，已完成的区域不等待其他区域；Agent 回复仍使用原有 SSE。
+
+会话标题可以先使用列表中的真实摘要，历史区域通过 aria-busy 单独表示是否就绪。详情加载完成前禁用输入与模型设置；切换会话不复用上一会话正文。科研对象和记录修订也按独立查询键读取，修订等待时不在新版本标识下显示旧正文。
+
+模块加载失败最多自动重载一次，仍失败则保留错误和手动重载入口。PageReady 必须放在路由 Suspense 内容内部，在模块成功提交后清除重试标记，不能让等待占位提前清除标记。开发环境中，失败页面在成功热更新后重新载入；错误原因仅在开发环境显示，便于诊断失败的模块。
+
 ## 会话
 
 原生协议先在后端归一化。前端 [agentSession.ts](../../../frontend/src/features/agents/conversation/model/agentSession.ts) 合并 HTTP 快照和 SSE；[conversationProjector.ts](../../../frontend/src/features/agents/conversation/model/conversationProjector.ts) 组织可显示内容。
