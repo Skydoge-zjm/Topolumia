@@ -4,6 +4,8 @@
 
 项目处于探索开发阶段，当前主要面向本机使用，功能和数据结构仍在迭代。第一次使用可按 [入门教程](docs/playbooks/getting-started.md) 完成从空项目到研究记录的流程。
 
+介绍页：<https://skydoge-zjm.github.io/Topolumia/>（源码在 [site/](site/)，中英双语）。
+
 ## 启动
 
 需要 **Node.js 22.13+（22 / 24 LTS）**、npm 和 Git。

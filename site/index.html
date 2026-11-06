@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b3b30" />
+    <title data-i18n="meta.title">Topolumia · 本地优先的科研工作台</title>
+    <meta name="description" data-i18n-content="meta.description" content="连接 Codex、Claude Code 和 OpenCode，通过 MCP 读写科研上下文，把问题、文献、假说、实验和结论组织成可探索的拓扑。" />
+    <meta property="og:title" content="Topolumia" />
+    <meta property="og:description" content="本地优先的科研工作台：研究拓扑、Agent 候选与人审阅。" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://skydoge-zjm.github.io/Topolumia/" />
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="assets/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <a class="brand" href="./" aria-label="Topolumia">
+        <img src="assets/mark.png" alt="" width="28" height="28" />
+        <span>Topolumia</span>
+      </a>
+      <nav class="nav" aria-label="主要">
+        <a href="#topology" data-i18n="nav.topology">科研拓扑</a>
+        <a href="#agents" data-i18n="nav.agents">Agent 协作</a>
+        <a href="#install" data-i18n="nav.install">安装</a>
+        <a href="https://github.com/Skydoge-zjm/Topolumia" data-i18n="nav.source">GitHub</a>
+      </nav>
+      <button class="lang" type="button" aria-label="Switch to English">
+        <span data-lang-label>EN</span>
+      </button>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <h1 data-i18n="hero.title">研究不是一次对话，而是一张会生长的图。</h1>
+          <p data-i18n="hero.lead">
+            Topolumia 是本地优先的科研工作台。它连接 Codex、Claude Code 与 OpenCode，
+            通过 MCP 读写科研上下文，把问题、文献、假说、实验和结论组织成可探索的拓扑；
+            Agent 提出的变更先进入审阅，再由你决定是否写入研究记录。
+          </p>
+          <div class="cta">
+            <a class="button solid" href="https://github.com/Skydoge-zjm/Topolumia">
+              <span data-i18n="hero.primary">从 GitHub 获取源码</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </a>
+            <a class="button ghost" href="https://github.com/Skydoge-zjm/Topolumia/blob/main/docs/playbooks/getting-started.md" data-i18n="hero.secondary">阅读入门教程</a>
+          </div>
+          <p class="meta" data-i18n="hero.meta">Node.js 22.13+ · MIT 许可 · 默认仅监听 127.0.0.1</p>
+        </div>
+
+        <figure class="map" aria-label="科研拓扑示意">
+          <svg viewBox="0 0 640 520" role="img" aria-labelledby="map-title">
+            <title id="map-title" data-i18n="map.title">科研拓扑示意：文献支持假说，假说经实验验证产生观察，推论导出缺口，Agent 提议补充线索。</title>
+            <rect class="plot" x="4" y="4" width="632" height="512" rx="10" />
+            <g class="edges" aria-hidden="true">
+              <path class="edge" d="M250 88 C215 112 172 132 156 152" />
+              <path class="edge" d="M360 88 C402 110 440 130 452 152" />
+              <path class="edge" d="M210 180 H390" />
+              <path class="edge" d="M140 208 C150 238 220 260 268 282" />
+              <path class="edge" d="M330 338 C368 356 430 378 458 402" />
+              <path class="edge" d="M480 208 V402" />
+              <path class="edge" d="M300 338 C258 358 196 378 160 402" />
+              <path class="edge proposal" d="M210 430 C260 430 300 400 300 360" />
+            </g>
+            <g class="edge-labels" aria-hidden="true">
+              <text x="186" y="118">支持</text>
+              <text x="420" y="116">引用</text>
+              <text x="292" y="170">验证</text>
+              <text x="196" y="252">支持</text>
+              <text x="402" y="370">支持</text>
+              <text x="492" y="306">产生</text>
+              <text x="216" y="372">导出</text>
+              <text class="proposal-label" x="126" y="470">Agent 提议</text>
+            </g>
+            <g class="nodes" aria-hidden="true">
+              <g class="node literature"><rect x="210" y="32" width="180" height="56" rx="8" /><text x="300" y="56">文献</text><text class="sub" x="300" y="74">12 篇</text></g>
+              <g class="node hypothesis"><rect x="30" y="152" width="180" height="56" rx="8" /><text x="120" y="176">假说</text><text class="sub" x="120" y="194">1 条</text></g>
+              <g class="node experiment"><rect x="390" y="152" width="180" height="56" rx="8" /><text x="480" y="176">实验</text><text class="sub" x="480" y="194">3 项</text></g>
+              <g class="node conclusion"><rect x="210" y="282" width="180" height="56" rx="8" /><text x="300" y="306">推论</text><text class="sub" x="300" y="324">2 条</text></g>
+              <g class="node observation"><rect x="390" y="402" width="180" height="56" rx="8" /><text x="480" y="426">观察</text><text class="sub" x="480" y="444">4 条</text></g>
+              <g class="node gap"><rect x="30" y="402" width="180" height="56" rx="8" /><text x="120" y="426">缺口</text><text class="sub" x="120" y="444">待补充</text></g>
+            </g>
+          </svg>
+        </figure>
+      </section>
+
+      <section class="pillars" aria-label="产品原则">
+        <article>
+          <h2 data-i18n="pillars.topology.title">拓扑优先</h2>
+          <p data-i18n="pillars.topology.body">问题、假说、实验和观察以节点与关系存在，节点组容纳紧密相关的内容。类型核心只提供最小结构，不预置强制栏目。</p>
+        </article>
+        <article>
+          <h2 data-i18n="pillars.review.title">人工审阅</h2>
+          <p data-i18n="pillars.review.body">Agent 获准执行工具，不代表它的科研结论已被接受。候选变更连同来源进入审阅，接受后由同一条正式提交链路写入。</p>
+        </article>
+        <article>
+          <h2 data-i18n="pillars.local.title">本地优先</h2>
+          <p data-i18n="pillars.local.body">账号、会话与研究数据保存在本机 SQLite。需要算力时检测本机或 SSH 远程的 Python、Conda 与 venv，Agent 据此在自己的工具中探索。</p>
+        </article>
+      </section>
+
+      <section class="feature" id="topology">
+        <div class="feature-copy">
+          <h2 data-i18n="topology.title">问题、假说、实验与结论保留它们的关系。</h2>
+          <p data-i18n="topology.body">
+            文献节点保存书目信息、方法理解、关键图表与疑问；实验详情展示关联运行的指标、曲线和外部链接。
+            每个正式对象都能追溯到它的来源，拓扑随之更新，而不是另开一份笔记。
+          </p>
+        </div>
+        <figure class="shot">
+          <img src="assets/shots/topology.webp" width="1440" height="960" loading="lazy"
+            alt="科研拓扑界面：文献、假说、实验、观察等节点由带标签的关系连接，右侧显示节点详情" data-i18n-alt="topology.alt" />
+          <figcaption data-i18n="topology.caption">科研拓扑</figcaption>
+        </figure>
+      </section>
+
+      <section class="feature reverse" id="agents">
+        <div class="feature-copy">
+          <h2 data-i18n="agents.title">Agent 读取上下文，提出候选，由你决定。</h2>
+          <p data-i18n="agents.body">
+            会话运行在 Codex、Claude Code 或 OpenCode 的原生运行时中，Topolumia 通过 MCP 提供研究接口。
+            长任务持续运行，不做整回合倒计时；需要停止时随时可以打断。
+          </p>
+          <div class="candidate">
+            <p class="candidate-head">
+              <span class="dot" aria-hidden="true"></span>
+              <span data-i18n="agents.candidate.title">待审阅 · 新建推论</span>
+            </p>
+            <p class="candidate-body" data-i18n="agents.candidate.body">来自 文献[3]、文献[5] 与 实验运行 20250614；关联节点 #Node-003。</p>
+            <p class="candidate-actions" aria-hidden="true">
+              <span class="chip solid" data-i18n="agents.candidate.accept">接受</span>
+              <span class="chip" data-i18n="agents.candidate.reject">拒绝</span>
+            </p>
+          </div>
+        </div>
+        <figure class="shot">
+          <img src="assets/shots/sessions.webp" width="1440" height="960" loading="lazy"
+            alt="Agent 会话界面：左侧为会话历史，中间为对话与引用来源，右侧为上下文与审批策略" data-i18n-alt="agents.alt" />
+          <figcaption data-i18n="agents.caption">Agent 会话</figcaption>
+        </figure>
+      </section>
+
+      <section class="feature" id="record">
+        <div class="feature-copy">
+          <h2 data-i18n="record.title">每一次接受，都留下出处。</h2>
+          <p data-i18n="record.body">
+            研究记录按时间列出人工修改、Agent 提议、来源同步与实验结果，并保存组会、阅读、复盘和周期活动纪要。
+            逻辑拓扑与时间活动各司其职，回溯时看到的是依据，而不只是结论。
+          </p>
+        </div>
+        <figure class="shot">
+          <img src="assets/shots/record.webp" width="1440" height="960" loading="lazy"
+            alt="研究记录界面：按时间排列的事件行，右侧为记录详情与证据链" data-i18n-alt="record.alt" />
+          <figcaption data-i18n="record.caption">研究记录</figcaption>
+        </figure>
+      </section>
+
+      <section class="install" id="install">
+        <div class="install-copy">
+          <h2 data-i18n="install.title">在本机跑起来。</h2>
+          <p data-i18n="install.body">
+            需要 Node.js 22.13+（22 / 24 LTS）、npm 和 Git。打开 <code>http://127.0.0.1:5510</code>
+            后首次访问创建管理员账号，没有预设密码。Agent CLI 与模型服务需自行准备。
+          </p>
+        </div>
+        <pre class="terminal" aria-label="安装命令"><code>npm ci
+npm run build
+npm start</code></pre>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <img class="foot-mark" src="assets/wordmark-white.png" alt="Topolumia" width="440" height="150" />
+      <nav class="foot-links" aria-label="更多">
+        <a href="https://github.com/Skydoge-zjm/Topolumia" data-i18n="foot.source">源码</a>
+        <a href="https://github.com/Skydoge-zjm/Topolumia/tree/main/docs" data-i18n="foot.docs">文档</a>
+        <a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/CONTRIBUTING.md" data-i18n="foot.contribute">参与贡献</a>
+        <a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/SECURITY.md" data-i18n="foot.security">安全报告</a>
+      </nav>
+      <p class="foot-note" data-i18n="foot.note">MIT 许可 · © 2026 Topolumia contributors</p>
+    </footer>
+
+    <script src="assets/site.js"></script>
+  </body>
+</html>
