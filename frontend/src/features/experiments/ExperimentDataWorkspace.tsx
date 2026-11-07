@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api, projectId } from "@/shared/lib/api";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
@@ -34,11 +34,15 @@ export function ExperimentDataWorkspace({
   const [runId, setRunId] = useState("");
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
   const [offset, setOffset] = useState(0);
+  const [firstRow, setFirstRow] = useState(0);
+  const [rowWindow, setRowWindow] = useState(40);
+  const scrollHost = useRef<HTMLDivElement>(null);
   const overview = useQuery({
     queryKey: ["experiment-data-overview", projectId(), nodeId],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api<Overview>(
         "/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment",
+        { signal },
       ),
   });
   const runs = useMemo(() => overview.data?.runs ?? [], [overview.data?.runs]);
@@ -49,7 +53,7 @@ export function ExperimentDataWorkspace({
   const metrics = useQuery({
     queryKey: ["experiment-data-metrics", projectId(), nodeId, runId],
     enabled: Boolean(runId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const items: Metric[] = [];
       let cursor: string | null = null;
       do {
@@ -58,6 +62,7 @@ export function ExperimentDataWorkspace({
           page?: { nextCursor?: string | null };
         } = await api("/api/research/experiments/read", {
           method: "POST",
+          signal,
           body: JSON.stringify({
             mode: "metrics",
             nodeId,
@@ -81,46 +86,65 @@ export function ExperimentDataWorkspace({
     const keys = metricItems.map((item) => item.key);
     setSelectedMetrics((current) => {
       const kept = current.filter((key) => keys.includes(key));
-      return kept.length ? kept : keys;
+      return kept.length ? kept.slice(0, 24) : keys.slice(0, 12);
     });
   }, [metricItems]);
   useEffect(() => setOffset(0), [runId]);
+  useEffect(() => {
+    setFirstRow(0);
+    if (scrollHost.current) scrollHost.current.scrollTop = 0;
+  }, [runId, offset, selectedMetrics]);
   const visibleMetrics = metricItems.filter((item) =>
     selectedMetrics.includes(item.key),
   );
-  const pointQueries = useQueries({
-    queries: visibleMetrics.map((item) => ({
-      queryKey: [
-        "experiment-data-series",
-        projectId(),
-        nodeId,
-        runId,
+  const table = useQuery({
+    queryKey: [
+      "experiment-data-table",
+      projectId(),
+      nodeId,
+      runId,
+      visibleMetrics.map((item) => [
         item.key,
-        offset,
         item.readHint?.expectedContentVersion,
-      ],
-      enabled: Boolean(runId),
-      queryFn: () =>
-        api<any>("/api/research/experiments/read", {
-          method: "POST",
-          body: JSON.stringify({
-            mode: "series",
-            nodeId,
-            runId,
-            metric: item.key,
-            expectedContentVersion: item.readHint?.expectedContentVersion,
-            pointOffset: offset,
-            pointLimit: 100,
-            maxChars: 16000,
-          }),
+      ]),
+      offset,
+    ],
+    enabled: Boolean(runId && visibleMetrics.length),
+    queryFn: ({ signal }) =>
+      api<{ columns: DataPage[] }>("/api/research/experiments/table", {
+        method: "POST",
+        signal,
+        body: JSON.stringify({
+          nodeId,
+          runId,
+          metricKeys: visibleMetrics.map((item) => item.key),
+          pointOffset: offset,
+          pointLimit: 100,
+          expectedVersions: Object.fromEntries(
+            visibleMetrics.map((item) => [
+              item.key,
+              item.readHint?.expectedContentVersion,
+            ]),
+          ),
         }),
-    })),
+      }),
   });
-  const loadingPoints = pointQueries.some((query) => query.isPending);
-  const pointData: DataPage[] = pointQueries
-    .map((query) => query.data?.data)
-    .filter(Boolean);
-  const errors = pointQueries.map((query) => query.error).filter(Boolean);
+  const loadingPoints = table.isPending && visibleMetrics.length > 0;
+  const pointData = useMemo(() => table.data?.columns ?? [], [table.data]);
+  useEffect(() => {
+    const host = scrollHost.current;
+    if (!host) return;
+    const measure = () =>
+      setRowWindow(Math.max(20, Math.ceil(host.clientHeight / 27) + 12));
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measure);
+    observer?.observe(host);
+    return () => observer?.disconnect();
+  }, [pointData, visibleMetrics.length]);
+  const errors = table.error ? [table.error] : [];
   const xKey = pointData[0]?.xKey ?? "step";
   const mixedAxes = new Set(pointData.map((data) => data.xKey)).size > 1;
   const rows = useMemo(() => {
@@ -251,6 +275,10 @@ export function ExperimentDataWorkspace({
               role="group"
               aria-label={en ? "Data columns" : "数据列"}
             >
+              <span className="research-hint">
+                {selectedMetrics.length} / {metricItems.length}{" "}
+                {en ? "columns · up to 24" : "列 · 最多同时显示 24 列"}
+              </span>
               {metricItems.map((item) => {
                 const selected = selectedMetrics.includes(item.key);
                 return (
@@ -261,6 +289,7 @@ export function ExperimentDataWorkspace({
                       "experiment-data-metric-toggle" +
                       (selected ? " is-selected" : "")
                     }
+                    disabled={!selected && selectedMetrics.length >= 24}
                     aria-pressed={selected}
                     onClick={() =>
                       setSelectedMetrics((current) =>
@@ -304,8 +333,22 @@ export function ExperimentDataWorkspace({
                   </span>
                 )}
               </div>
-              <div className="research-table-wrap experiment-data-table">
-                <table className="research-table">
+              <div
+                ref={scrollHost}
+                className="research-table-wrap experiment-data-table"
+                onScroll={(event) =>
+                  setFirstRow(
+                    Math.max(
+                      0,
+                      Math.floor(event.currentTarget.scrollTop / 27) - 5,
+                    ),
+                  )
+                }
+              >
+                <table
+                  className="research-table"
+                  aria-rowcount={rows.length + 1}
+                >
                   <thead>
                     <tr>
                       <th scope="col">{mixedAxes ? "x" : xKey}</th>
@@ -317,25 +360,49 @@ export function ExperimentDataWorkspace({
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.key}>
-                        <td>{mixedAxes ? `${row.axis} ${row.x}` : row.x}</td>
-                        {row.values.map((value, index) => (
-                          <td key={visibleMetrics[index].key}>
-                            {value ?? "—"}
-                          </td>
-                        ))}
+                    {firstRow > 0 && (
+                      <tr aria-hidden="true">
+                        <td
+                          colSpan={visibleMetrics.length + 1}
+                          style={{
+                            height: firstRow * 27,
+                            padding: 0,
+                            border: 0,
+                          }}
+                        />
                       </tr>
-                    ))}
+                    )}
+                    {rows
+                      .slice(firstRow, firstRow + rowWindow)
+                      .map((row, index) => (
+                        <tr key={row.key} aria-rowindex={firstRow + index + 2}>
+                          <td>{mixedAxes ? `${row.axis} ${row.x}` : row.x}</td>
+                          {row.values.map((value, index) => (
+                            <td key={visibleMetrics[index].key}>
+                              {value ?? "—"}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    {firstRow + rowWindow < rows.length && (
+                      <tr aria-hidden="true">
+                        <td
+                          colSpan={visibleMetrics.length + 1}
+                          style={{
+                            height: (rows.length - firstRow - rowWindow) * 27,
+                            padding: 0,
+                            border: 0,
+                          }}
+                        />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
               <div className="research-pagination">
                 <button
                   className="button"
-                  disabled={
-                    !offset || pointQueries.some((query) => query.isFetching)
-                  }
+                  disabled={!offset || table.isFetching}
                   onClick={() => setOffset(Math.max(0, offset - 100))}
                 >
                   {en ? "Previous" : "上一页"}
@@ -346,10 +413,7 @@ export function ExperimentDataWorkspace({
                 </span>
                 <button
                   className="button"
-                  disabled={
-                    nextOffset === null ||
-                    pointQueries.some((query) => query.isFetching)
-                  }
+                  disabled={nextOffset === null || table.isFetching}
                   onClick={() => {
                     if (nextOffset !== null) setOffset(nextOffset);
                   }}

@@ -6,7 +6,7 @@ const attr = (name, value) => value === undefined ? "" : " " + name + '="' + esc
 const fontXml = (style) => '<font><name val="Arial"/><sz val="' + (style.fontSize ?? 11) + '"/>' + (style.bold ? "<b/>" : "") + (style.italic ? "<i/>" : "") + (style.underline ? "<u/>" : "") + (style.color ? '<color rgb="FF' + style.color.slice(1) + '"/>' : "") + "</font>";
 
 export function exportStyledXlsx(grid, sheetName) {
-  const styles = [{}], styleIds = new Map([["{}", 0]]);
+  const styles: Record<string, any>[] = [{}], styleIds = new Map([["{}", 0]]);
   for (const row of grid.cells) for (const cell of row) {
     const key = JSON.stringify(cell.style ?? {});
     if (!styleIds.has(key)) { styleIds.set(key, styles.length); styles.push(cell.style); }

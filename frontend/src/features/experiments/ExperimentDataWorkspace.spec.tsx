@@ -41,45 +41,47 @@ function show({ sparse = false } = {}) {
         page: { nextCursor: input.cursor ? null : "second" },
       });
     }
-    const points = sparse
-      ? input.metric === "train/loss"
-        ? [
-            { x: 0, y: precise },
-            { x: 0, y: 0.987654321098765 },
-            { x: 2, y: 0.5 },
-          ]
-        : input.metric === "train/accuracy"
-          ? [
-              { x: 0, y: 0.9 },
-              { x: 1, y: 0.8 },
-              { x: 2, y: 0.7 },
-            ]
-          : [
-              { x: 0, y: 20 },
-              { x: 2, y: 23 },
-            ]
-      : Array.from(
-          { length: Math.min(100, 201 - input.pointOffset) },
-          (_, index) => ({
-            x: input.pointOffset + index,
-            y:
-              input.pointOffset + index === 0
-                ? precise
-                : input.pointOffset + index + keys.indexOf(input.metric) / 10,
-          }),
-        );
     return Response.json({
-      data: {
-        metric: input.metric,
-        xKey: "step",
-        points,
-        pointCount: sparse ? 3 : 201,
-        offset: input.pointOffset,
-        nextOffset:
-          sparse || input.pointOffset + 100 >= 201
-            ? null
-            : input.pointOffset + 100,
-      },
+      columns: input.metricKeys.map((metric: string) => {
+        const points = sparse
+          ? metric === "train/loss"
+            ? [
+                { x: 0, y: precise },
+                { x: 0, y: 0.987654321098765 },
+                { x: 2, y: 0.5 },
+              ]
+            : metric === "train/accuracy"
+              ? [
+                  { x: 0, y: 0.9 },
+                  { x: 1, y: 0.8 },
+                  { x: 2, y: 0.7 },
+                ]
+              : [
+                  { x: 0, y: 20 },
+                  { x: 2, y: 23 },
+                ]
+          : Array.from(
+              { length: Math.min(100, 201 - input.pointOffset) },
+              (_, index) => ({
+                x: input.pointOffset + index,
+                y:
+                  input.pointOffset + index === 0
+                    ? precise
+                    : input.pointOffset + index + keys.indexOf(metric) / 10,
+              }),
+            );
+        return {
+          metric,
+          xKey: "step",
+          points,
+          pointCount: sparse ? 3 : 201,
+          offset: input.pointOffset,
+          nextOffset:
+            sparse || input.pointOffset + 100 >= 201
+              ? null
+              : input.pointOffset + 100,
+        };
+      }),
     });
   });
   vi.stubGlobal("fetch", fetch);
@@ -117,14 +119,13 @@ it("shows all metric columns and preserves exact values, sparse points and repea
 it("can hide metric columns without moving other values under the wrong heading", async () => {
   show({ sparse: true });
   await screen.findByRole("columnheader", { name: "eval/ssim" });
-  fireEvent.click(
-    screen.getByRole("button", { name: "train/loss" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "train/loss" }));
   await waitFor(() =>
     expect(
       screen.queryByRole("columnheader", { name: "train/loss" }),
     ).toBeNull(),
   );
+  await screen.findByRole("columnheader", { name: "train/accuracy" });
   const firstRow = screen.getAllByRole("row")[1];
   expect(
     within(firstRow)
@@ -136,7 +137,8 @@ it("can hide metric columns without moving other values under the wrong heading"
 it("paginates exact points and handles a failed run without metrics", async () => {
   const fetch = show();
   await screen.findByRole("columnheader", { name: "eval/ssim" });
-  expect(screen.getAllByRole("row")).toHaveLength(101);
+  expect(screen.getByRole("table")).toHaveAttribute("aria-rowcount", "101");
+  expect(screen.getAllByRole("row").length).toBeLessThan(45);
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByRole("cell", { name: "100.1" });
   const requests = fetch.mock.calls
@@ -144,12 +146,11 @@ it("paginates exact points and handles a failed run without metrics", async () =
     .map((call) => JSON.parse(String(call[1]?.body)));
   expect(
     requests.filter(
-      (request) => request.mode === "series" && request.pointOffset === 100,
+      (request) =>
+        request.metricKeys?.length === 4 && request.pointOffset === 100,
     ),
-  ).toHaveLength(4);
-  fireEvent.click(
-    screen.getByRole("button", { name: "Data run" }),
-  );
+  ).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Data run" }));
   fireEvent.click(screen.getByRole("option", { name: "Run 2" }));
   await screen.findByText("No scalar metrics for this run.");
   expect(screen.queryByRole("table")).toBeNull();

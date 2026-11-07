@@ -32,7 +32,8 @@ export function ExperimentCompareDialog({
   const [search, setSearch] = useState("");
   const index = useQuery({
     queryKey: ["research-experiments", projectId()],
-    queryFn: () => api<ExperimentIndex>("/api/research-experiments"),
+    queryFn: ({ signal }) =>
+      api<ExperimentIndex>("/api/research-experiments", { signal }),
   });
   const selectedItems = useMemo(
     () => index.data?.items.filter((item) => selected.includes(item.id)) ?? [],
@@ -45,9 +46,10 @@ export function ExperimentCompareDialog({
   const plot = useQuery({
     queryKey: ["temporary-experiment-compare", projectId(), selected, metric],
     enabled: selected.length >= 2 && !picking,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api<RecordPlot>("/api/research/experiments/plot", {
         method: "POST",
+        signal,
         body: JSON.stringify({
           nodeIds: selected,
           ...(metric ? { metricKeys: [metric] } : {}),

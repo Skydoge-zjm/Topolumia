@@ -14,6 +14,10 @@ run 标签不要求唯一，来源身份用于重复导入的识别；用户也�
 
 [ExperimentRecordImporter](../../../../src/services/research/experiments/record-importer.ts) 读取上传的 `.wandb`、TensorBoard event 和 JSON/JSONL 标量记录。原件沿用 [资产生命周期](../content-blocks/file-lifecycle.md) 归档；派生数值索引按资产校验值保存，并可从原件重建。原件改变或索引失配会报告错误，不能用当前项目文件替代归档。
 
+每个项目惰性创建一个 [后台解析线程](../../../../src/services/research/experiments/record-worker.ts)，串行处理文件解析、数值索引、采样及表格范围读取，避免大 JSON 解析和原生读取器输出阻塞 HTTP 主线程。[RecordReader](../../../../src/services/research/experiments/record-reader.ts) 在该线程内保存完整数值；主线程只接收指标目录、请求的准确点范围或绘图采样。并发读取同一资产共用索引任务。数值索引缓存按序列化体积限制为 64 MiB；主线程目录缓存最多 256 项、8 MiB，这些是缓存计费额度，并非进程堆内存上限。超过额度的文件仍可读取，仅不保留该缓存。
+
+正式实验读取直接查询节点及其 owner 的内容块，owner 查询有项目内索引；一次比较共用节点视图和资产目录，不为每个 run 构建全项目快照。候选比较仍读取候选快照，并在一次请求内共用。每次读取都重新检查权限和原件可用性，命中缓存不能绕过授权；来源、块版本与内容版本参与结果和冲突检查。关闭项目时先完成资产处理，再排空解析线程，释放原生子进程和缓存。
+
 [Python 读取器](../../../../scripts/runtime/experiment-record-parser.py) 使用 W&B protobuf 与 TensorBoard EventAccumulator。W&B 容器读取采用保留上游 MIT 声明的 [只读封装](../../../../scripts/runtime/wandb_record_reader.py)。读取器由 `experimentRecords.pythonCommand` 指定，默认 python，与项目训练解释器独立；可选依赖见 [experiment-record-readers.txt](../../../../requirements/experiment-record-readers.txt)。JSON/JSONL 读取不依赖 Python。
 
 当前范围是有限数值标量及其 step / epoch / 时间来源；不统一解析第三方图片、直方图、音频或自定义面板。上传是快照，不持续监视用户项目中的增长文件。配置、代码、命令和终端日志用普通内容块归档，最终指标继续用 metric、table、XLSX、TeX/PDF 等内容能力表达。
@@ -32,9 +36,11 @@ run 标签不要求唯一，来源身份用于重复导入的识别；用户也�
 
 [ExperimentWorkbench](../../../../frontend/src/features/experiments/ExperimentWorkbench.tsx) 把实验详情组织为常驻的运行栏与研究材料：运行栏固定在页面滚动容器内，材料关联就地展开，不再需要先切换到另一个标签页记住内容块标题。运行栏支持重命名、改状态与删除；删除前说明指向该 run 的材料关联数，记录块仍在引用时拒绝删除并指出需先处理的内容块。
 
-[ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 基于 uPlot 画布按指标绘制多 run 交互曲线，支持统一 run 图例、框选缩放、跨图表同步十字线、悬浮数值和键盘操作。曲线只使用稳定的 run 颜色区分，同一 run 在内容块与对比窗口中保持一致；刻度使用 1/2/5 × 10ⁿ 步长。绘图受总点数预算控制，采样明确标注；精确原始点读取移到实验详情的“实验数据”页，图表页不再展开原始数据。部分来源不可用时合并为一个可展开警告并保留其他可用曲线，权限错误仍拒绝读取。画布不可用时显示实验数据页入口。
+[ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 基于 uPlot 画布按指标绘制多 run 交互曲线，支持统一 run 图例、框选缩放、跨图表同步十字线和悬浮数值。每条曲线保留独立横坐标，避免 run 数乘以横坐标并集的空矩阵；重复点保留，步长重置时断开路径。指针位置按动画帧合并，预建索引后二分定位数据点。接近视口时创建画布，离开后释放并保存横轴缩放；悬浮窗最多显示 12 个 run 并提示剩余数量，曲线本身仍全部绘制。
 
-[ExperimentDataWorkspace](../../../../frontend/src/features/experiments/ExperimentDataWorkspace.tsx) 按运行呈现多指标数据表，默认读取全部指标目录并展示各指标列，支持列开关、分页和整页 TSV 复制。每列按 100 个原始采样分页，在当前页按横坐标对齐；未出现在本页的值显示横线，不补零或插值，重复横坐标保留多条记录。表格冻结表头及横坐标列，数值保留来源精度，目录与数据读取失败分别提供反馈。
+曲线只使用稳定的 run 颜色区分，同一 run 在内容块与对比窗口中保持一致。绘图受总点数预算控制，采样明确标注；精确原始点通过实验详情的“实验数据”页读取，图表页不展开原始数据。部分来源不可用时合并为一个可展开警告并保留其他可用曲线，权限错误仍拒绝读取。画布不可用时显示实验数据页入口。
+
+[ExperimentDataWorkspace](../../../../frontend/src/features/experiments/ExperimentDataWorkspace.tsx) 按运行呈现多指标数据表，读取全部指标目录，默认选前 12 列，最多同时显示 24 列并显示已选数量。每页通过 `/api/research/experiments/table` 一次读取所选各列最多 100 个原始点，校验目录中的内容版本；Agent 的 `read_experiment series` 继续使用独立的小预算精确范围。前端在当前页按横坐标对齐，未出现在本页的值显示横线，不补零或插值，重复横坐标保留多条记录。行按实际视口高度虚拟化，冻结表头及横坐标列；TSV 复制包含当前页全部行，数值保留来源精度。页面及比较请求携带取消信号，切换范围时停止前端接收失效结果。
 
 [ExperimentCompareDialog](../../../../frontend/src/features/experiments/ExperimentCompareDialog.tsx) 从拓扑图选中的多个实验进入，按实验身份载入各实验的全部 run，超过 24 次运行也不截断。`nodeIds` 指定完整实验范围，显式 `selections` 保留按 run 读取的合同；两种输入互斥。服务限制同时读取的来源数量并控制绘图点预算，保留失败和无指标的 run，只叠加完全同名的指标。实验节点内部不再提供重复的运行比较入口，比较窗口可调整实验范围、切换指标或通过图例隐藏运行。人和 Agent 的比较均为临时读取，不创建比较对象、内容块或候选；分析另建研究笔记，Agent 写入沿用审批。
 
@@ -51,6 +57,7 @@ TensorBoard、W&B 安装版本是环境事实，追踪源是连接，实际 run 
 - [experiment-records.test.ts](../../../../tests/research/experiment-records.test.ts)：统一 run、候选与观察范围、材料历史、上传表格行和临时比较。
 - [experiment-records.integration.ts](../../../../tests/research/experiment-records.integration.ts)：真实离线写入器生成的 W&B / TensorBoard 原生文件、失败 run、原件保留与索引重建。
 - [experiment-records.spec.ts](../../../../frontend/e2e/experiment-records.spec.ts)：笔记、多 run 曲线、配置文件及表格关联、跨实验比较和窄屏布局。
+- [experiment-performance.spec.ts](../../../../frontend/e2e/experiment-performance.spec.ts)：隔离的 80 run、12 指标、38.4 万点；检查离屏画布释放、缩放恢复、有限悬浮 DOM、批量读取与虚拟表格的整页复制。
 - [experiment-tracking.test.ts](../../../../tests/experiments/experiment-tracking.test.ts)、[training-metrics.test.ts](../../../../tests/experiments/training-metrics.test.ts)、[source-refresh.test.ts](../../../../tests/adapters/source-refresh.test.ts)：既有来源和缓存边界。
 
 可选原生读取器与服务集成的准备方式见 [测试指南](../../../playbooks/testing.md)，普通后端回归不要求外部账号或 Python 包。

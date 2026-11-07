@@ -1,7 +1,6 @@
 import { ExperimentRecordImporter } from "./record-importer.js";
 import { fail } from "../../../domain/research/access.js";
 import { nodeRef, sameObject } from "../../../domain/research/object-ref.js";
-import { downsamplePoints } from "../../../domain/experiments/experiment-domain.js";
 import { versionHash } from "../../../lib/hash.js";
 
 export class ExperimentRecordService extends ExperimentRecordImporter {
@@ -41,15 +40,27 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         })),
     };
   }
-  experiment(nodeId, actor, candidateId = undefined) {
+  experiment(
+    nodeId,
+    actor,
+    candidateId = undefined,
+    candidateSnapshot = undefined,
+  ) {
     this.c.check(actor, "research.view");
-    const snapshot = this.c.snapshot(candidateId, actor),
-      node = snapshot.nodes.find((node) => node.id === nodeId);
-    if (!node || node.kind !== "experiment")
+    const snapshot = candidateId
+        ? (candidateSnapshot ?? this.c.snapshot(candidateId, actor))
+        : null,
+      node = snapshot
+        ? snapshot.nodes.find((node) => node.id === nodeId)
+        : this.c.store.get("nodes", nodeId);
+    if (!node || node.deleted || node.kind !== "experiment")
       fail("NODE_NOT_EXPERIMENT", "实验节点不存在。", 404);
     return {
       node,
-      blocks: snapshot.blocks.filter(
+      blocks: (snapshot
+        ? snapshot.blocks
+        : this.c.store.blocksForOwner(nodeRef(nodeId))
+      ).filter(
         (block) =>
           sameObject(block.owner, nodeRef(nodeId)) &&
           block.lifecycle !== "archived",
@@ -178,22 +189,25 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     const recordBlocks = blocks.filter(
       (block) => block.type === "experimentRecord",
     );
+    const recordsByRun = new Map<string, any[]>();
+    for (const block of recordBlocks)
+      for (const entry of block.payload.runs ?? []) {
+        const records = recordsByRun.get(entry.runId) ?? [];
+        records.push({
+          blockId: block.id,
+          blockRevision: block.revision,
+          title: block.title,
+          provider: block.payload.provider,
+          ...entry,
+        });
+        recordsByRun.set(entry.runId, records);
+      }
     return {
       nodeId,
       revision: node.experimentRevision ?? 1,
       runs: (node.runs ?? []).map((run) => ({
         ...run,
-        records: recordBlocks.flatMap((block) =>
-          block.payload.runs
-            .filter((entry) => entry.runId === run.id)
-            .map((entry) => ({
-              blockId: block.id,
-              blockRevision: block.revision,
-              title: block.title,
-              provider: block.payload.provider,
-              ...entry,
-            })),
-        ),
+        records: recordsByRun.get(run.id) ?? [],
         readHint: {
           tool: "read_experiment",
           mode: "metrics",
@@ -213,8 +227,25 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     blockId = undefined,
     blockRevision = undefined,
     allowPartial = false,
+    scope: {
+      views?: Map<string, any>;
+      metricKeys?: string[];
+      indices?: Map<string, Promise<any>>;
+      entries?: Map<string, Map<string, { block: any; entry: any }[]>>;
+      candidateSnapshot?: any;
+    } = {},
   ) {
-    const view = this.experiment(selection.nodeId, actor, candidateId),
+    let selectedView = scope.views?.get(selection.nodeId);
+    if (!selectedView) {
+      selectedView = this.experiment(
+        selection.nodeId,
+        actor,
+        candidateId,
+        scope.candidateSnapshot,
+      );
+      scope.views?.set(selection.nodeId, selectedView);
+    }
+    const view = selectedView,
       node = view.node;
     let blocks = view.blocks;
     if (blockId && blockRevision !== undefined) {
@@ -245,86 +276,111 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       });
     };
     const append = (line, source) => {
+      if (scope.metricKeys?.length && !scope.metricKeys.includes(line.key))
+        return;
       const key = JSON.stringify([line.key, line.xKey ?? "step"]),
         item = lines.get(key) ?? {
           key: line.key,
           xKey: line.xKey ?? "step",
           unit: line.unit,
-          points: [],
+          pointCount: 0,
+          segments: [],
           sources: [],
         };
-      item.points.push(...line.points);
+      item.pointCount += line.pointCount ?? line.points?.length ?? 0;
+      item.segments.push(
+        source.assetId
+          ? {
+              assetId: source.assetId,
+              provider: source.provider,
+              sourceId: source.sourceId,
+            }
+          : { points: line.points },
+      );
       item.sources.push(source);
       lines.set(key, item);
     };
-    for (const block of blocks.filter(
-      (block) =>
-        block.type === "experimentRecord" && (!blockId || block.id === blockId),
-    )) {
-      for (const entry of block.payload.runs.filter(
-        (entry) => entry.runId === run.id,
-      )) {
-        for (const assetId of entry.assetIds) {
-          try {
-            const identity = JSON.stringify([
-              block.payload.provider,
+    const entryKey =
+      node.id +
+      "|" +
+      blocks
+        .filter(
+          (block) =>
+            block.type === "experimentRecord" &&
+            (!blockId || block.id === blockId),
+        )
+        .map((block) => block.id + ":" + block.revision)
+        .join("|");
+    let entriesByRun = scope.entries?.get(entryKey);
+    if (!entriesByRun) {
+      entriesByRun = new Map();
+      for (const block of blocks)
+        if (
+          block.type === "experimentRecord" &&
+          (!blockId || block.id === blockId)
+        )
+          for (const entry of block.payload.runs ?? []) {
+            const entries = entriesByRun.get(entry.runId) ?? [];
+            entries.push({ block, entry });
+            entriesByRun.set(entry.runId, entries);
+          }
+      scope.entries?.set(entryKey, entriesByRun);
+    }
+    for (const { block, entry } of entriesByRun.get(run.id) ?? []) {
+      for (const assetId of entry.assetIds) {
+        try {
+          const identity = JSON.stringify([
+            block.payload.provider,
+            assetId,
+            entry.sourceId,
+          ]);
+          if (sources.has(identity)) continue;
+          sources.add(identity);
+          const indexKey = JSON.stringify([assetId, block.payload.provider]);
+          let loading = scope.indices?.get(indexKey);
+          if (!loading) {
+            loading = this.indexed(assetId, block.payload.provider, actor);
+            scope.indices?.set(indexKey, loading);
+          }
+          const index = await loading,
+            sourceRun = index.runs.find(
+              (item) => item.sourceId === entry.sourceId,
+            );
+          if (!sourceRun)
+            fail("EXPERIMENT_RECORD_CHANGED", "原始记录与内容块不一致。", 409);
+          for (const line of sourceRun.series)
+            append(line, {
+              blockId: block.id,
+              blockRevision: block.revision,
               assetId,
-              entry.sourceId,
-            ]);
-            if (sources.has(identity)) continue;
-            sources.add(identity);
-            const index = await this.indexed(
-                assetId,
-                block.payload.provider,
-                actor,
-              ),
-              sourceRun = index.runs.find(
-                (item) => item.sourceId === entry.sourceId,
-              );
-            if (!sourceRun)
-              fail(
-                "EXPERIMENT_RECORD_CHANGED",
-                "原始记录与内容块不一致。",
-                409,
-              );
-            for (const line of sourceRun.series)
-              append(line, {
-                blockId: block.id,
-                blockRevision: block.revision,
-                assetId,
-                contentVersion: index.contentVersion,
-                provider: block.payload.provider,
-                sourceId: entry.sourceId,
-              });
-          } catch (error) {
-            unavailable(error, { assetId });
-          }
-        }
-        if (entry.ref && !entry.assetIds.length && !sources.has(entry.ref)) {
-          try {
-            this.c.check(actor, "experiment.view");
-            if (!this.options.gateway)
-              fail(
-                "EXPERIMENT_SOURCE_UNAVAILABLE",
-                "实验记录来源未接入。",
-                422,
-              );
-            sources.add(entry.ref);
-            const result = await this.options.gateway.series(entry.ref, {
-              maxPoints: 2000,
+              contentVersion: index.contentVersion,
+              provider: block.payload.provider,
+              sourceId: entry.sourceId,
             });
-            for (const line of result.series ?? [])
-              append(line, {
-                blockId: block.id,
-                blockRevision: block.revision,
-                ref: entry.ref,
-                provider: block.payload.provider,
-                observedAt: result.observedAt,
-                sampledAtSource: true,
-              });
-          } catch (error) {
-            unavailable(error, { ref: entry.ref });
-          }
+        } catch (error) {
+          unavailable(error, { assetId });
+        }
+      }
+      if (entry.ref && !entry.assetIds.length && !sources.has(entry.ref)) {
+        try {
+          this.c.check(actor, "experiment.view");
+          if (!this.options.gateway)
+            fail("EXPERIMENT_SOURCE_UNAVAILABLE", "实验记录来源未接入。", 422);
+          sources.add(entry.ref);
+          const result = await this.options.gateway.series(entry.ref, {
+            maxPoints: 2000,
+          });
+          for (const line of result.series ?? [])
+            append(line, {
+              blockId: block.id,
+              blockRevision: block.revision,
+              ref: entry.ref,
+              provider: block.payload.provider,
+              observedAt: result.observedAt,
+              sampledAtSource: true,
+            });
+        } catch (error) {
+          unavailable(error, { ref: entry.ref });
         }
       }
     }
@@ -341,6 +397,14 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
   async plot(input, actor) {
     this.c.check(actor, "research.view");
     const wholeExperiments = input.nodeIds !== undefined;
+    const scope = {
+      views: new Map<string, any>(),
+      indices: new Map<string, Promise<any>>(),
+      entries: new Map<string, Map<string, { block: any; entry: any }[]>>(),
+      candidateSnapshot: input.candidateId
+        ? this.c.snapshot(input.candidateId, actor)
+        : undefined,
+    };
     let selections = input.selections;
     if (wholeExperiments) {
       if (
@@ -356,7 +420,14 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       )
         fail("INPUT_INVALID", "请选择 2–100 个不同的实验。", 422);
       selections = input.nodeIds.flatMap((nodeId) => {
-        const { node } = this.experiment(nodeId, actor, input.candidateId);
+        const view = this.experiment(
+          nodeId,
+          actor,
+          input.candidateId,
+          scope.candidateSnapshot,
+        );
+        scope.views.set(nodeId, view);
+        const { node } = view;
         return (node.runs ?? []).map((run) => ({ nodeId, runId: run.id }));
       });
     }
@@ -405,6 +476,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
                 input.blockId,
                 input.blockRevision,
                 true,
+                scope,
               ),
             ),
         )),
@@ -434,6 +506,17 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       maxPoints,
       Math.max(2, Math.floor(40_000 / Math.max(1, selectedLineCount))),
     );
+    const selectedLines = runs.flatMap((run) =>
+      run.series.filter((line) => requested.includes(line.key)),
+    );
+    const values = selectedLines.length
+      ? await this.selectPoints(
+          selectedLines,
+          { maxPoints: displayPointLimit },
+          actor,
+        )
+      : [];
+    let lineIndex = 0;
     return {
       temporary: true,
       metricKeys: allKeys,
@@ -443,26 +526,85 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       series: runs.flatMap((run) =>
         run.series
           .filter((line) => requested.includes(line.key))
-          .map((line) => ({
+          .map(({ segments: _segments, ...line }) => ({
             nodeId: run.nodeId,
             nodeName: run.nodeName,
             runId: run.runId,
             runLabel: run.runLabel,
             ...line,
             contentVersion: versionHash(line.sources),
-            points: downsamplePoints(line.points, displayPointLimit),
-            pointCount: line.points.length,
+            points: values[lineIndex++].points,
+            pointCount: line.pointCount,
             sampled:
-              line.points.length > displayPointLimit ||
+              line.pointCount > displayPointLimit ||
               line.sources.some((source) => source.sampledAtSource),
             sampling:
-              line.points.length > displayPointLimit
+              line.pointCount > displayPointLimit
                 ? "extrema-bucket"
                 : line.sources.some((source) => source.sampledAtSource)
                   ? "source"
                   : "none",
           })),
       ),
+    };
+  }
+  async table(input, actor) {
+    this.c.check(actor, "research.view");
+    const keys = input.metricKeys,
+      offset = input.pointOffset ?? 0,
+      limit = input.pointLimit ?? 100;
+    if (
+      !Array.isArray(keys) ||
+      !keys.length ||
+      keys.length > 24 ||
+      keys.some((key) => typeof key !== "string" || !key) ||
+      new Set(keys).size !== keys.length ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    )
+      fail("INPUT_INVALID", "请选择 1–24 个指标及合法的数据点范围。", 422);
+    const run = await this.runSeries(
+      { nodeId: input.nodeId, runId: input.runId },
+      actor,
+      input.candidateId,
+      undefined,
+      undefined,
+      false,
+      { metricKeys: keys },
+    );
+    const lines = keys.map(
+      (key) =>
+        run.series.find((line) => line.key === key) ??
+        fail(
+          "EXPERIMENT_METRIC_NOT_FOUND",
+          "该次执行没有完全同名的指标。",
+          404,
+        ),
+    );
+    for (const line of lines)
+      if (
+        input.expectedVersions?.[line.key] &&
+        input.expectedVersions[line.key] !== versionHash(line.sources)
+      )
+        fail("OBJECT_VERSION_CONFLICT", "曲线来源已更新，请重新读取。", 409);
+    const values = await this.selectPoints(lines, { offset, limit }, actor);
+    return {
+      columns: lines.map((line, index) => ({
+        metric: line.key,
+        xKey: line.xKey,
+        contentVersion: versionHash(line.sources),
+        pointCount: line.pointCount,
+        offset,
+        nextOffset:
+          offset + values[index].points.length < line.pointCount
+            ? offset + values[index].points.length
+            : null,
+        sampled: line.sources.some((source) => source.sampledAtSource),
+        points: values[index].points,
+      })),
     };
   }
   async read(input, actor) {
@@ -509,7 +651,18 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       }
       return q.finish(result);
     }
-    const view = this.overview(input.nodeId, actor, input.candidateId);
+    const experimentView = this.experiment(
+      input.nodeId,
+      actor,
+      input.candidateId,
+    );
+    const view = ["runs", "materials"].includes(input.mode)
+      ? this.overview(input.nodeId, actor, input.candidateId)
+      : {
+          revision: experimentView.node.experimentRevision ?? 1,
+          runs: [],
+          materialLinks: [],
+        };
     const receipts = (items = []) => [
       q.receipt(
         actor,
@@ -560,6 +713,11 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       input.candidateId,
       input.blockId,
       input.blockRevision,
+      false,
+      {
+        views: new Map([[input.nodeId, experimentView]]),
+        ...(input.mode === "series" ? { metricKeys: [input.metric] } : {}),
+      },
     );
     if (input.mode === "metrics")
       return q.page(
@@ -567,7 +725,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         run.series.map((line) => ({
           key: line.key,
           xKey: line.xKey,
-          pointCount: line.points.length,
+          pointCount: line.pointCount,
           sampled: line.sources.some((source) => source.sampledAtSource),
           readHint: {
             tool: "read_experiment",
@@ -610,7 +768,11 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       limit > 100
     )
       fail("INPUT_INVALID", "请指定合法的数据点范围。", 422);
-    const points = line.points.slice(offset, offset + limit);
+    const [{ points }] = await this.selectPoints(
+      [line],
+      { offset, limit },
+      actor,
+    );
     const sampled = line.sources.some((source) => source.sampledAtSource);
     return q.finish(
       q.envelope(
@@ -623,10 +785,10 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
           contentVersion,
           sources: line.sources,
           points,
-          pointCount: line.points.length,
+          pointCount: line.pointCount,
           offset,
           nextOffset:
-            offset + points.length < line.points.length
+            offset + points.length < line.pointCount
               ? offset + points.length
               : null,
           sampled,
@@ -635,9 +797,9 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         {
           coverage: {
             complete:
-              !sampled && offset === 0 && points.length === line.points.length,
+              !sampled && offset === 0 && points.length === line.pointCount,
             omissions: [
-              ...(points.length === line.points.length ? [] : ["morePoints"]),
+              ...(points.length === line.pointCount ? [] : ["morePoints"]),
               ...(sampled ? ["sourceSampled"] : []),
             ],
           },

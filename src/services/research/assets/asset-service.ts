@@ -5,7 +5,7 @@ import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { fail, principal } from "../../../domain/research/access.js";
 import { versionHash } from "../../../lib/hash.js";
-import { importTablePreview, parseXlsxTable, exportXlsxTable, exportTexTable } from "../../topology/table-importers.js";
+import { importTablePreview, exportXlsxTable, exportTexTable } from "../../topology/table-importers.js";
 import { compileTexTable } from "../../topology/tex-preview.js";
 const MAX_BYTES = 20 * 1024 * 1024;
 const hash = b => "sha256:" + createHash("sha256").update(b).digest("hex");
@@ -66,7 +66,8 @@ export class ResearchAssetService {
     try {
       if(job.type==="export") { await this.processExport(job);return; }
       const a=this.store.get("assets",job.assetId); if(!a)return;
-      const bytes=await readFile(this.file(a)), preview=await importTablePreview(bytes,a.originalName,a.mediaType);
+      const supported=/\.(xlsx|csv|tex)$/i.test(a.originalName)||/spreadsheetml|x-tex|latex/i.test(a.mediaType);
+      const bytes=/\.tex$/i.test(a.originalName)?await readFile(this.file(a)):Buffer.alloc(0), preview=supported?await this.commands.records.task({action:"table",asset:{...a,file:this.file(a)}}):null;
       let previewKey,compiled=null;
       if(preview) { previewKey="derived/"+a.id.slice(6)+"/table-v2/preview.json";await mkdir(path.dirname(path.join(this.root,previewKey)),{recursive:true});await writeFile(path.join(this.root,previewKey),JSON.stringify(preview)); }
       if(/\.tex$/i.test(a.originalName)) compiled=await compileTexTable(bytes,path.join(this.root,"derived",a.id.slice(6),"tex-v1"));
@@ -78,10 +79,10 @@ export class ResearchAssetService {
   async values(id,actor,selection={}) {
     const a=this.assert(id,actor);
     let table;
-    if(/\.xlsx$/i.test(a.originalName)) table=await parseXlsxTable(await readFile(this.file(a)),{sheetName:selection.sheet,range:{offset:selection.rowOffset??0,limit:selection.rowLimit??20,columnKeys:selection.columnKeys}});
+    if(/\.xlsx$/i.test(a.originalName)) table=await this.commands.records.task({action:"table",asset:{...a,file:this.file(a)},selection});
     else if(/\.csv$/i.test(a.originalName)) {
       if(selection.sheet)fail("RANGE_INVALID","CSV files have no named worksheets.",422);
-      table=await importTablePreview(await readFile(this.file(a)),a.originalName,a.mediaType,{range:{offset:selection.rowOffset??0,limit:selection.rowLimit??20,columnKeys:selection.columnKeys}});
+      table=await this.commands.records.task({action:"table",asset:{...a,file:this.file(a)},selection});
     }
     else { let preview;try {preview=(await this.preview(id,actor)).preview;} catch(error){if(error.code!=="ENOENT")throw error;}table=preview??await importTablePreview(await readFile(this.file(a)),a.originalName,a.mediaType); }
     if(!table)fail("NOT_INDEXED","No table index is available.");

@@ -191,8 +191,7 @@ export async function createProjectRuntimeRegistry({
         pythonCommand: () => projectConfig.experimentRecords.pythonCommand,
       },
     });
-    dispose.push(() => researchCommands.assets.close());
-    dispose.push(() => researchCommands.records.close());
+    dispose.push(async () => { await researchCommands.assets.close(); await researchCommands.records.close(); });
     await researchCommands.assets.initialize();
     const agentMedia = new AgentAttachmentStore(projectConfig.agentSessions.historyFile);
     dispose.push(() => agentMedia.close());

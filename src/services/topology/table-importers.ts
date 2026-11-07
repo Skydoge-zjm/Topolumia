@@ -81,10 +81,15 @@ const xlsxCellValue = (cell, shared) => {
   return Number.isFinite(numeric) ? numeric : String(value);
 };
 
-export async function parseXlsxTable(buffer, { sheetName, range = null } = {}) {
-  let files;
+const workbookParsers = new Map<object, { readXml: (name: string) => any; bytes: number }>();
+let workbookBytes = 0;
+export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheetName?: string; range?: any} = {}) {
+  const cached = workbookParsers.get(buffer);
+  let readXml = cached?.readXml;
+  if (cached) { workbookParsers.delete(buffer); workbookParsers.set(buffer, cached); }
+  if (!readXml) {
+  let files, expandedBytes = 0;
   try {
-    let expandedBytes = 0;
     files = unzipSync(new Uint8Array(buffer), { filter: (file) => {
       if (!/^xl\/(?:workbook\.xml|styles\.xml|theme\/theme[0-9]+\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|worksheets\/[^/]+\.xml)$/.test(file.name)) return false;
       expandedBytes += file.originalSize;
@@ -93,7 +98,20 @@ export async function parseXlsxTable(buffer, { sheetName, range = null } = {}) {
     } });
   }
   catch (error) { throw new AppError("XLSX_PARSE_FAILED", "无法读取 XLSX 压缩包。", { status: 422, detail: { reason: String(error?.message ?? error).slice(0, 400) } }); }
-  const readXml = (name) => files[name] ? xmlParser.parse(strFromU8(files[name])) : null;
+  const parsed = new Map<string, any>();
+  readXml = (name) => {
+    if (!parsed.has(name)) parsed.set(name, files[name] ? xmlParser.parse(strFromU8(files[name])) : null);
+    return parsed.get(name);
+  };
+  const bytes = expandedBytes + buffer.length;
+  if (bytes <= 16 * 1024 * 1024) {
+    workbookParsers.set(buffer, { readXml, bytes }); workbookBytes += bytes;
+    while (workbookBytes > 16 * 1024 * 1024 || workbookParsers.size > 8) {
+      const oldest = workbookParsers.keys().next().value;
+      workbookBytes -= workbookParsers.get(oldest)!.bytes; workbookParsers.delete(oldest);
+    }
+  }
+  }
   const workbook = readXml("xl/workbook.xml")?.workbook;
   if (!workbook) throw new AppError("XLSX_PARSE_FAILED", "XLSX 中缺少工作簿定义。", { status: 422 });
   const rels = list(readXml("xl/_rels/workbook.xml.rels")?.Relationships?.Relationship);
@@ -122,7 +140,7 @@ export async function parseXlsxTable(buffer, { sheetName, range = null } = {}) {
       const cells = [], meta = [];
       for (const c of list(row.c)) {
         const column = cellColumnIndex(c["@_r"]); columnCount = Math.max(columnCount,column + 1); if (!keep) continue;
-        const value = xlsxCellValue(c,shared), style = presentation.styles[Number(c["@_s"] ?? 0)] ?? {};
+        const value = xlsxCellValue(c,shared), style: any = presentation.styles[Number(c["@_s"] ?? 0)] ?? {};
         cells[column] = value; meta[column] = { value, text: formatXlsxValue(value,style.numberFormat), numberFormat: style.numberFormat, ...(c.f !== undefined ? {formulaStatus:c.v === undefined ? "noCachedValue" : "cached"} : {}) };
       }
       if (keep) {values.set(rowIndex,cells);metadata.set(rowIndex,meta);}
@@ -163,7 +181,7 @@ export async function parseXlsxTable(buffer, { sheetName, range = null } = {}) {
   const boundedRowCount = Math.min(maxRow, MAX_PREVIEW_ROWS + 1);
   if (maxColumn > MAX_PREVIEW_COLUMNS || boundedRowCount * maxColumn > MAX_PREVIEW_CELLS) throw new AppError("TABLE_PREVIEW_LIMIT", "XLSX 表格超过预览列数或单元格数限制。", { status: 413 });
   const normalized = Array.from({ length: boundedRowCount }, (_, row) => Array.from({ length: maxColumn }, (_, index) => matrix[row]?.[index] ?? ""));
-  const table = makeTable(normalized[0], normalized.slice(1), "xlsx", selected["@_name"]);
+  const table: any = makeTable(normalized[0], normalized.slice(1), "xlsx", selected["@_name"]);
   table.truncated = maxRow > MAX_PREVIEW_ROWS + 1;
   table.totalRows = Math.max(0, maxRow - 1);
   const cells = normalized.map((values, row) => values.map((value, column) => cellMetadata[row]?.[column] ?? { value }));

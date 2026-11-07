@@ -117,7 +117,10 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await page.getByRole("button", { name: "保存内容块", exact: true }).click();
     await expect(page.getByRole("figure")).toHaveCount(4);
     await expect(page.locator('figure[data-series-count="3"]')).toHaveCount(4);
+    await page.setViewportSize({ width: 1440, height: 1100 });
     const loss = page.getByRole("figure", { name: "train/loss", exact: true });
+    await loss.scrollIntoViewIfNeeded();
+    await expect(loss.locator("canvas")).toHaveCount(1);
     const chartBox = await loss
       .locator(".experiment-chart-surface")
       .boundingBox();
@@ -125,7 +128,17 @@ test("notes, multi-run records, versioned material links and temporary compariso
       chartBox!.x + chartBox!.width * 0.55,
       chartBox!.y + chartBox!.height * 0.45,
     );
-    await expect(page.locator(".experiment-chart-tooltip")).toHaveCount(4);
+    await expect(loss.locator(".experiment-chart-tooltip")).toBeVisible();
+    await expect
+      .poll(async () => {
+        const active = page.locator(".experiment-metric-chart:has(canvas)");
+        return (
+          (await active.count()) > 1 &&
+          (await active.locator(".experiment-chart-tooltip").count()) ===
+            (await active.count())
+        );
+      })
+      .toBe(true);
     await page.getByRole("button", { name: "实验数据", exact: true }).click();
     await expect(
       page.getByRole("region", { name: "实验数据", exact: true }),
@@ -327,7 +340,15 @@ test("notes, multi-run records, versioned material links and temporary compariso
       actor,
     ).node;
     const source = await c.assets.upload(
-      Readable.from([Buffer.from(JSON.stringify({ runs: Array.from({ length: 25 }, (_, index) => JSON.parse(history(index + 4))) }))]),
+      Readable.from([
+        Buffer.from(
+          JSON.stringify({
+            runs: Array.from({ length: 25 }, (_, index) =>
+              JSON.parse(history(index + 4)),
+            ),
+          }),
+        ),
+      ]),
       {
         originalName: "baseline.json",
         mediaType: "application/json",
@@ -398,7 +419,9 @@ test("notes, multi-run records, versioned material links and temporary compariso
       fullPage: true,
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    expect((await page.locator(".sidebar").boundingBox())!.height).toBeLessThan(90);
+    expect((await page.locator(".sidebar").boundingBox())!.height).toBeLessThan(
+      90,
+    );
     await expect(page.getByRole("figure")).toHaveCount(4);
     expect(
       await page.evaluate(

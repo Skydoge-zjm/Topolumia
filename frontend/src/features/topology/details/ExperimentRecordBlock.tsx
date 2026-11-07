@@ -31,9 +31,10 @@ export function ExperimentRecordBlock({
       block.payload,
     ],
     enabled: selections.length > 0,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api<RecordPlot>("/api/research/experiments/plot", {
         method: "POST",
+        signal,
         body: JSON.stringify({
           selections,
           blockId: block.id,
@@ -78,10 +79,7 @@ export function ExperimentRecordBlock({
               {query.data.runs.length} {en ? "runs" : "次运行"}
             </span>
           </div>
-          <ExperimentPlots
-            plot={query.data}
-            en={en}
-          />
+          <ExperimentPlots plot={query.data} en={en} />
         </>
       )}
     </div>

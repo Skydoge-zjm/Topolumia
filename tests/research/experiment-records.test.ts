@@ -78,6 +78,158 @@ async function fixture(t) {
   return { c, actor, create, upload, add };
 }
 
+test("large point reads and batched columns preserve exact ranges without loading project snapshots", async (t) => {
+  const { c, actor, create, upload, add } = await fixture(t),
+    node = create("experiment", "Large archived run");
+  const count = 150_000;
+  const asset = await upload(
+    "large.json",
+    JSON.stringify({
+      id: "large-source",
+      series: [
+        {
+          key: "loss",
+          points: Array.from({ length: count }, (_, x) => ({ x, y: x / 7 })),
+        },
+        {
+          key: "accuracy",
+          points: [
+            { x: 0, y: 0.123456789012345 },
+            { x: 0, y: 0.9 },
+            { x: 2, y: 0.95 },
+          ],
+        },
+      ],
+    }),
+  );
+  const imported = await c.records.inspect("wandb", [asset.id], actor);
+  const block = add(node.id, {
+    title: "Archived",
+    type: "experimentRecord",
+    payload: {
+      provider: "wandb",
+      runs: imported.runs.map(({ metrics, ...run }) => run),
+    },
+    representations: [{ kind: "asset", assetId: asset.id, role: "source" }],
+  });
+  const runId = block.payload.runs[0].runId;
+  const originalSnapshot = c.snapshot;
+  c.snapshot = () => {
+    throw new Error(
+      "Whole-project snapshot must not be used for formal experiment point reads",
+    );
+  };
+  t.after(() => {
+    c.snapshot = originalSnapshot;
+  });
+  const raw = await c.records.read(
+    {
+      mode: "series",
+      nodeId: node.id,
+      runId,
+      metric: "loss",
+      pointOffset: count - 10,
+      pointLimit: 10,
+      maxChars: 16000,
+    },
+    actor,
+  );
+  assert.equal(raw.data.points.length, 10);
+  assert.equal(raw.data.points[0].x, count - 10);
+  assert.equal(raw.data.points.at(-1).y, (count - 1) / 7);
+  const table = await c.records.table(
+    { nodeId: node.id, runId, metricKeys: ["loss", "accuracy"], pointLimit: 3 },
+    actor,
+  );
+  assert.deepEqual(table.columns[1].points, [
+    { x: 0, y: 0.123456789012345 },
+    { x: 0, y: 0.9 },
+    { x: 2, y: 0.95 },
+  ]);
+  assert.equal(table.columns[0].pointCount, count);
+  await assert.rejects(
+    c.records.table(
+      {
+        nodeId: node.id,
+        runId,
+        metricKeys: ["loss"],
+        expectedVersions: { loss: "stale" },
+      },
+      actor,
+    ),
+    { code: "OBJECT_VERSION_CONFLICT" },
+  );
+  await assert.rejects(
+    c.records.table({ nodeId: node.id, runId, metricKeys: ["missing"] }, actor),
+    { code: "EXPERIMENT_METRIC_NOT_FOUND" },
+  );
+  await assert.rejects(
+    c.records.table(
+      { nodeId: node.id, runId, metricKeys: ["loss", "loss"] },
+      actor,
+    ),
+    { code: "INPUT_INVALID" },
+  );
+  await assert.rejects(
+    c.records.table(
+      { nodeId: node.id, runId, metricKeys: ["loss"] },
+      { ...actor, permissions: [] },
+    ),
+    { code: "FORBIDDEN" },
+  );
+});
+
+test("block-scoped reads keep other record blocks out when no revision was supplied", async (t) => {
+  const { c, actor, create, upload, add } = await fixture(t);
+  const node = create("experiment", "Separate record blocks");
+  const blocks = [];
+  for (const index of [0, 1]) {
+    const asset = await upload(
+      "part" + index + ".json",
+      JSON.stringify({
+        id: "part" + index,
+        history: [{ _step: index, loss: index + 0.5 }],
+      }),
+    );
+    const records = await c.records.inspect("wandb", [asset.id], actor);
+    blocks.push(
+      add(node.id, {
+        title: "Part " + index,
+        type: "experimentRecord",
+        payload: {
+          provider: "wandb",
+          runs: records.runs.map(({ metrics, ...run }) => ({
+            ...run,
+            ...(index ? { runId: blocks[0].payload.runs[0].runId } : {}),
+          })),
+        },
+        representations: [{ kind: "asset", assetId: asset.id, role: "source" }],
+      }),
+    );
+  }
+  const runId = blocks[0].payload.runs[0].runId;
+  const input = {
+    mode: "series",
+    nodeId: node.id,
+    runId,
+    metric: "loss",
+    pointLimit: 10,
+  };
+  const all = await c.records.read(input, actor);
+  assert.equal(all.data.pointCount, 2);
+  const scoped = await c.records.read(
+    { ...input, blockId: blocks[0].id },
+    actor,
+  );
+  assert.deepEqual(scoped.data.points, [{ x: 0, y: 0.5 }]);
+  assert.equal(scoped.data.sources.length, 1);
+  const plot = await c.records.plot(
+    { selections: [{ nodeId: node.id, runId }], blockId: blocks[1].id },
+    actor,
+  );
+  assert.deepEqual(plot.series[0].points, [{ x: 1, y: 1.5 }]);
+});
+
 test("three types share atomic note bodies and free tags while old scientific identities remain readable", async (t) => {
   const { c, actor, create } = await fixture(t);
   assert.deepEqual(researchNodeKinds, ["paper", "experiment", "note"]);
@@ -335,6 +487,7 @@ test("one record block holds three runs and four exact metrics, with versioned m
   );
   assert.equal(compared.data.temporary, true);
   assert.equal(compared.data.items.length, 2);
+  assert.equal(compared.data.metricKeys.length, 4);
   assert.ok(compared.data.items.every((line) => line.key === "train/loss"));
   assert.deepEqual(
     {

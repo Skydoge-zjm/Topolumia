@@ -26,7 +26,7 @@ export function readXlsxStyles(stylesXml, themeXml) {
     return "#" + rgb.toUpperCase();
   };
   const fontStyle = (font) => {
-    const result = {};
+    const result: Record<string, any> = {};
     if (!font || typeof font !== "object") return result;
     if (font.b !== undefined) result.bold = enabled(font.b);
     if (font.i !== undefined) result.italic = enabled(font.i);

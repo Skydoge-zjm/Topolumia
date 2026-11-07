@@ -304,7 +304,7 @@ export async function createMvpApplication(options = {}) {
       runtime.curatorTriggerCoordinator.stop();
       void runtime.agentSessionGateway.closeAll().catch(() => {});
     }
-    void Promise.allSettled([...runtimes.values()].map(async runtime => { await runtime.researchCommands.records.close(); await runtime.researchCommands.assets.close(); })).then(() => collaboration.close());
+    void Promise.allSettled([...runtimes.values()].map(async runtime => { await runtime.researchCommands.assets.close(); await runtime.researchCommands.records.close(); })).then(() => collaboration.close());
   });
 
   return {

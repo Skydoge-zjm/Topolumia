@@ -45,14 +45,11 @@ export function runColor(nodeId: string, runId: string) {
 }
 export const runKey = (line: { nodeId: string; runId: string }) =>
   JSON.stringify([line.nodeId, line.runId]);
-export const seriesKey = (line: RecordLine) => runKey(line) + ":" + line.xKey;
-
+const numberFormat = new Intl.NumberFormat(undefined, {
+  maximumSignificantDigits: 5,
+});
 export const format = (value: number) =>
-  Number.isFinite(value)
-    ? new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(
-        value,
-      )
-    : "—";
+  Number.isFinite(value) ? numberFormat.format(value) : "—";
 export const formatValue = (value: number | null) =>
   value === null ? "—" : format(value);
 
@@ -89,8 +86,11 @@ export function niceTicks(low: number, high: number, target = 5) {
 /** Group the plot's flat series list into one stable array per metric. */
 export function seriesByMetric(series: RecordLine[]) {
   const groups = new Map<string, RecordLine[]>();
-  for (const line of series)
-    groups.set(line.key, [...(groups.get(line.key) ?? []), line]);
+  for (const line of series) {
+    let group = groups.get(line.key);
+    if (!group) groups.set(line.key, (group = []));
+    group.push(line);
+  }
   return [...groups];
 }
 
@@ -98,33 +98,80 @@ export function lineLabel(line: RecordLine, multiNode: boolean) {
   return (multiNode ? line.nodeName + " · " : "") + line.runLabel;
 }
 
-/**
- * uPlot needs one shared x axis. Series recorded on different steps are aligned
- * onto the union of their x values; null marks a step a run never recorded, so
- * uPlot leaves a gap instead of interpolating across it.
- */
-export function buildData(lines: RecordLine[]): (number | null)[][] {
-  const xs = [
-    ...new Set(lines.flatMap((line) => line.points.map((point) => point.x))),
-  ].sort((a, b) => a - b);
-  return [
-    xs,
-    ...lines.map((line) => {
-      const points = new Map(line.points.map((point) => [point.x, point.y]));
-      return xs.map((x) => (points.has(x) ? points.get(x)! : null));
-    }),
-  ];
+const orderedPoints = new WeakMap<object, { x: number; y: number }[]>();
+export function nearestPoint(
+  points: { x: number; y: number }[],
+  value: number,
+) {
+  if (!points.length) return null;
+  let ordered = orderedPoints.get(points);
+  if (!ordered) {
+    ordered = points.every(
+      (point, index) => !index || point.x >= points[index - 1].x,
+    )
+      ? points
+      : [...points].sort((a, b) => a.x - b.x);
+    orderedPoints.set(points, ordered);
+  }
+  points = ordered;
+  if (value < points[0].x || value > points[points.length - 1].x) return null;
+  let low = 0;
+  let high = points.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (points[middle].x < value) low = middle + 1;
+    else high = middle;
+  }
+  const right = points[low];
+  const left = points[Math.max(0, low - 1)];
+  return Math.abs(left.x - value) <= Math.abs(right.x - value) ? left : right;
 }
 
-export function nearestValue(
-  column: (number | null)[],
-  index: number,
-): number | null {
-  for (let offset = 0; offset < column.length; offset += 1) {
-    const left = column[index - offset],
-      right = column[index + offset];
-    if (left !== null && left !== undefined) return left;
-    if (offset > 0 && right !== null && right !== undefined) return right;
-  }
-  return null;
+/** Cache sorted indices once so pointer handling uses binary search. */
+export function pointIndex(xs: number[], ys: (number | null)[]) {
+  const indices = xs
+    .map((_, index) => index)
+    .filter((index) => ys[index] !== null)
+    .sort((a, b) => xs[a] - xs[b]);
+  return (x: number) => {
+    if (
+      !indices.length ||
+      x < xs[indices[0]] ||
+      x > xs[indices[indices.length - 1]]
+    )
+      return null;
+    let low = 0,
+      high = indices.length - 1;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (xs[indices[middle]] < x) low = middle + 1;
+      else high = middle;
+    }
+    const a = indices[Math.max(0, low - 1)],
+      b = indices[low];
+    return Math.abs(xs[a] - x) <= Math.abs(xs[b] - x) ? a : b;
+  };
+}
+
+/** Per-series coordinates avoid a runs × union-of-steps matrix of mostly nulls. */
+export function buildFacetedData(
+  lines: RecordLine[],
+): [number[], (number | null)[]][] {
+  return [
+    [[], []],
+    ...lines.map((line): [number[], (number | null)[]] => {
+      const xs: number[] = [],
+        ys: (number | null)[] = [];
+      for (let index = 0; index < line.points.length; index++) {
+        const point = line.points[index];
+        if (index && point.x < line.points[index - 1].x) {
+          xs.push(line.points[index - 1].x);
+          ys.push(null);
+        }
+        xs.push(point.x);
+        ys.push(point.y);
+      }
+      return [xs, ys];
+    }),
+  ];
 }

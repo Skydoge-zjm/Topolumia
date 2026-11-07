@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
@@ -6,9 +6,11 @@ import {
   AXIS_INK,
   CHART_COLORS,
   GRID_INK,
-  buildData,
+  buildFacetedData,
   format,
   lineLabel,
+  nearestPoint,
+  pointIndex,
   runColor,
   runKey,
   seriesByMetric,
@@ -50,6 +52,26 @@ export function ExperimentPlots({
   );
   const [hidden, setHidden] = useState<string[]>([]);
   const [hoverX, setHoverX] = useState<number | null>(null);
+  const hoverFrame = useRef<number | null>(null);
+  const pendingHover = useRef<number | null>(null);
+  const onHoverX = useCallback((value: number | null) => {
+    pendingHover.current = value;
+    if (typeof requestAnimationFrame !== "function") {
+      setHoverX(value);
+      return;
+    }
+    if (hoverFrame.current !== null) return;
+    hoverFrame.current = requestAnimationFrame(() => {
+      hoverFrame.current = null;
+      setHoverX(pendingHover.current);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (hoverFrame.current !== null) cancelAnimationFrame(hoverFrame.current);
+    },
+    [],
+  );
   const grouped = new Map<
     string,
     { runId: string; label: string; message: string }[]
@@ -137,7 +159,7 @@ export function ExperimentPlots({
           en={en}
           hidden={hidden}
           hoverX={hoverX}
-          onHoverX={setHoverX}
+          onHoverX={onHoverX}
         />
       ))}
       {!groups.length && (
@@ -191,7 +213,21 @@ function MetricChart({
   const container = useRef<HTMLDivElement>(null);
   const live = useRef<HTMLSpanElement>(null);
   const chart = useRef<uPlot | null>(null);
-  const canvas = canvasUsable();
+  const [canvas] = useState(canvasUsable);
+  const [inView, setInView] = useState(
+    typeof IntersectionObserver === "undefined",
+  );
+  const savedRange = useRef<{ min: number; max: number } | null>(null);
+  useEffect(() => {
+    if (!container.current || typeof IntersectionObserver === "undefined")
+      return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { rootMargin: "400px" },
+    );
+    observer.observe(container.current);
+    return () => observer.disconnect();
+  }, []);
   const multiNode = useMemo(
     () => new Set(lines.map((line) => line.nodeId)).size > 1,
     [lines],
@@ -209,17 +245,36 @@ function MetricChart({
     [lines],
   );
   const xAxisLabel = xKeys.join(" / ");
-  const data = useMemo(() => buildData(visible), [visible]);
+  const data = useMemo(() => buildFacetedData(visible), [visible]);
+  const hoverIndices = useMemo(
+    () => data.map(([xs, ys]) => pointIndex(xs, ys)),
+    [data],
+  );
+  const domain = useMemo(() => {
+    let min = Infinity,
+      max = -Infinity;
+    for (const line of visible)
+      for (const point of line.points) {
+        min = Math.min(min, point.x);
+        max = Math.max(max, point.x);
+      }
+    return Number.isFinite(min) ? [min, max === min ? min + 1 : max] : [0, 1];
+  }, [visible]);
 
   useEffect(() => {
-    if (!canvas || !container.current) return;
+    if (!canvas || !inView || !container.current) return;
     const host = container.current;
     const options: uPlot.Options = {
+      mode: 2,
       width: chartWidth(host),
       height: 260,
       cursor: {
         drag: { x: true, y: false, setScale: true },
         focus: { prox: 24 },
+        dataIdx: (self, index) => {
+          const x = self.posToVal(self.cursor.left ?? 0, "x");
+          return hoverIndices[index]?.(x) ?? null;
+        },
       },
       legend: { show: false },
       scales: { x: { time: false } },
@@ -250,6 +305,11 @@ function MetricChart({
             label: label(line),
             stroke: CHART_COLORS[style],
             width: 1.8,
+            facets: [
+              { scale: "x", sorted: 0 },
+              { scale: "y", sorted: 0 },
+            ],
+            paths: uPlot.paths.linear!(),
             points: {
               show: line.points.length === 1,
               size: 6,
@@ -259,16 +319,22 @@ function MetricChart({
         }),
       ],
       hooks: {
+        setScale: [
+          (self) => {
+            const { min, max } = self.scales.x;
+            if (min !== undefined && max !== undefined)
+              host.dataset.xRange = `${min}:${max}`;
+          },
+        ],
         setCursor: [
           (self) => {
             if (!live.current) return;
-            if (self.cursor.idx == null) {
+            if ((self.cursor.left ?? -1) < 0) {
               live.current.textContent = "";
               onHoverX(null);
               return;
             }
-            const index = self.cursor.idx,
-              xValue = self.data[0][index];
+            const xValue = self.posToVal(self.cursor.left ?? 0, "x");
             if (typeof xValue === "number") {
               live.current.textContent = `@ ${format(xValue)}`;
               onHoverX(xValue);
@@ -277,8 +343,17 @@ function MetricChart({
         ],
       },
     };
-    const instance = new uPlot(options, data as uPlot.AlignedData, host);
+    const instance = new uPlot(
+      options,
+      data as unknown as uPlot.AlignedData,
+      host,
+    );
     chart.current = instance;
+    const initialMin = instance.scales.x.min,
+      initialMax = instance.scales.x.max;
+    if (initialMin !== undefined && initialMax !== undefined)
+      host.dataset.xRange = `${initialMin}:${initialMax}`;
+    if (savedRange.current) instance.setScale("x", savedRange.current);
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
@@ -288,27 +363,44 @@ function MetricChart({
     observer?.observe(host);
     return () => {
       observer?.disconnect();
+      const { min, max } = instance.scales.x;
+      if (min !== undefined && max !== undefined)
+        savedRange.current = { min, max };
       instance.destroy();
       chart.current = null;
     };
     // The x domain and visible series fully describe the chart; rebuilding on any render would reset zoom.
-  }, [canvas, visible, data, label, xAxisLabel, onHoverX]);
+  }, [
+    canvas,
+    inView,
+    visible,
+    data,
+    label,
+    xAxisLabel,
+    onHoverX,
+    hoverIndices,
+  ]);
 
   useEffect(() => {
     const instance = chart.current;
     if (!instance) return;
-    if (hoverX === null || !data[0].length) {
-      instance.setCursor({ left: -10, top: -10 });
+    if (hoverX === null || !visible.length) {
+      instance.setCursor({ left: -10, top: -10 }, false);
       return;
     }
-    const first = data[0][0] ?? hoverX;
-    const last = data[0].at(-1) ?? hoverX;
-    const value = Math.max(first, Math.min(last, hoverX));
-    instance.setCursor({
-      left: instance.valToPos(value, "x"),
-      top: instance.bbox.top + instance.bbox.height / 2,
-    });
-  }, [hoverX, data]);
+    let anchor: ReturnType<typeof nearestPoint> = null;
+    for (const line of visible) {
+      anchor = nearestPoint(line.points, hoverX);
+      if (anchor) break;
+    }
+    instance.setCursor(
+      {
+        left: instance.valToPos(hoverX, "x"),
+        top: anchor ? instance.valToPos(anchor.y, "y") : 0,
+      },
+      false,
+    );
+  }, [hoverX, visible, data, inView]);
 
   const zoom = (factor: number) => {
     const instance = chart.current;
@@ -317,15 +409,14 @@ function MetricChart({
     if (min === undefined || max === undefined) return;
     const center = (min + max) / 2,
       half = ((max - min) * factor) / 2;
-    const lower = Math.max(data[0][0] ?? min, center - half),
-      upper = Math.min(data[0][data[0].length - 1] ?? max, center + half);
+    const lower = Math.max(domain[0], center - half),
+      upper = Math.min(domain[1], center + half);
     if (upper > lower) instance.setScale("x", { min: lower, max: upper });
   };
   const reset = () => {
     const instance = chart.current;
-    const xs = data[0];
-    if (!instance || !xs.length) return;
-    instance.setScale("x", { min: xs[0]!, max: xs[xs.length - 1]! });
+    if (!instance || !visible.length) return;
+    instance.setScale("x", { min: domain[0], max: domain[1] });
   };
 
   return (
@@ -381,21 +472,24 @@ function MetricChart({
               : "请打开“实验数据”页面查看原始数据点。"}
           </p>
         )}
-        {hoverX !== null && visible.length > 0 && (
+        {inView && hoverX !== null && visible.length > 0 && (
           <div className="experiment-chart-tooltip" role="status">
             <strong>@ {format(hoverX)}</strong>
-            {visible.map((line) => {
-              const point = line.points.reduce((best, current) =>
-                Math.abs(current.x - hoverX) < Math.abs(best.x - hoverX)
-                  ? current
-                  : best,
-              );
-              return (
+            {visible.slice(0, 12).map((line) => {
+              const point = nearestPoint(line.points, hoverX);
+              return point ? (
                 <span key={runKey(line)}>
                   {lineLabel(line, multiNode)}: {format(point.y)}
                 </span>
-              );
+              ) : null;
             })}
+            {visible.length > 12 && (
+              <span>
+                {en
+                  ? `${visible.length - 12} more runs`
+                  : `另 ${visible.length - 12} 次运行`}
+              </span>
+            )}
           </div>
         )}
       </div>

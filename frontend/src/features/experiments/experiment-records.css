@@ -221,6 +221,14 @@
 .experiment-data-table .research-table td {
   padding: 4px 10px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.experiment-data-table .research-table tbody tr[aria-rowindex] {
+  height: 27px;
+}
+.experiment-data-metric-toggle:disabled {
+  opacity: .5;
+  cursor: not-allowed;
 }
 .experiment-data-table .research-table th {
   position: sticky;

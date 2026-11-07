@@ -55,7 +55,7 @@ function alignmentColumns(preamble) {
 }
 function styleAndText(source, parseText) {
   let content = source;
-  const style = {};
+  const style: Record<string, any> = {};
   if (/\\(?:textbf|mathbf|bfseries)\b/.test(content)) style.bold = true;
   if (/\\(?:textit|emph|itshape)\b/.test(content)) style.italic = true;
   if (/\\underline\b/.test(content)) style.underline = true;

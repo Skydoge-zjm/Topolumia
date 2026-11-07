@@ -16,10 +16,12 @@ export class ResearchRepository {
     this.db = db ?? new DatabaseSync(":memory:"); this.projectId = projectId;
     for (const table of Object.values(tables)) this.db.exec(`CREATE TABLE IF NOT EXISTS ${table}(project_id TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(project_id,id))`);
     this.db.exec("CREATE INDEX IF NOT EXISTS research_candidates_session ON research_candidates(project_id,json_extract(body,'$.provenance.sessionId')); CREATE INDEX IF NOT EXISTS research_receipts_session ON research_read_receipts(project_id,json_extract(body,'$.researchSessionId'));");
+    this.db.exec("CREATE INDEX IF NOT EXISTS research_blocks_owner ON research_content_blocks(project_id,json_extract(body,'$.owner.kind'),json_extract(body,'$.owner.id'));");
     if (!this.get("settings", "cursor")) this.put("settings", "cursor", { secret: randomBytes(32).toString("hex") });
   }
   get(type, id) { const row = this.db.prepare(`SELECT body FROM ${tables[type]} WHERE project_id=? AND id=?`).get(this.projectId, id); return row ? readStored(type, row.body) : null; }
   all(type) { return this.db.prepare(`SELECT body FROM ${tables[type]} WHERE project_id=? ORDER BY id`).all(this.projectId).map(row => readStored(type, row.body)); }
+  blocksForOwner(owner) { return this.db.prepare("SELECT body FROM research_content_blocks WHERE project_id=? AND json_extract(body,'$.owner.kind')=? AND json_extract(body,'$.owner.id')=? ORDER BY id").all(this.projectId,owner.kind,owner.id).map(row=>readStored("blocks",row.body)); }
   forSession(type, sessionId, limit = 10000) {
     const field = type === "candidates" ? "$.provenance.sessionId" : type === "receipts" ? "$.researchSessionId" : null;
     if (!field) throw new Error("Unsupported session query");

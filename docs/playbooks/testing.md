@@ -61,6 +61,18 @@ npm run test:experiment-records-integration
 
 [原生记录集成](../../tests/research/experiment-records.integration.ts) 覆盖失败且无指标的 run、W&B 分片记录、TensorBoard 标量、原件保留以及丢失派生索引后的重建。此项需要可用的读取器依赖，不计入无需 Python 的普通后端回归。
 
+## 实验大数据性能
+
+[诊断脚本](../../scripts/diagnostics/benchmark-experiment-performance.mjs) 在临时目录和内存数据库生成合成记录，测量 60 run × 2000 step × 4 指标的导入、绘图、单列与批量范围读取，以及 15 万点长曲线和不同步长的前端数组构建。先完成后端构建，在没有其他构建或测试竞争资源时执行：
+
+```powershell
+node scripts/diagnostics/benchmark-experiment-performance.mjs runtime/experiment-performance.json
+```
+
+同时看总耗时与主事件循环延迟；后台线程首次启动可能增加导入总耗时，不能只据此判断交互响应。缓存热读与冷线程分别测量，不能混为同一基线。缓存计费体积与数组槽数也不等于实际堆内存。脚本仅清理自己创建的临时目录，不读取真实实验。
+
+浏览器验证使用 [大数据用例](../../frontend/e2e/experiment-performance.spec.ts)，构建完成后执行 `npm run test:e2e -- experiment-performance.spec.ts`。它自建隔离服务，记录打开耗时和浏览器长任务，并断言画布生命周期、真实曲线路径、缩放恢复、请求数量、虚拟行及完整分页复制。时间记录用于同机复测，不使用容易受机器负载影响的固定毫秒阈值代替正确性检查。
+
 ## GitHub Actions
 
 [CI](../../.github/workflows/ci.yml) 在 main 推送和拉取请求时只运行一套 Ubuntu / Node.js 22 检查：安装、文档链接、类型、lint、前端测试、构建与后端回归。同一分支、同一环境的新提交会取消旧任务，避免重复消耗 runner。

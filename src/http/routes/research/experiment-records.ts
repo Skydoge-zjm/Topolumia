@@ -10,6 +10,17 @@ export async function handleExperimentRecordRoutes({
 }) {
   const c = runtime.researchCommands;
   if (
+    pathname === "/api/research/experiments/table" &&
+    request.method === "POST"
+  ) {
+    sendJson(
+      response,
+      200,
+      await c.records.table(await readJson(request, 262144), actor),
+    );
+    return true;
+  }
+  if (
     pathname === "/api/research/experiments/plot" &&
     request.method === "POST"
   ) {
