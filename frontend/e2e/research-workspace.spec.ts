@@ -90,8 +90,7 @@ test("groups collapse to a group node, expand, and open editable scientific deta
   await curve.getByText("数据点", { exact: true }).click();
   await expect(curve.getByRole("cell", { name: "0.25", exact: true })).toBeVisible();
   await expect(curve).toContainText("曲线展示已采样");
-  await page.getByRole("button", { name: "运行与关联", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "Training run 1", exact: true })).toBeVisible();
+  await expect(page.locator(".experiment-run-item").filter({ hasText: "Training run 1" })).toBeVisible();
   await page.screenshot({ path: "runtime/research-experiment-results.png", fullPage: true });
 });
 test("recurring monthly activities create distinct planned occurrences without generated minutes", async ({ page }) => {

@@ -10,7 +10,7 @@ import type { ResearchNode } from "@/features/research/model";
 import { nodeKinds } from "@domain/research/node-fields";
 import { NodeDeleteDialog } from "./NodeDeleteDialog";
 import { NodeCoreEditor } from "./NodeCoreEditor";
-import { ExperimentRunsPanel } from "@/features/experiments/ExperimentRunsPanel";
+import { ExperimentWorkbench } from "@/features/experiments/ExperimentWorkbench";
 import { ObjectContentWorkspace } from "./ObjectContentWorkspace";
 import type { ContentBlock } from "./ContentBlockRenderer";
 import { ObjectRelations } from "./ObjectRelations";
@@ -47,11 +47,14 @@ function NodeDetail() {
     {paper
       ? <PaperBibliography core={data.core} en={en} initialExpanded={!data.contentBlocks.length && !data.pendingCandidates?.length} />
       : summary && <section className="research-card research-core-summary"><p>{summary}</p></section>}
-    <nav className="research-tabs" aria-label={en ? "Node workspace" : "节点工作区"}>{[{ value: "content", label: en ? "Research material" : "研究材料" }, ...(kind === "experiment" ? [{ value: "runs", label: en ? "Runs and materials" : "运行与关联" }] : []), { value: "relations", label: en ? "Relations" : "关系与来源" }].map(item => <button key={item.value} className={tab === item.value ? "is-active" : ""} onClick={() => setTab(item.value)}>{item.label}</button>)}</nav>
+    <nav className="research-tabs" aria-label={en ? "Node workspace" : "节点工作区"}>{[{ value: "content", label: en ? "Research material" : "研究材料" }, { value: "relations", label: en ? "Relations" : "关系与来源" }].map(item => <button key={item.value} className={tab === item.value ? "is-active" : ""} onClick={() => setTab(item.value)}>{item.label}</button>)}</nav>
     <PendingObjectChanges candidates={data.pendingCandidates ?? []} owner={owner} en={en} empty={!data.contentBlocks.length} />
     {Array.isArray(data.core.tags) && data.core.tags.length > 0 && <div className="research-inline-facts">{data.core.tags.map((tag: string) => <span className="research-badge" key={tag}>{tag}</span>)}</div>}
-    {tab === "content" && <>{kind === "note" && <NoteBodyWorkspace owner={owner} block={bodyBlock} collectionRevision={data.blockCollectionRevision} en={en} canEdit={permissions.nodes} onChanged={refresh} />}<ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={bodyBlock ? [bodyBlock.id] : []} nodeKind={kind} onChanged={refresh} /></>}
-    {tab === "runs" && kind === "experiment" && <ExperimentRunsPanel nodeId={id} blocks={data.contentBlocks} en={en} canEdit={permissions.nodes} onChanged={refresh} />}
+    {tab === "content" && (kind === "experiment"
+      ? <ExperimentWorkbench nodeId={id} owner={owner} blocks={data.contentBlocks} en={en} canEdit={permissions.nodes} onChanged={refresh}>
+          <ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={data.contentBlocks.filter(block => block.type === "experimentRecord").map(block => block.id)} nodeKind={kind} onChanged={refresh} />
+        </ExperimentWorkbench>
+      : <>{kind === "note" && <NoteBodyWorkspace owner={owner} block={bodyBlock} collectionRevision={data.blockCollectionRevision} en={en} canEdit={permissions.nodes} onChanged={refresh} />}<ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={bodyBlock ? [bodyBlock.id] : []} nodeKind={kind} onChanged={refresh} /></>)}
     {tab === "relations" && <ObjectRelations owner={owner} label={title} en={en} canEdit={permissions.nodes} onChanged={refresh} />}
     {permissions.deleteNodes && <div className="research-delete-section"><button className="button" onClick={() => setDeleting(true)}>{en ? "Delete node" : "删除节点"}</button></div>}
     {deleting && <NodeDeleteDialog id={id} title={title} nodeRevision={data.nodeRevision} relationCount={data.relations.length} groupCount={data.groupCount ?? 0} en={en} onClose={() => setDeleting(false)} onReload={async () => { const result = await query.refetch(); if (result.error) throw result.error; }} onDeleted={historyId => { void client.invalidateQueries({ queryKey: ["topology"] }); void client.invalidateQueries({ queryKey: ["research-node", projectId(), id] }); navigate(historyId ? "/records/history/" + historyId : "/records"); }} />}

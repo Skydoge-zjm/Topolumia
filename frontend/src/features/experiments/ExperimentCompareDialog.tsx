@@ -5,6 +5,8 @@ import { ResearchDialog } from "@/features/research/components/ResearchUi";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { ExperimentPlots } from "./ExperimentPlots";
+import { RunStatusDot } from "./RunStatusDot";
+import { X } from "lucide-react";
 import type { RecordPlot } from "./ExperimentPlots";
 
 export type RunSelection = { nodeId: string; runId: string };
@@ -75,6 +77,34 @@ export function ExperimentCompareDialog({
           />
         )}
       </div>
+      {selections.length > 0 && (
+        <ul className="experiment-compare-chips" aria-label={en ? "Selected runs" : "已选运行"}>
+          {selections.map((value) => {
+            const node = index.data?.items.find((item) => item.id === value.nodeId);
+            const run = node?.runs.find((item) => item.id === value.runId);
+            return (
+              <li key={selectionKey(value)}>
+                <span>
+                  {node?.name ?? value.nodeId} · {run?.label ?? value.runId}
+                </span>
+                <button
+                  type="button"
+                  className="research-icon-button"
+                  aria-label={(en ? "Remove " : "移除 ") + (run?.label ?? value.runId)}
+                  onClick={() => toggle(value)}
+                >
+                  <X size={14} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {selections.length >= 24 && (
+        <p className="research-hint" role="status">
+          {en ? "24 runs is the comparison limit." : "对比最多同时显示 24 次运行。"}
+        </p>
+      )}
       {picking && index.isPending && (
         <LoadingSkeleton
           layout="rows"
@@ -127,7 +157,10 @@ export function ExperimentCompareDialog({
                               />
                             </td>
                             <td>{node.name}</td>
-                            <td>{run.label}</td>
+                            <td>
+                              {run.label}
+                              <RunStatusDot status={run.status} en={en} />
+                            </td>
                           </tr>
                         );
                       }),

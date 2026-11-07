@@ -1,23 +1,30 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import uPlot from "uplot";
+import "uplot/dist/uPlot.min.css";
 import { api, projectId } from "@/shared/lib/api";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
+import {
+  AXIS_INK,
+  CHART_COLORS,
+  DASH_PATTERNS,
+  GRID_INK,
+  buildData,
+  format,
+  formatValue,
+  lineLabel,
+  nearestValue,
+  runColor,
+  seriesByMetric,
+  seriesKey,
+  tickFormat,
+  type RecordLine,
+} from "./chartModel";
 import "./experiment-records.css";
 
-export type RecordLine = {
-  nodeId: string;
-  nodeName: string;
-  runId: string;
-  runLabel: string;
-  key: string;
-  xKey: string;
-  points: { x: number; y: number }[];
-  pointCount: number;
-  sampled: boolean;
-  contentVersion?: string;
-  sources: any[];
-};
+export type { RecordLine } from "./chartModel";
+
 export type RecordPlot = {
   temporary: true;
   metricKeys: string[];
@@ -25,29 +32,6 @@ export type RecordPlot = {
   runs: { nodeId: string; nodeName: string; runId: string; runLabel: string }[];
   series: RecordLine[];
   warnings?: { nodeId: string; runId: string; message: string }[];
-};
-const COLORS = [
-  "#087d55",
-  "#2563eb",
-  "#b45309",
-  "#9333ea",
-  "#b91c1c",
-  "#0f766e",
-];
-const DASHES = ["", "6 3", "2 3", "9 3 2 3"];
-const lineDash = (style: number) =>
-  DASHES[(style + Math.floor(style / COLORS.length)) % DASHES.length];
-const runKey = (line: { nodeId: string; runId: string }) =>
-  JSON.stringify([line.nodeId, line.runId]);
-const format = (value: number) =>
-  Number.isFinite(value)
-    ? new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(
-        value,
-      )
-    : "—";
-const tickFormat = (value: number) => {
-  const short = Number(value.toPrecision(3)).toString();
-  return short.length > 7 ? value.toExponential(2) : short;
 };
 
 export function ExperimentPlots({
@@ -63,46 +47,70 @@ export function ExperimentPlots({
   blockRevision?: number;
   candidateId?: string;
 }) {
-  const styles = new Map(plot.runs.map((run, index) => [runKey(run), index]));
-  const metrics = [...new Set(plot.series.map((line) => line.key))];
+  const groups = useMemo(() => seriesByMetric(plot.series), [plot.series]);
+  const grouped = new Map<string, { runId: string; label: string; message: string }[]>();
+  for (const warning of plot.warnings ?? []) {
+    const run = plot.runs.find((item) => item.nodeId === warning.nodeId && item.runId === warning.runId);
+    const key = run?.nodeName ?? warning.nodeId;
+    grouped.set(key, [...(grouped.get(key) ?? []), { runId: warning.runId, label: run?.runLabel ?? warning.runId, message: warning.message }]);
+  }
   return (
     <div className="experiment-plots" translate="no">
-      {(plot.warnings ?? []).map((warning, index) => (
-        <p className="experiment-plot-warning" role="alert" key={index}>
-          {
-            plot.runs.find(
-              (run) =>
-                run.nodeId === warning.nodeId && run.runId === warning.runId,
-            )?.runLabel
-          }
-          : {warning.message}
-        </p>
-      ))}
-      {metrics.map((metric) => (
+      {grouped.size > 0 && (
+        <details className="experiment-plot-warning" role="alert">
+          <summary>
+            {en ? "Some records could not be read" : "部分记录未能读取"} ({grouped.size})
+          </summary>
+          <ul>
+            {[...grouped].map(([nodeName, items]) => (
+              <li key={nodeName}>
+                <strong>{nodeName}</strong>
+                <ul>
+                  {items.map((item) => (
+                    <li key={item.runId + item.message}>
+                      {item.label}: {item.message}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {groups.map(([metric, metricLines]) => (
         <MetricChart
           key={metric}
           metric={metric}
-          lines={plot.series.filter((line) => line.key === metric)}
-          styles={styles}
+          lines={metricLines}
           en={en}
           blockId={blockId}
           blockRevision={blockRevision}
           candidateId={candidateId}
         />
       ))}
-      {!metrics.length && (
-        <p className="research-empty">
-          {en ? "No metric curves available." : "暂无指标曲线。"}
-        </p>
-      )}
+      {!groups.length && <p className="research-empty">{en ? "No metric curves available." : "暂无指标曲线。"}</p>}
     </div>
   );
+}
+
+/** Never start wider than the host: an unmeasured chart must not stretch its grid column. */
+function chartWidth(host: HTMLElement) {
+  return Math.max(220, Math.min(host.clientWidth || 320, host.parentElement?.clientWidth || 320));
+}
+
+function canvasUsable() {
+  if (typeof window === "undefined" || typeof window.HTMLCanvasElement === "undefined") return false;
+  if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent)) return false;
+  try {
+    return Boolean(window.HTMLCanvasElement.prototype.getContext("2d"));
+  } catch {
+    return false;
+  }
 }
 
 function MetricChart({
   metric,
   lines,
-  styles,
   en,
   blockId,
   blockRevision,
@@ -110,161 +118,139 @@ function MetricChart({
 }: {
   metric: string;
   lines: RecordLine[];
-  styles: Map<string, number>;
   en: boolean;
   blockId?: string;
   blockRevision?: number;
   candidateId?: string;
 }) {
-  const ref = useRef<HTMLDivElement>(null),
-    clipId = useId().replace(/:/g, "");
-  const [width, setWidth] = useState(760),
-    [hidden, setHidden] = useState<string[]>([]),
-    [range, setRange] = useState<[number, number] | null>(null);
-  const [hover, setHover] = useState<number | null>(null),
-    [drag, setDrag] = useState<[number, number] | null>(null),
-    [keyboardValue, setKeyboardValue] = useState("");
+  const container = useRef<HTMLDivElement>(null);
+  const live = useRef<HTMLSpanElement>(null);
+  const chart = useRef<uPlot | null>(null);
+  const [hidden, setHidden] = useState<string[]>([]);
+  const canvas = canvasUsable();
+  const multiNode = useMemo(() => new Set(lines.map((line) => line.nodeId)).size > 1, [lines]);
+  const label = useMemo(() => (line: RecordLine) => lineLabel(line, multiNode), [multiNode]);
+  const legendEntries = useMemo(() => [...new Map(lines.map((line) => [seriesKey(line), line])).values()], [lines]);
+  const visible = useMemo(() => lines.filter((line) => !hidden.includes(seriesKey(line))), [lines, hidden]);
+  const xKeys = useMemo(() => [...new Set(lines.map((line) => line.xKey))], [lines]);
+  const xAxisLabel = xKeys.join(" / ");
+  const data = useMemo(() => buildData(visible), [visible]);
+
   useEffect(() => {
-    if (!ref.current || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) =>
-      setWidth(Math.max(220, entry.contentRect.width)),
-    );
-    observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, []);
-  const geometry = useMemo(() => {
-    const visible = lines.filter((line) => !hidden.includes(runKey(line))),
-      points = visible.flatMap((line) => line.points);
-    const allX = points.map((point) => point.x),
-      min = allX.length ? Math.min(...allX) : 0,
-      max = allX.length ? Math.max(...allX) : 1;
-    const xmin = range?.[0] ?? min,
-      xmax = range?.[1] ?? (max === min ? min + 1 : max);
-    const ys = points
-      .filter((point) => point.x >= xmin && point.x <= xmax)
-      .map((point) => point.y);
-    const low = ys.length ? Math.min(...ys) : 0,
-      high = ys.length ? Math.max(...ys) : 1,
-      padding = (high - low || Math.abs(high) || 1) * 0.05;
-    const ymin = low - padding,
-      ymax = high + padding,
-      left = Math.max(
-        58,
-        ...[0, 1, 2, 3, 4].map(
-          (tick) =>
-            tickFormat(ymin + ((ymax - ymin) * tick) / 4).length * 7 + 12,
-        ),
-      ),
-      right = width - 16,
-      top = 16,
-      bottom = 220;
-    const x = (value: number) =>
-      left + ((value - xmin) / (xmax - xmin || 1)) * (right - left);
-    const y = (value: number) =>
-      bottom - ((value - ymin) / (ymax - ymin || 1)) * (bottom - top);
-    const paths = visible.map((line) => {
-      let previous = -Infinity;
-      const d = line.points
-        .map((point, index) => {
-          const move = index === 0 || point.x < previous;
-          previous = point.x;
-          return `${move ? "M" : "L"}${x(point.x).toFixed(2)},${y(point.y).toFixed(2)}`;
-        })
-        .join(" ");
-      return { line, d };
-    });
-    return {
-      visible,
-      min,
-      max,
-      xmin,
-      xmax,
-      ymin,
-      ymax,
-      left,
-      right,
-      top,
-      bottom,
-      x,
-      y,
-      paths,
+    if (!canvas || !container.current) return;
+    const host = container.current;
+    const options: uPlot.Options = {
+      width: chartWidth(host),
+      height: 260,
+      cursor: { drag: { x: true, y: false, setScale: true }, focus: { prox: 24 } },
+      legend: { show: false },
+      scales: { x: { time: false } },
+      axes: [
+        {
+          stroke: AXIS_INK,
+          grid: { stroke: GRID_INK, width: 1 },
+          ticks: { stroke: GRID_INK, width: 1 },
+          size: 30,
+          values: (_self, splits) => splits.map((value) => tickFormat(value)),
+          label: xAxisLabel,
+          labelSize: 20,
+          labelFont: "12px inherit",
+        },
+        {
+          stroke: AXIS_INK,
+          grid: { stroke: GRID_INK, width: 1 },
+          ticks: { stroke: GRID_INK, width: 1 },
+          size: 58,
+          values: (_self, splits) => splits.map((value) => tickFormat(value)),
+        },
+      ],
+      series: [
+        {},
+        ...visible.map((line) => {
+          const style = runColor(line.nodeId, line.runId);
+          return {
+            label: label(line),
+            stroke: CHART_COLORS[style],
+            width: 1.8,
+            dash: DASH_PATTERNS[style % DASH_PATTERNS.length],
+            points: { show: line.points.length === 1, size: 6, fill: CHART_COLORS[style] },
+          };
+        }),
+      ],
+      hooks: {
+        setCursor: [
+          (self) => {
+            if (!live.current) return;
+            if (self.cursor.idx == null) {
+              live.current.textContent = "";
+              return;
+            }
+            const index = self.cursor.idx,
+              xValue = self.data[0][index];
+            const values = visible
+              .slice(0, 6)
+              .map((line, position) => `${label(line)}: ${formatValue(nearestValue(self.data[position + 1] as (number | null)[], index))}`);
+            live.current.textContent =
+              values.join(" · ") +
+              (visible.length > 6 ? ` · ${en ? `+${visible.length - 6} more` : `另 ${visible.length - 6} 条`}` : "") +
+              ` @ ${format(xValue ?? 0)}`;
+          },
+        ],
+      },
     };
-  }, [lines, hidden, range, width]);
-  const { xmin, xmax, ymin, ymax, left, right, top, bottom, x, y } = geometry;
-  const at = (event: React.PointerEvent<SVGSVGElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    return Math.max(
-      xmin,
-      Math.min(
-        xmax,
-        xmin +
-          ((((event.clientX - bounds.left) * width) / (bounds.width || width) -
-            left) /
-            (right - left)) *
-            (xmax - xmin),
-      ),
-    );
-  };
-  const nearest = (line: RecordLine, value: number) => {
-    const points = line.points;
-    if (
-      !points.length ||
-      value < Math.min(...points.map((point) => point.x)) ||
-      value > Math.max(...points.map((point) => point.x))
-    )
-      return null;
-    return points.reduce((best, point) =>
-      Math.abs(point.x - value) < Math.abs(best.x - value) ? point : best,
-    );
-  };
+    const instance = new uPlot(options, data as uPlot.AlignedData, host);
+    chart.current = instance;
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => instance.setSize({ width: chartWidth(host), height: 260 }));
+    observer?.observe(host);
+    return () => {
+      observer?.disconnect();
+      instance.destroy();
+      chart.current = null;
+    };
+    // The x domain and visible series fully describe the chart; rebuilding on any render would reset zoom.
+  }, [canvas, visible, data, en, label, xAxisLabel]);
+
   const zoom = (factor: number) => {
-    const center = (xmin + xmax) / 2,
-      half = ((xmax - xmin) * factor) / 2;
-    const lower = Math.max(geometry.min, center - half),
-      upper = Math.min(geometry.max, center + half);
-    if (upper > lower) setRange([lower, upper]);
+    const instance = chart.current;
+    if (!instance) return;
+    const { min, max } = instance.scales.x;
+    if (min === undefined || max === undefined) return;
+    const center = (min + max) / 2,
+      half = ((max - min) * factor) / 2;
+    const lower = Math.max(data[0][0] ?? min, center - half),
+      upper = Math.min(data[0][data[0].length - 1] ?? max, center + half);
+    if (upper > lower) instance.setScale("x", { min: lower, max: upper });
   };
-  const multiNode = new Set(lines.map((line) => line.nodeId)).size > 1;
-  const label = (line: RecordLine) =>
-    (multiNode ? line.nodeName + " · " : "") + line.runLabel;
-  const runLines = [
-    ...new Map(lines.map((line) => [runKey(line), line])).values(),
-  ];
+  const reset = () => {
+    const instance = chart.current;
+    const xs = data[0];
+    if (!instance || !xs.length) return;
+    instance.setScale("x", { min: xs[0]!, max: xs[xs.length - 1]! });
+  };
+
   return (
-    <figure className="experiment-metric-chart" aria-label={metric}>
+    <figure className="experiment-metric-chart" aria-label={metric} data-series-count={visible.length}>
       <figcaption>
         <strong>{metric}</strong>
         <div className="experiment-chart-actions">
-          <button
-            className="research-icon-button"
-            aria-label={en ? "Zoom in" : "放大曲线"}
-            onClick={() => zoom(0.5)}
-          >
+          <button className="research-icon-button" aria-label={en ? "Zoom in" : "放大曲线"} onClick={() => zoom(0.5)} disabled={!canvas}>
             <ZoomIn size={16} />
           </button>
-          <button
-            className="research-icon-button"
-            aria-label={en ? "Zoom out" : "缩小曲线"}
-            onClick={() => zoom(2)}
-          >
+          <button className="research-icon-button" aria-label={en ? "Zoom out" : "缩小曲线"} onClick={() => zoom(2)} disabled={!canvas}>
             <ZoomOut size={16} />
           </button>
-          <button
-            className="research-icon-button"
-            aria-label={en ? "Reset zoom" : "重置缩放"}
-            onClick={() => {
-              setRange(null);
-              setHover(null);
-            }}
-          >
+          <button className="research-icon-button" aria-label={en ? "Reset zoom" : "重置缩放"} onClick={reset} disabled={!canvas}>
             <RotateCcw size={16} />
           </button>
         </div>
       </figcaption>
-      <div className="experiment-chart-legends">
-        {runLines.map((line) => {
-          const key = runKey(line),
-            style = styles.get(key) ?? 0;
+      <div className="experiment-chart-legends" role="group" aria-label={en ? "Series" : "曲线系列"}>
+        {legendEntries.map((line) => {
+          const key = seriesKey(line),
+            style = runColor(line.nodeId, line.runId);
           return (
             <button
               type="button"
@@ -272,201 +258,76 @@ function MetricChart({
               aria-pressed={!hidden.includes(key)}
               className="experiment-chart-legend"
               onClick={() =>
-                setHidden((current) =>
-                  current.includes(key)
-                    ? current.filter((item) => item !== key)
-                    : [...current, key],
-                )
+                setHidden((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
               }
             >
               <svg width="24" height="12" aria-hidden="true">
                 <path
                   d="M0 6 H24"
-                  stroke={COLORS[style % COLORS.length]}
-                  strokeDasharray={lineDash(style)}
+                  stroke={CHART_COLORS[style]}
+                  strokeDasharray={DASH_PATTERNS[style % DASH_PATTERNS.length].join(" ") || undefined}
                   strokeWidth="2"
                 />
               </svg>
               {label(line)}
+              {line.xKey !== xKeys[0] && <span className="experiment-chart-legend-axis">· {line.xKey}</span>}
             </button>
           );
         })}
       </div>
-      <div ref={ref} className="experiment-chart-surface">
-        <svg
-          viewBox={`0 0 ${width} 255`}
-          width="100%"
-          height="255"
-          role="img"
-          tabIndex={0}
-          aria-label={`${metric} · ${runLines.length} ${en ? "runs" : "次运行"}`}
-          onDoubleClick={() => setRange(null)}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            const value = at(event);
-            setDrag([value, value]);
-            event.currentTarget.setPointerCapture?.(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            const value = at(event);
-            setHover(value);
-            setDrag((current) => (current ? [current[0], value] : null));
-          }}
-          onPointerUp={() => {
-            if (drag && Math.abs(drag[1] - drag[0]) > (xmax - xmin) * 0.01)
-              setRange([Math.min(...drag), Math.max(...drag)]);
-            setDrag(null);
-          }}
-          onPointerCancel={() => setDrag(null)}
-          onPointerLeave={() => {
-            if (!drag) setHover(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setRange(null);
-              setHover(null);
-              return;
-            }
-            if (!["ArrowLeft", "ArrowRight", "+", "-"].includes(event.key))
-              return;
-            event.preventDefault();
-            if (event.key === "+" || event.key === "-") {
-              zoom(event.key === "+" ? 0.5 : 2);
-              return;
-            }
-            const value = Math.max(
-              xmin,
-              Math.min(
-                xmax,
-                (hover ?? xmin) +
-                  ((event.key === "ArrowRight" ? 1 : -1) * (xmax - xmin)) / 100,
-              ),
-            );
-            setHover(value);
-            setKeyboardValue(
-              geometry.visible
-                .map((line) => {
-                  const point = nearest(line, value);
-                  return `${label(line)}: ${point ? format(point.y) + " @ " + format(point.x) : "—"}`;
-                })
-                .join("; "),
-            );
-          }}
-        >
-          <defs>
-            <clipPath id={clipId}>
-              <rect
-                x={left}
-                y={top}
-                width={right - left}
-                height={bottom - top}
-              />
-            </clipPath>
-          </defs>
-          {[0, 1, 2, 3, 4].map((tick) => {
-            const value = ymin + ((ymax - ymin) * tick) / 4;
-            return (
-              <g key={tick} className="experiment-chart-grid">
-                <path d={`M${left} ${y(value)} H${right}`} />
-                <text x={left - 6} y={y(value) + 4} textAnchor="end">
-                  {tickFormat(value)}
-                </text>
-              </g>
-            );
-          })}
-          {[0, 1, 2, 3, 4].map((tick) => {
-            const value = xmin + ((xmax - xmin) * tick) / 4;
-            return (
-              <text
-                className="experiment-chart-tick"
-                key={tick}
-                x={x(value)}
-                y={240}
-                textAnchor={
-                  tick === 0 ? "start" : tick === 4 ? "end" : "middle"
-                }
-              >
-                {tickFormat(value)}
-              </text>
-            );
-          })}
-          <g clipPath={`url(#${clipId})`}>
-            {geometry.paths.map(({ line, d }, index) => {
-              const style = styles.get(runKey(line)) ?? 0;
-              return (
-                <g key={runKey(line) + ":" + index}>
-                  <path
-                    d={d}
-                    fill="none"
-                    stroke={COLORS[style % COLORS.length]}
-                    strokeWidth="1.8"
-                    strokeDasharray={lineDash(style)}
-                    vectorEffect="non-scaling-stroke"
-                    aria-label={label(line)}
-                  />
-                  {line.points.length === 1 && (
-                    <circle
-                      cx={x(line.points[0].x)}
-                      cy={y(line.points[0].y)}
-                      r={3}
-                      fill={COLORS[style % COLORS.length]}
-                      aria-label={label(line) + ": " + format(line.points[0].y)}
-                    />
-                  )}
-                </g>
-              );
-            })}
-            {hover !== null && (
-              <path
-                className="experiment-chart-cursor"
-                d={`M${x(hover)} ${top} V${bottom}`}
-              />
-            )}
-            {drag && (
-              <rect
-                className="experiment-chart-brush"
-                x={x(Math.min(...drag))}
-                y={top}
-                width={Math.abs(x(drag[1]) - x(drag[0]))}
-                height={bottom - top}
-              />
-            )}
-          </g>
-        </svg>
-        {hover !== null && (
-          <div className="experiment-chart-tooltip" aria-hidden="true">
-            <b>{format(hover)}</b>
-            {geometry.visible.map((line, index) => {
-              const point = nearest(line, hover);
-              return (
-                <span key={runKey(line) + ":" + index}>
-                  {label(line)}:{" "}
-                  {point
-                    ? format(point.y) + ` (${line.xKey} ${format(point.x)})`
-                    : "—"}
-                </span>
-              );
-            })}
-          </div>
-        )}
+      <div
+        ref={container}
+        className="experiment-chart-surface"
+        role="img"
+        tabIndex={0}
+        aria-label={`${metric} · ${legendEntries.length} ${en ? "runs" : "次运行"}`}
+        onDoubleClick={reset}
+      >
+        {!canvas && <FallbackTable lines={visible} xs={data[0]} en={en} />}
       </div>
+      <span ref={live} className="visually-hidden" aria-live="polite" />
       <div className="experiment-chart-metadata">
-        <span>{[...new Set(lines.map((line) => line.xKey))].join(" / ")}</span>
-        {lines.some((line) => line.sampled) && (
-          <span>{en ? "Sampled display" : "曲线展示已采样"}</span>
-        )}
+        <span>{xKeys.join(" / ")}</span>
+        {lines.some((line) => line.sampled) && <span className="research-badge">{en ? "Sampled display" : "曲线展示已采样"}</span>}
       </div>
-      <span className="visually-hidden" aria-live="polite">
-        {keyboardValue}
-      </span>
-      <RawValues
-        lines={lines}
-        en={en}
-        blockId={blockId}
-        blockRevision={blockRevision}
-        candidateId={candidateId}
-      />
+      <RawValues lines={lines} en={en} blockId={blockId} blockRevision={blockRevision} candidateId={candidateId} />
     </figure>
+  );
+}
+
+function FallbackTable({ lines, xs, en }: { lines: RecordLine[]; xs: (number | null)[]; en: boolean }) {
+  const columns = lines.map((line) => {
+    const points = new Map(line.points.map((point) => [point.x, point.y]));
+    return xs.map((x) => (x === null ? null : points.get(x) ?? null));
+  });
+  return (
+    <div className="experiment-chart-fallback">
+      <p role="status">{en ? "Charts need a canvas; showing the first data points." : "当前环境无画布，显示前若干数据点。"}</p>
+      <div className="research-table-wrap">
+        <table className="research-table">
+          <thead>
+            <tr>
+              <th>{lines[0]?.xKey ?? "x"}</th>
+              {lines.map((line) => (
+                <th key={seriesKey(line)}>
+                  {line.nodeName} · {line.runLabel}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {xs.slice(0, 12).map((x, index) => (
+              <tr key={String(x)}>
+                <td>{format(x ?? 0)}</td>
+                {columns.map((column, position) => (
+                  <td key={position}>{column[index] === null ? "—" : format(column[index]!)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -486,20 +347,10 @@ function RawValues({
   const [open, setOpen] = useState(false),
     [selected, setSelected] = useState("0"),
     [offset, setOffset] = useState(0);
-  const line = lines[Number(selected)] ?? lines[0];
+  const index = Math.min(Number(selected), Math.max(0, lines.length - 1));
+  const line = lines[index] ?? lines[0];
   const query = useQuery({
-    queryKey: [
-      "experiment-values",
-      projectId(),
-      line.nodeId,
-      line.runId,
-      line.key,
-      blockId,
-      blockRevision,
-      candidateId,
-      offset,
-      line.sources,
-    ],
+    queryKey: ["experiment-values", projectId(), line.nodeId, line.runId, line.key, blockId, blockRevision, candidateId, offset, line.sources],
     enabled: open,
     queryFn: () =>
       api<any>("/api/research/experiments/read", {
@@ -520,29 +371,26 @@ function RawValues({
       }),
   });
   const data = query.data?.data;
+  const copy = () => {
+    if (!data) return;
+    const text = [data.xKey + "\t" + data.metric, ...data.points.map((point: { x: number; y: number }) => `${point.x}\t${point.y}`)].join("\n");
+    void navigator.clipboard?.writeText(text);
+  };
   return (
-    <details
-      className="experiment-raw-values"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
+    <details className="experiment-raw-values" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>{en ? "Data points" : "数据点"}</summary>
       {open && (
         <>
           <SelectMenu
             ariaLabel={en ? "Data run" : "数据运行"}
-            value={selected}
+            value={String(index)}
             onChange={(value) => {
               setSelected(value);
               setOffset(0);
             }}
-            options={lines.map((item, index) => ({
-              value: String(index),
-              label: item.nodeName + " · " + item.runLabel,
-            }))}
+            options={lines.map((item, position) => ({ value: String(position), label: item.nodeName + " · " + item.runLabel }))}
           />
-          {query.isPending && (
-            <p role="status">{en ? "Loading…" : "读取中…"}</p>
-          )}
+          {query.isPending && <p role="status">{en ? "Loading…" : "读取中…"}</p>}
           {query.error && <p role="alert">{query.error.message}</p>}
           {data && (
             <>
@@ -555,35 +403,27 @@ function RawValues({
                     </tr>
                   </thead>
                   <tbody>
-                    {data.points.map(
-                      (point: { x: number; y: number }, index: number) => (
-                        <tr key={offset + index}>
-                          <td>{point.x}</td>
-                          <td>{point.y}</td>
-                        </tr>
-                      ),
-                    )}
+                    {data.points.map((point: { x: number; y: number }, pointIndex: number) => (
+                      <tr key={offset + pointIndex}>
+                        <td>{point.x}</td>
+                        <td>{point.y}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
               <div className="research-pagination">
-                <button
-                  className="button"
-                  disabled={!offset || query.isFetching}
-                  onClick={() => setOffset(Math.max(0, offset - 40))}
-                >
+                <button className="button" disabled={!offset || query.isFetching} onClick={() => setOffset(Math.max(0, offset - 40))}>
                   {en ? "Previous" : "上一页"}
                 </button>
                 <span>
-                  {data.offset + 1}–{data.offset + data.points.length} /{" "}
-                  {data.pointCount}
+                  {data.offset + 1}–{data.offset + data.points.length} / {data.pointCount}
                 </span>
-                <button
-                  className="button"
-                  disabled={data.nextOffset === null || query.isFetching}
-                  onClick={() => setOffset(data.nextOffset)}
-                >
+                <button className="button" disabled={data.nextOffset === null || query.isFetching} onClick={() => setOffset(data.nextOffset)}>
                   {en ? "Next" : "下一页"}
+                </button>
+                <button className="button" disabled={!navigator.clipboard} onClick={copy}>
+                  {en ? "Copy" : "复制"}
                 </button>
               </div>
             </>

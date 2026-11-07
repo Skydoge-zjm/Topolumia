@@ -45,6 +45,18 @@ export function AssetTextPreview({
       )}
       {data && (
         <>
+          <div className="asset-text-toolbar">
+            <span className="research-hint">
+              {data.range.start + 1}–{data.range.end} / {data.range.availableChars}
+            </span>
+            <button
+              className="button"
+              disabled={!navigator.clipboard}
+              onClick={() => void navigator.clipboard?.writeText(data.text)}
+            >
+              {en ? "Copy range" : "复制本段"}
+            </button>
+          </div>
           <pre className="content-block-code">{data.text}</pre>
           {(data.range.nextOffset !== null || previous.length > 0) && (
             <div className="research-pagination">

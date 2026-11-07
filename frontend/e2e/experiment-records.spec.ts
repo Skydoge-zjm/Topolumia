@@ -116,14 +116,10 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await expect(page.getByRole("cell", { name: /Run 3/ })).toBeVisible();
     await page.getByRole("button", { name: "保存内容块", exact: true }).click();
     await expect(page.getByRole("figure")).toHaveCount(4);
-    await expect(
-      page.locator(".experiment-chart-surface path[aria-label]"),
-    ).toHaveCount(12);
+    await expect(page.locator('figure[data-series-count="3"]')).toHaveCount(4);
     const loss = page.getByRole("figure", { name: "train/loss", exact: true });
     await loss.getByRole("button", { name: "Run 2", exact: true }).click();
-    await expect(
-      loss.locator(".experiment-chart-surface path[aria-label]"),
-    ).toHaveCount(2);
+    await expect(loss).toHaveAttribute("data-series-count", "2");
     await loss.getByRole("button", { name: "Run 2", exact: true }).click();
     await loss.getByText("数据点", { exact: true }).click();
     await expect(
@@ -147,10 +143,9 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await expect(page.locator(".asset-text-preview")).toContainText(
       "batch_size: 32",
     );
-    await page.getByRole("button", { name: "运行与关联", exact: true }).click();
     const run1 = page
-      .getByRole("row")
-      .filter({ has: page.getByRole("cell", { name: "Run 1", exact: true }) });
+      .locator(".experiment-run-item")
+      .filter({ hasText: "Run 1" });
     await run1.getByRole("button", { name: "关联材料", exact: true }).click();
     let dialog = page.getByRole("dialog");
     await dialog
@@ -190,8 +185,8 @@ test("notes, multi-run records, versioned material links and temporary compariso
     );
     await page.reload();
     await page
-      .getByRole("row")
-      .filter({ has: page.getByRole("cell", { name: "Run 2", exact: true }) })
+      .locator(".experiment-run-item")
+      .filter({ hasText: "Run 2" })
       .getByRole("button", { name: "关联材料", exact: true })
       .click();
     dialog = page.getByRole("dialog");
@@ -286,8 +281,8 @@ test("notes, multi-run records, versioned material links and temporary compariso
     );
     await page.reload();
     await page
-      .getByRole("row")
-      .filter({ has: page.getByRole("cell", { name: "Run 3", exact: true }) })
+      .locator(".experiment-run-item")
+      .filter({ hasText: "Run 3" })
       .getByRole("button", { name: "关联材料", exact: true })
       .click();
     dialog = page.getByRole("dialog");
@@ -375,9 +370,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await dialog.getByRole("button", { name: "对比指标", exact: true }).click();
     await page.getByRole("option", { name: "train/loss", exact: true }).click();
     await expect(dialog.getByRole("figure")).toHaveCount(1);
-    await expect(
-      dialog.locator(".experiment-chart-surface path[aria-label]"),
-    ).toHaveCount(2);
+    await expect(dialog.locator('figure[data-series-count="2"]')).toHaveCount(1);
     await mkdir("runtime/self-review", { recursive: true });
     await page.screenshot({
       path: "runtime/self-review/experiment-record-comparison.png",
@@ -389,10 +382,9 @@ test("notes, multi-run records, versioned material links and temporary compariso
     expect(c.nodes.nodes().length).toBe(nodeCount);
     expect(c.store.all("blocks").length).toBe(blockCount);
     expect(c.store.all("candidates").length).toBe(0);
-    await page.getByRole("button", { name: "研究材料", exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByRole("figure")).toHaveCount(4);
-    expect(
+        expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth + 1,
       ),

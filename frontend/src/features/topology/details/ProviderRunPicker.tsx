@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, projectId } from "@/shared/lib/api";
 import { ResearchDialog } from "@/features/research/components/ResearchUi";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { normalizeRunStatus } from "@domain/research/experiment-records";
-import { runStatusLabel } from "@/features/experiments/runPresentation";
+import { RunStatusDot } from "@/features/experiments/RunStatusDot";
+
+const PAGE_SIZE = 50;
+const runName = (run: any) => String(run.label ?? run.name ?? run.externalId ?? "");
 
 export function ProviderRunPicker({
   provider,
@@ -18,44 +21,47 @@ export function ProviderRunPicker({
   onClose: () => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]),
-    [search, setSearch] = useState("");
+    [search, setSearch] = useState(""),
+    [applied, setApplied] = useState(""),
+    [limit, setLimit] = useState(PAGE_SIZE);
+  useEffect(() => {
+    const timer = setTimeout(() => setApplied(search.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
   const query = useQuery({
-    queryKey: ["provider-runs", projectId(), provider],
+    queryKey: ["provider-runs", projectId(), provider, limit],
     queryFn: () =>
-      api<{ items: any[] }>(
-        "/api/experiments?provider=" +
-          encodeURIComponent(provider) +
-          "&limit=100",
+      api<{ items: any[]; page?: { nextCursor?: string | null } }>(
+        "/api/experiments?provider=" + encodeURIComponent(provider) + "&limit=" + limit,
       ),
   });
+  // The gateway lists a bounded window; search narrows it here and the row count says how far it reaches.
+  const scoped = (query.data?.items ?? []).filter((run) => runName(run).toLowerCase().includes(applied.toLowerCase()));
+  const exhausted = (query.data?.items ?? []).length < limit || Boolean(query.data?.page?.nextCursor);
   const addSelected = () =>
     onSelect(
       (query.data?.items ?? [])
         .filter((run) => selected.includes(run.ref))
         .map((run) => ({
           sourceId: run.ref.slice((provider + ":run:").length),
-          label: String(run.label ?? run.name ?? run.externalId),
+          label: runName(run) || run.externalId,
           status: normalizeRunStatus(run.status),
           ref: run.ref,
           assetIds: [],
         })),
     );
   return (
-    <ResearchDialog
-      title={en ? "Select existing runs" : "选择已有运行"}
-      onClose={onClose}
-    >
+    <ResearchDialog title={en ? "Select existing runs" : "选择已有运行"} onClose={onClose}>
       <input
         aria-label={en ? "Search runs" : "搜索运行"}
+        placeholder={en ? "Filter by run name" : "按运行名称筛选"}
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
-      {query.isPending && (
-        <LoadingSkeleton
-          layout="rows"
-          label={en ? "Loading runs…" : "正在读取运行…"}
-        />
-      )}
+      <p className="research-hint" role="status">
+        {scoped.length} / {(query.data?.items ?? []).length}
+      </p>
+      {query.isPending && <LoadingSkeleton layout="rows" label={en ? "Loading runs…" : "正在读取运行…"} />}
       {query.error && (
         <p role="alert">
           {query.error.message}
@@ -74,56 +80,45 @@ export function ProviderRunPicker({
             </tr>
           </thead>
           <tbody>
-            {query.data?.items
-              .filter((run) =>
-                String(run.label ?? run.name ?? run.externalId)
-                  .toLowerCase()
-                  .includes(search.toLowerCase()),
-              )
-              .map((run) => (
-                <tr key={run.ref}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      aria-label={run.label ?? run.name ?? run.externalId}
-                      checked={selected.includes(run.ref)}
-                      onChange={() =>
-                        setSelected((current) =>
-                          current.includes(run.ref)
-                            ? current.filter((ref) => ref !== run.ref)
-                            : [...current, run.ref],
-                        )
-                      }
-                    />
-                  </td>
-                  <td>
-                    {run.label ?? run.name ?? run.externalId}
-                    {run.mode === "fixture" && (
-                      <span className="research-badge">
-                        {en ? "Sample" : "样例"}
-                      </span>
-                    )}
-                  </td>
-                  <td>{runStatusLabel(normalizeRunStatus(run.status), en)}</td>
-                </tr>
-              ))}
+            {scoped.map((run) => (
+              <tr key={run.ref}>
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={runName(run) || run.externalId}
+                    checked={selected.includes(run.ref)}
+                    onChange={() =>
+                      setSelected((current) =>
+                        current.includes(run.ref) ? current.filter((ref) => ref !== run.ref) : [...current, run.ref],
+                      )
+                    }
+                  />
+                </td>
+                <td>
+                  {runName(run) || run.externalId}
+                  {run.mode === "fixture" && <span className="research-badge">{en ? "Sample" : "样例"}</span>}
+                </td>
+                <td>
+                  <RunStatusDot status={normalizeRunStatus(run.status)} en={en} />
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
-      {query.data && !query.data.items.length && (
-        <p className="research-empty">
-          {en ? "No connected runs." : "暂无已接入运行。"}
-        </p>
+      {query.data && !scoped.length && (
+        <p className="research-empty">{en ? "No connected runs match this filter." : "没有符合筛选的已接入运行。"}</p>
+      )}
+      {!exhausted && (
+        <button className="button" onClick={() => setLimit(limit + PAGE_SIZE)}>
+          {en ? "Load more" : "载入更多"}
+        </button>
       )}
       <footer>
         <button className="button" onClick={onClose}>
           {en ? "Cancel" : "取消"}
         </button>
-        <button
-          className="button primary"
-          disabled={!selected.length}
-          onClick={addSelected}
-        >
+        <button className="button primary" disabled={!selected.length} onClick={addSelected}>
           {en ? "Add" : "添加"} ({selected.length})
         </button>
       </footer>

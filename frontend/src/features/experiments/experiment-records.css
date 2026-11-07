@@ -177,3 +177,283 @@
     padding-top: 8px;
   }
 }
+
+/* --- workbench layout: run rail beside experiment material --- */
+.experiment-workbench {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  margin-top: 8px;
+}
+.experiment-rail {
+  position: sticky;
+  top: 12px;
+  min-width: 0;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+.experiment-rail-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+}
+.experiment-rail-body > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.experiment-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.experiment-run-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.experiment-run-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.experiment-run-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "check identity actions"
+    ". materials materials";
+  gap: 4px 8px;
+  align-items: start;
+  padding: 10px 8px;
+  border-radius: var(--radius-sm);
+}
+.experiment-run-item + .experiment-run-item {
+  border-top: 1px solid var(--color-line-soft);
+}
+.experiment-run-item.is-selected {
+  background: var(--color-mint-pale);
+}
+.experiment-run-item > input[type="checkbox"] {
+  grid-area: check;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+.experiment-run-identity {
+  grid-area: identity;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.experiment-run-identity strong {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.experiment-run-identity small,
+.experiment-run-identity p {
+  color: var(--color-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.experiment-run-identity p {
+  margin: 2px 0 0;
+}
+.experiment-run-actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.experiment-run-actions .button {
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.experiment-run-material {
+  grid-area: materials;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.experiment-material-section {
+  margin-top: 16px;
+}
+.experiment-material-section h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.experiment-filter-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-mint-pale);
+  font-size: 12px;
+}
+.experiment-material-version {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.run-status {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+.run-status svg {
+  flex-shrink: 0;
+}
+.run-status.is-succeeded {
+  color: var(--status-succeeded);
+}
+.run-status.is-failed {
+  color: var(--status-failed);
+}
+.run-status.is-running {
+  color: var(--status-running);
+}
+.run-status.is-queued {
+  color: var(--status-queued);
+}
+.run-status.is-cancelled {
+  color: var(--status-cancelled);
+}
+.run-status.is-unknown {
+  color: var(--status-unknown);
+}
+.experiment-chart-legend-axis {
+  color: var(--color-muted);
+}
+.experiment-plot-warning {
+  grid-column: 1 / -1;
+  padding: 8px 12px;
+  border: 1px solid var(--color-warn);
+  border-radius: var(--radius-sm);
+  background: var(--color-warn-soft);
+  color: var(--color-ink);
+  font-size: 12px;
+}
+.experiment-plot-warning > summary {
+  cursor: pointer;
+}
+.experiment-plot-warning ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.experiment-chart-fallback p {
+  margin: 0 0 8px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.experiment-chart-surface .u-legend {
+  display: none;
+}
+@media (max-width: 900px) {
+  .experiment-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .experiment-rail {
+    position: static;
+  }
+}
+@media (max-width: 600px) {
+  .experiment-run-item {
+    grid-template-columns: 20px minmax(0, 1fr);
+    grid-template-areas:
+      "check identity"
+      ". actions"
+      ". materials";
+  }
+  .experiment-run-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* --- note body: write/preview and conflict handling --- */
+.note-body-mode {
+  display: inline-flex;
+  gap: 2px;
+}
+.note-body-mode .button.is-active {
+  border-color: var(--color-mint);
+  background: var(--color-mint-soft);
+  color: var(--color-ink);
+}
+.note-body-preview {
+  min-height: 280px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+}
+.note-body-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.experiment-index-row {
+  align-items: center;
+}
+.experiment-index-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.experiment-index-meta .research-badge.is-alert {
+  border-color: var(--color-alert);
+  background: var(--color-alert-soft);
+  color: var(--color-alert);
+}
+
+/* Charts are measured from their host; never let the canvas widen the page. */
+.experiment-chart-surface {
+  max-width: 100%;
+  overflow: hidden;
+}
+.experiment-chart-surface .uplot {
+  max-width: 100%;
+}
+.experiment-plots,
+.experiment-metric-chart {
+  min-width: 0;
+  max-width: 100%;
+}
+.experiment-compare-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.experiment-compare-chips li {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-mint-pale);
+  font-size: 12px;
+}

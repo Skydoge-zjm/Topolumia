@@ -38,7 +38,10 @@ export function OverviewPage() {
   const health = researchConnections(graph);
   const actions = openActions(records.data?.items ?? []);
   const planned = upcoming(records.data?.items ?? []).slice(0, 4);
-  const notes = graph.nodes.filter(node => node.kind === "note").slice(0, 5);
+  const loose = new Set(health.isolated);
+  const notes = [...graph.nodes.filter(node => node.kind === "note")]
+    .sort((a, b) => Number(loose.has(b.id)) - Number(loose.has(a.id)))
+    .slice(0, 5);
   const pending = (context.data?.candidates ?? []).filter(item => ["pending", "deferred"].includes(String(item.status)));
   const running = (sessions.data?.sessions ?? []).filter(session => session.status === "running" && !session.archived);
   const overdue = actions.filter(action => action.overdue);

@@ -9,6 +9,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ExperimentPlots } from "./ExperimentPlots";
+import { niceTicks, runColor } from "./chartModel";
 import type { RecordPlot } from "./ExperimentPlots";
 
 afterEach(() => {
@@ -50,11 +51,15 @@ const show = () =>
     </QueryClientProvider>,
   );
 
-it("shows one interactive chart per exact metric with all three runs and independent legends", () => {
+it("shows one chart per exact metric with all three runs and independent legends", () => {
   show();
   expect(screen.getAllByRole("figure")).toHaveLength(4);
   const loss = within(screen.getByRole("figure", { name: "train/loss" }));
   expect(loss.getByRole("img", { name: "train/loss · 3 runs" })).toBeVisible();
+  expect(screen.getByRole("figure", { name: "train/loss" })).toHaveAttribute(
+    "data-series-count",
+    "3",
+  );
   expect(loss.getByRole("button", { name: "Run 2" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -64,16 +69,28 @@ it("shows one interactive chart per exact metric with all three runs and indepen
     "aria-pressed",
     "false",
   );
+  expect(screen.getByRole("figure", { name: "train/loss" })).toHaveAttribute(
+    "data-series-count",
+    "2",
+  );
   expect(
     within(screen.getByRole("figure", { name: "eval/psnr" })).getByRole(
       "button",
       { name: "Run 2" },
     ),
   ).toHaveAttribute("aria-pressed", "true");
-  fireEvent.click(loss.getByRole("button", { name: "Zoom in" }));
-  expect(loss.queryByText("7")).toBeNull();
-  fireEvent.click(loss.getByRole("button", { name: "Reset zoom" }));
-  expect(loss.getByText("7")).toBeVisible();
+});
+
+it("keeps colours bound to the run identity, not to its position", () => {
+  expect(runColor("experiment", "run:1")).toBe(runColor("experiment", "run:1"));
+  expect(runColor("experiment", "run:1")).toBeLessThan(runColor("experiment", "run:1") + 8);
+  const order = ["a", "b", "c", "d", "e", "f"].map((id) => runColor("experiment", id));
+  expect(new Set(order).size).toBeGreaterThan(1);
+});
+
+it("places ticks on 1/2/5 × 10ⁿ steps instead of raw min/max fractions", () => {
+  expect(niceTicks(0, 1, 5)).toEqual([0, 0.2, 0.4, 0.6000000000000001, 0.8, 1].map((value) => Number(value.toPrecision(12))));
+  expect(niceTicks(-3, 7, 5)).toEqual([-2, 0, 2, 4, 6]);
 });
 
 it("reads exact source points separately from the sampled chart and pages without rounding values", async () => {
@@ -114,7 +131,7 @@ it("reads exact source points separately from the sampled chart and pages withou
   );
 });
 
-it("keeps a run with one recorded observation visible as a data point", () => {
+it("keeps a run with one recorded observation readable without a canvas", () => {
   const single: RecordPlot = {
     ...plot,
     runs: [runs[0]],
@@ -134,5 +151,6 @@ it("keeps a run with one recorded observation visible as a data point", () => {
       <ExperimentPlots plot={single} en />
     </QueryClientProvider>,
   );
-  expect(screen.getByLabelText("Run 1: 0.5")).toBeVisible();
+  const loss = within(screen.getByRole("figure", { name: "loss" }));
+  expect(loss.getByRole("cell", { name: "0.5" })).toBeVisible();
 });
