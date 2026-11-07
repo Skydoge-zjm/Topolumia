@@ -19,6 +19,10 @@ export class JsonlProcess {
     this.stderr = "";
     this.closed = false;
     this.expectedClose = false;
+    this.exited = false;
+    this.writeQueue = [];
+    this.inputBlocked = false;
+    this.inputEnded = false;
   }
 
   async start() {
@@ -54,28 +58,43 @@ export class JsonlProcess {
       this.child.once("error", onError);
     });
     this.reader = readline.createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+    this.child.stdin.on("error", (error) => this.#inputFailed(error));
+    this.child.stdin.on("drain", () => { this.inputBlocked = false; this.#flushInput(); });
     this.reader.on("line", (line) => this.#onLine(line));
     this.child.stderr.on("data", (chunk) => {
       if (this.stderr.length < 32_768) this.stderr += chunk.toString("utf8").slice(0, 32_768 - this.stderr.length);
     });
     this.child.on("error", (error) => this.#processEnded({ error }));
-    this.child.on("close", (code, signal) => this.#processEnded({ code, signal }));
+    this.child.on("close", (code, signal) => { this.exited = true; this.#processEnded({ code, signal }); });
     return this;
   }
 
   send(message) {
-    if (this.closed || !this.child?.stdin?.writable) {
-      throw errorFromMessage("AGENT_PROCESS_CLOSED", `${this.label} 进程已经关闭。`, {}, 409);
-    }
-    this.child.stdin.write(`${JSON.stringify(message)}\n`, "utf8");
+    this.sendText(`${JSON.stringify(message)}\n`);
   }
 
   sendText(text, { end = false } = {}) {
-    if (this.closed || !this.child?.stdin?.writable) {
+    if (this.closed || this.inputEnded || !this.child?.stdin?.writable) {
       throw errorFromMessage("AGENT_PROCESS_CLOSED", `${this.label} 进程已经关闭。`, {}, 409);
     }
-    this.child.stdin.write(String(text), "utf8");
-    if (end) this.child.stdin.end();
+    this.inputEnded = end;
+    this.writeQueue.push({ text: String(text), end });
+    this.#flushInput();
+  }
+
+  #flushInput() {
+    while (!this.closed && !this.inputBlocked && this.writeQueue.length) {
+      const { text, end } = this.writeQueue.shift();
+      try {
+        this.inputBlocked = !this.child.stdin.write(text, "utf8", (error) => { if (error) this.#inputFailed(error); });
+        if (end) this.child.stdin.end();
+      } catch (error) { this.#inputFailed(error); }
+    }
+  }
+
+  #inputFailed(error) {
+    this.#processEnded({ error });
+    void this.kill();
   }
 
   request(method, params = {}, timeoutMs = this.requestTimeoutMs) {
@@ -104,7 +123,7 @@ export class JsonlProcess {
 
   kill() {
     if (this.stopPromise) return this.stopPromise;
-    if (!this.child || this.closed) return Promise.resolve();
+    if (!this.child?.pid || this.exited) return Promise.resolve();
     this.expectedClose = true;
     const child = this.child;
     this.stopPromise = new Promise<void>((resolve) => {
@@ -155,6 +174,7 @@ export class JsonlProcess {
   #processEnded(detail) {
     if (this.closed) return;
     this.closed = true;
+    this.writeQueue.length = 0;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(errorFromMessage("AGENT_PROCESS_CLOSED", `${this.label} 进程已结束。`, {

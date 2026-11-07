@@ -5,6 +5,25 @@ import { restoreConversationEvents } from "../../../src/services/agents/agent-co
 
 const event = (cursor, type, payload = {}, turnId = "turn") => ({ id: `e${cursor}`, cursor, type, payload, turnId, sessionId: "s", occurredAt: "" });
 
+test("stream updates index historical messages once and preserve immutable branches", () => {
+  let reads = 0;
+  const history = Array.from({ length: 1000 }, (_, index) => {
+    const value = event(index + 1, "assistant.message.completed", { messageId: "old-" + index, text: "History" }, "old-" + index);
+    const payload = value.payload;
+    Object.defineProperty(value, "payload", { get() { reads++; return payload; } });
+    return value;
+  });
+  let current = history;
+  for (let index = 0; index < 100; index++) current = appendConversationEvent(current, event(1001 + index, "assistant.message.delta", { messageId: "live", delta: "a" }));
+  assert.equal(current.at(-1).payload.delta, "a".repeat(100));
+  assert.ok(reads < 4000, `Streaming repeatedly inspected old message payloads (${reads})`);
+  const completed = appendConversationEvent(current, event(1200, "assistant.message.completed", { messageId: "live", text: "Final" }));
+  const branch = appendConversationEvent(current, event(1201, "assistant.message.delta", { messageId: "live", delta: "b" }));
+  assert.equal(branch.at(-1).payload.delta, "a".repeat(100) + "b");
+  assert.equal(completed.at(-1).payload.text, "Final");
+  assert.equal(current.at(-1).payload.delta, "a".repeat(100));
+});
+
 test("conversation compacts thousands of deltas without losing messages, ordering or tool boundaries", () => {
   let events = [event(1, "user.message", { text: "Original input" })];
   for (let i = 2; i < 2_002; i++) events = appendConversationEvent(events, event(i, "assistant.message.delta", { messageId: "first", delta: "文" }));

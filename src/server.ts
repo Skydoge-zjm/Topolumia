@@ -265,10 +265,10 @@ export async function createMvpApplication(options = {}) {
             });
           }
           await sendStatic(
+            request,
             response,
             config.publicRoot,
             pathname,
-            request.method === "HEAD",
           );
         } catch (error) {
           const appError = asAppError(error);

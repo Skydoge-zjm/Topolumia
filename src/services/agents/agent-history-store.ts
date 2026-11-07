@@ -85,6 +85,9 @@ export class AgentHistoryStore {
       )
       .map((record) => this.materialize(record.id));
   }
+  ids() {
+    return [...this.records.keys()];
+  }
   get(id: string) {
     return this.materialize(id);
   }

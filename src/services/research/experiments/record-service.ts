@@ -2,6 +2,7 @@ import { ExperimentRecordImporter } from "./record-importer.js";
 import { fail } from "../../../domain/research/access.js";
 import { nodeRef, sameObject } from "../../../domain/research/object-ref.js";
 import { versionHash } from "../../../lib/hash.js";
+import { experimentMetricId, type ExperimentMetricSelection } from "../../../domain/research/experiment-records.js";
 
 export class ExperimentRecordService extends ExperimentRecordImporter {
   async prepareMaterialSelections(patch, actor) {
@@ -550,15 +551,15 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
   }
   async table(input, actor) {
     this.c.check(actor, "research.view");
-    const keys = input.metricKeys,
+    const metrics: ExperimentMetricSelection[] = input.metrics,
       offset = input.pointOffset ?? 0,
       limit = input.pointLimit ?? 100;
     if (
-      !Array.isArray(keys) ||
-      !keys.length ||
-      keys.length > 24 ||
-      keys.some((key) => typeof key !== "string" || !key) ||
-      new Set(keys).size !== keys.length ||
+      !Array.isArray(metrics) ||
+      !metrics.length ||
+      metrics.length > 24 ||
+      metrics.some((metric) => !metric || typeof metric.key !== "string" || !metric.key || metric.key.length > 500 || typeof metric.xKey !== "string" || !metric.xKey || metric.xKey.length > 500 || (metric.expectedContentVersion !== undefined && typeof metric.expectedContentVersion !== "string")) ||
+      new Set(metrics.map(experimentMetricId)).size !== metrics.length ||
       !Number.isSafeInteger(offset) ||
       offset < 0 ||
       !Number.isInteger(limit) ||
@@ -573,21 +574,21 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       undefined,
       undefined,
       false,
-      { metricKeys: keys },
+      { metricKeys: metrics.map(metric => metric.key) },
     );
-    const lines = keys.map(
-      (key) =>
-        run.series.find((line) => line.key === key) ??
+    const lines = metrics.map(
+      (metric) =>
+        run.series.find((line) => line.key === metric.key && line.xKey === metric.xKey) ??
         fail(
           "EXPERIMENT_METRIC_NOT_FOUND",
           "该次执行没有完全同名的指标。",
           404,
         ),
     );
-    for (const line of lines)
+    for (const [index, line] of lines.entries())
       if (
-        input.expectedVersions?.[line.key] &&
-        input.expectedVersions[line.key] !== versionHash(line.sources)
+        metrics[index].expectedContentVersion &&
+        metrics[index].expectedContentVersion !== versionHash(line.sources)
       )
         fail("OBJECT_VERSION_CONFLICT", "曲线来源已更新，请重新读取。", 409);
     const values = await this.selectPoints(lines, { offset, limit }, actor);
@@ -733,6 +734,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
             nodeId: input.nodeId,
             runId: input.runId,
             metric: line.key,
+            xKey: line.xKey,
             ...(input.blockId
               ? { blockId: input.blockId, blockRevision: input.blockRevision }
               : {}),
@@ -749,7 +751,10 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         receipts,
         { nodeId: input.nodeId, runId: input.runId },
       );
-    const line = run.series.find((line) => line.key === input.metric);
+    const matches = run.series.filter((line) => line.key === input.metric && (input.xKey === undefined || line.xKey === input.xKey));
+    if (matches.length > 1)
+      fail("EXPERIMENT_METRIC_AMBIGUOUS", "该指标包含多种横轴，请按目录中的 xKey 选择。", 422, { metric: input.metric, xKeys: matches.map(line => line.xKey) });
+    const line = matches[0];
     if (!line)
       fail("EXPERIMENT_METRIC_NOT_FOUND", "该次执行没有完全同名的指标。", 404);
     const contentVersion = versionHash(line.sources);

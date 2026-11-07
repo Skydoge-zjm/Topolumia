@@ -75,6 +75,16 @@ test("notes, multi-run records, versioned material links and temporary compariso
     expect(
       c.nodes.blocks(note.id).filter((block) => block.role === "body"),
     ).toHaveLength(1);
+    await page.locator(".note-body-workspace").getByRole("button", { name: "编辑", exact: true }).click();
+    await page.getByRole("textbox", { name: "笔记正文", exact: true }).fill("尚未保存的研究结论");
+    page.once("dialog", dialog => dialog.dismiss());
+    await page.getByRole("button", { name: "关系与来源", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "笔记正文", exact: true })).toHaveValue("尚未保存的研究结论");
+    page.once("dialog", dialog => dialog.accept());
+    await page.getByRole("button", { name: "关系与来源", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "科研关系", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "研究材料", exact: true }).click();
+    await expect(page.getByText("核对不同运行的实际条件和结果。", { exact: true })).toBeVisible();
 
     const experiment = app.researchNodes.createNode(
       "experiment",
@@ -117,6 +127,12 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await page.getByRole("button", { name: "保存内容块", exact: true }).click();
     await expect(page.getByRole("figure")).toHaveCount(4);
     await expect(page.locator('figure[data-series-count="3"]')).toHaveCount(4);
+    const recordCard = page.locator(".content-block-card").filter({ has: page.getByRole("heading", { name: "训练过程", exact: true }) });
+    await recordCard.getByRole("button", { name: "编辑内容块", exact: true }).click();
+    await page.getByRole("textbox", { name: "内容块标题", exact: true }).fill("训练过程（修订）");
+    await page.getByRole("button", { name: "保存内容块", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "训练过程（修订）", exact: true })).toBeVisible();
+    await expect(page.getByRole("figure")).toHaveCount(4);
     await page.setViewportSize({ width: 1440, height: 1100 });
     const loss = page.getByRole("figure", { name: "train/loss", exact: true });
     await loss.scrollIntoViewIfNeeded();
@@ -432,6 +448,11 @@ test("notes, multi-run records, versioned material links and temporary compariso
       path: "runtime/self-review/experiment-record-mobile.png",
       fullPage: true,
     });
+    page.once("dialog", dialog => dialog.accept());
+    await page.locator(".content-block-card").filter({ has: page.getByRole("heading", { name: "训练过程（修订）", exact: true }) }).getByRole("button", { name: "删除内容块", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "训练过程（修订）", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("figure")).toHaveCount(0);
+    expect(c.records.overview(experiment.id, actor).runs.every(run => run.records.length === 0)).toBe(true);
     expect(errors).toEqual([]);
   } finally {
     for (const runtime of app.runtimes.values()) {

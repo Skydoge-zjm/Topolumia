@@ -17,9 +17,9 @@ export function ExperimentRecordBlock({
   en: boolean;
   candidateId?: string;
 }) {
-  const selections = (block.payload?.runs ?? [])
+  const selections = [...new Map((block.payload?.runs ?? [])
     .filter((run: any) => run.runId)
-    .map((run: any) => ({ nodeId: owner.id, runId: run.runId }));
+    .map((run: any) => [run.runId, { nodeId: owner.id, runId: run.runId }])).values()];
   const query = useQuery({
     queryKey: [
       "experiment-record-plot",

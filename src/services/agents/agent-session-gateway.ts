@@ -4,7 +4,7 @@ import { AgentHistoryStore } from "./agent-history-store.js";
 import { redactAgentSecrets } from "../../agent/redact-secrets.js";
 import { RESEARCH_INTERFACE } from "../../domain/research/research-interface.js";
 import { verifyResearchMcp } from "../../mcp/research-probe.js";
-import { appendConversationEvent, reasoningStreamKey, contentBlockId, actorKey, isRemovedContent } from "../../domain/agents/agent-conversation.js";
+import { appendConversationEvent, reasoningStreamKey, contentBlockId, actorKey, isConversationContentRemoved } from "../../domain/agents/agent-conversation.js";
 import { restoreConversationEvents } from "./agent-conversation-history.js";
 import { codexReasoningParts } from "../../adapters/agents/codex/codex-reasoning.js";
 import { appendTraceEvent, compactTraceEvents, traceFromConversation } from "../../domain/agents/agent-trace.js";
@@ -76,6 +76,7 @@ export class AgentSessionGateway {
       this.#publish(session, "session.persistence.updated", { historyStatus: status, historyError: error ?? null });
     });
     this.resumptions = new Map();
+    this.startups = new Map();
     this.initialized = false;
   }
 
@@ -153,19 +154,32 @@ export class AgentSessionGateway {
     };
     this.sessions.set(id, session);
     this.#publish(session, "session.created", { profileId: session.profileId, title: session.title });
-    return this.#startRuntime(session, input);
+    return this.#launchRuntime(session, input);
+  }
+
+  #launchRuntime(session, input) {
+    const pending = this.#startRuntime(session, input);
+    this.startups.set(session.id, pending);
+    return pending.finally(() => { if (this.startups.get(session.id) === pending) this.startups.delete(session.id); });
   }
 
   async #startRuntime(session, input) {
     const { id, runtimeInstanceId } = session;
+    let adapter;
+    const current = () => !this.shuttingDown && !session.closing && session.status !== "closed" && session.runtimeInstanceId === runtimeInstanceId;
+    const check = () => { if (!current()) throw new AppError("AGENT_SESSION_START_CANCELLED", "会话启动已取消。", { status: 409 }); };
     try {
+      check();
       const researchMcp = input.mcpBindingFactory ? await input.mcpBindingFactory({ runtimeInstanceId, researchSessionId: session.researchSessionId }) : null;
+      check();
       if (researchMcp) await verifyResearchMcp(researchMcp);
-      const adapter = await this.profileRegistry.createAdapter(session.profileId, {
-        onEvent: (event) => { if (session.runtimeInstanceId === runtimeInstanceId) this.#onDriverEvent(id, event); },
+      check();
+      adapter = await this.profileRegistry.createAdapter(session.profileId, {
+        onEvent: (event) => { if (current()) this.#onDriverEvent(id, event); },
         model: input.model,
         reasoningEffort: input.reasoningEffort,
       });
+      check();
       session.adapter = adapter;
       session.provider = adapter.profile.provider;
       const started = await adapter.start({
@@ -175,6 +189,7 @@ export class AgentSessionGateway {
         resumeThreadId: input.resumeNativeThreadId ?? null,
         researchMcp,
       });
+      check();
       session.nativeSessionId = started.nativeSessionId;
       session.model = started.model ?? session.model ?? adapter.profile.model ?? null;
       session.capabilities = clone({...started.capabilities, ...(researchMcp?.skillDelivery ? {researchSkill:researchMcp.skillDelivery} : {})});
@@ -186,10 +201,14 @@ export class AgentSessionGateway {
       await this.#persistNow(session);
       return this.snapshot(id);
     } catch (error) {
+      if (!current() || error.code === "AGENT_SESSION_START_CANCELLED") {
+        await adapter?.close().catch(() => {});
+        throw error;
+      }
       session.status = "failed";
       session.updatedAt = new Date().toISOString();
       this.#publish(session, "session.status", { status: "failed", error: { code: error.code ?? "AGENT_SESSION_START_FAILED", message: error.message } });
-      await session.adapter?.close().catch(() => {});
+      await adapter?.close().catch(() => {});
       this.onSessionClosed?.(runtimeInstanceId);
       await this.#persistNow(session);
       throw error;
@@ -197,7 +216,7 @@ export class AgentSessionGateway {
   }
 
   list({ summary = false } = {}) {
-    for (const record of this.historyStore?.list?.() ?? []) this.#restoreRecord(record);
+    for (const id of this.historyStore?.ids() ?? []) if (!this.sessions.has(id)) this.#restoreRecord(this.historyStore.get(id));
     return [...this.sessions.values()]
       .sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))
       .map((session) => this.#publicSession(session, false, summary));
@@ -512,6 +531,7 @@ export class AgentSessionGateway {
     if (source.researchInterface !== RESEARCH_INTERFACE) throw new AppError("AGENT_INTERFACE_UNSUPPORTED", "科研会话接口已更换，请创建新会话。", { status: 409 });
     if ((source.ownerUserId ?? null) !== (input.ownerUserId ?? null)) throw new AppError("AGENT_SESSION_OWNER_MISMATCH", "不能继承其他用户的研究会话身份。", { status: 403 });
     if (source.closing) throw new AppError("AGENT_SESSION_CLOSING", "会话正在关闭，请稍后继续。", { status: 409 });
+    if (this.startups.has(sessionId)) return this.startups.get(sessionId);
     if (["starting", "ready", "running", "awaiting_permission"].includes(source.status) && source.adapter) {
       return this.snapshot(sessionId);
     }
@@ -538,7 +558,7 @@ export class AgentSessionGateway {
     this.#publish(source, "session.status", { status: "starting", runtimeInstanceId: source.runtimeInstanceId });
     await previousAdapter?.close().catch(() => {});
     this.onSessionClosed?.(previousRuntimeId);
-    return this.#startRuntime(source, { ...input, model: source.model, reasoningEffort: source.reasoningEffort, resumeNativeThreadId });
+    return this.#launchRuntime(source, { ...input, model: source.model, reasoningEffort: source.reasoningEffort, resumeNativeThreadId });
   }
 
   async sync(sessionId, { reason = "manual" } = {}) {
@@ -697,7 +717,11 @@ export class AgentSessionGateway {
 
   async #close(session) {
     const sessionId = session.id;
-    if (session.activeTurnId) session.adapter.cancel();
+    if (session.activeTurnId) session.adapter?.cancel();
+    if (this.startups.has(sessionId)) {
+      await session.adapter?.close().catch(() => {});
+      await this.startups.get(sessionId).catch(() => {});
+    }
     if (session.nativeSessionId && session.capabilities?.session?.sync) await this.sync(sessionId, { reason: "session-closed" }).catch(() => {});
     await session.adapter?.close().catch(() => {});
     const active = session.turns.find((turn) => turn.id === session.activeTurnId);
@@ -733,9 +757,11 @@ export class AgentSessionGateway {
 
   async #shutdown() {
     await Promise.all([...this.sessions.values()].map((session) => session.adapter?.close().catch(() => {})));
+    await Promise.allSettled([...this.startups.values(), ...this.resumptions.values()]);
     await Promise.allSettled([...this.sessions.values()].flatMap(session => [...(session.imageCaptures ?? [])]));
     for (const session of this.sessions.values()) {
       const turn = session.turns.find(turn => turn.id === session.activeTurnId && !turn.completedAt);
+      if (["starting", "ready"].includes(session.status)) session.status = "detached";
       if (!turn) continue;
       turn.status = "failed"; turn.stopReason = "server_shutdown"; turn.completedAt = new Date().toISOString();
       session.activeTurnId = null; session.status = "detached";
@@ -783,8 +809,7 @@ export class AgentSessionGateway {
       for (const [id, linkedTurn] of candidateTurnLinks({ events: [{ ...event, payload, turnId }] })) session.candidateTurns[id] = linkedTurn;
     }
     if (event.type === "usage.updated") session.usage = clone(payload);
-    if (["assistant.message.", "reasoning.summary.", "tool."].some(prefix => event.type.startsWith(prefix)) && !payload.restored && session.conversationEvents.some(removal => removal.type === "content.removed"
-      && isRemovedContent({ ...event, payload }, removal))) return;
+    if (["assistant.message.", "reasoning.summary.", "tool."].some(prefix => event.type.startsWith(prefix)) && !payload.restored && isConversationContentRemoved(session.conversationEvents, { ...event, payload })) return;
     if (event.type === "turn.native-linked" && turn) {
       turn.nativeMessageId = payload.nativeMessageId;
       turn.nativeTurnId = payload.nativeTurnId;

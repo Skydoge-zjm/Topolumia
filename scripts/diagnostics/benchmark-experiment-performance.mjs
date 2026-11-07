@@ -159,7 +159,7 @@ try {
         {
           nodeId: node.id,
           runId: selections[0].runId,
-          metricKeys: Array.from({ length: 4 }, (_, i) => "metric/" + i),
+          metrics: Array.from({ length: 4 }, (_, i) => ({ key: "metric/" + i, xKey: "step" })),
           pointOffset: 100,
           pointLimit: 100,
         },

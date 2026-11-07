@@ -40,4 +40,10 @@ export const mimeTypes = new Map([
   [".svg", "image/svg+xml"],
   [".png", "image/png"],
   [".ico", "image/x-icon"],
+  [".webp", "image/webp"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".woff", "font/woff"],
+  [".woff2", "font/woff2"],
+  [".ttf", "font/ttf"],
 ]);

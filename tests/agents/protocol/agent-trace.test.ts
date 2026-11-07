@@ -1,9 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compactTraceEvents } from "../../../src/domain/agents/agent-trace.js";
+import { appendTraceEvent, compactTraceEvents } from "../../../src/domain/agents/agent-trace.js";
 import { compactConversationEvents } from "../../../src/domain/agents/agent-conversation.js";
 
 const event = (cursor, type, payload = {}, turnId = "turn") => ({ id: `e${cursor}`, cursor, sessionId: "s", turnId, type, payload, occurredAt: "" });
+
+test("trace indexes remain correct after immutable branches and retention trimming", () => {
+  const first = appendTraceEvent([], event(1, "assistant.message.delta", { messageId: "m", delta: "a" }));
+  const completed = appendTraceEvent(first, event(2, "assistant.message.completed", { messageId: "m", text: "Final" }));
+  const branch = appendTraceEvent(first, event(3, "assistant.message.delta", { messageId: "m", delta: "b" }));
+  assert.equal(completed[0].payload.text, "Final");
+  assert.equal(branch[0].payload.text, "ab");
+  const extended = appendTraceEvent(branch, event(4, "tool.started", { toolCallId: "call", title: "Read" }));
+  extended.splice(0, 1);
+  const final = appendTraceEvent(extended, event(5, "tool.completed", { toolCallId: "call", rawOutput: "Verified" }));
+  assert.equal(final.length, 1);
+  assert.equal(final[0].type, "tool.completed");
+  assert.equal(final[0].payload.rawOutput, "Verified");
+});
 
 test("thousands of streamed fragments produce one final trace output with no delta payload", () => {
   const events = Array.from({ length: 1500 }, (_, index) => event(index + 1, "assistant.message.delta", { messageId: "m", delta: "文" }));

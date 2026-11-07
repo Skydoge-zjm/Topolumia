@@ -158,14 +158,14 @@ export function ExperimentRunsPanel({
               </span>
               {run.note && <p className="experiment-run-note">{run.note}</p>}
               <span className="experiment-run-actions">
-                <button
+                {canEdit && <button
                   className="research-icon-button"
                   aria-label={en ? "Link material" : "关联材料"}
                   title={en ? "Link material" : "关联材料"}
                   onClick={() => setLinkRun(run.id)}
                 >
                   <Link2 size={15} />
-                </button>
+                </button>}
                 {canEdit && (
                   <button
                     className="research-icon-button"

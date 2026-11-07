@@ -8,7 +8,7 @@
 
 [experiment-mutations](../../../../src/services/research/changes/experiment-mutations.ts) 通过 `editExperiment` 接入共同模拟、提交、对象版本、历史和候选。人工入口携带观察版本；Agent 通过 nodeChanges.experimentPatch 提议并由人审阅，不直接修改正式实验。
 
-run 标签不要求唯一，来源身份用于重复导入的识别；用户也可在导入时选择已有 run。没有来源 ID 的文件按资产身份区分，不能仅因指标字节相同而合并独立执行。失败且尚无指标的有效 run 仍保留，不补造零值。
+run 标签不要求唯一，来源身份用于重复导入的识别；用户也可在导入时选择已有 run，不同来源可以归到同一次执行。绘图选择按实验和 run 身份去重，来源仍在对应记录块范围内合并。没有来源 ID 的文件按资产身份区分，不能仅因指标字节相同而合并独立执行。失败且尚无指标的有效 run 仍保留，不补造零值。
 
 ## 原始记录与索引
 
@@ -34,13 +34,13 @@ run 标签不要求唯一，来源身份用于重复导入的识别；用户也�
 
 [实验路由](../../../../src/http/routes/research/experiment-records.ts) 提供运行维护、只读数据与绘图接口。`read_experiment` 经共同 MCP / CLI / HTTP 合同提供 runs、materials、metrics、series、inspect 与 compare。通常先读取 run 目录，再读取指标目录，最后按范围读取准确数据点；材料返回可调用的 read_blocks / read_assets 提示。精确合同以 [tools.ts](../../../../src/domain/research/interfaces/tools.ts) 为准。
 
-[ExperimentWorkbench](../../../../frontend/src/features/experiments/ExperimentWorkbench.tsx) 把实验详情组织为常驻的运行栏与研究材料：运行栏固定在页面滚动容器内，材料关联就地展开，不再需要先切换到另一个标签页记住内容块标题。运行栏支持重命名、改状态与删除；删除前说明指向该 run 的材料关联数，记录块仍在引用时拒绝删除并指出需先处理的内容块。
+[ExperimentWorkbench](../../../../frontend/src/features/experiments/ExperimentWorkbench.tsx) 把实验详情组织为常驻的运行栏与研究材料：运行栏固定在页面滚动容器内，材料关联就地展开，不再需要先切换到另一个标签页记住内容块标题。过程记录卡片与普通材料复用同一内容块编辑、删除、排序及版本冲突处理；删除需要确认，编辑仍携带观察到的版本。运行栏支持重命名、改状态与删除；删除前说明指向该 run 的材料关联数，记录块仍在引用时拒绝删除并指出需先处理的内容块。
 
 [ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 基于 uPlot 画布按指标绘制多 run 交互曲线，支持统一 run 图例、框选缩放、跨图表同步十字线和悬浮数值。每条曲线保留独立横坐标，避免 run 数乘以横坐标并集的空矩阵；重复点保留，步长重置时断开路径。指针位置按动画帧合并，预建索引后二分定位数据点。接近视口时创建画布，离开后释放并保存横轴缩放；悬浮窗最多显示 12 个 run 并提示剩余数量，曲线本身仍全部绘制。
 
 曲线只使用稳定的 run 颜色区分，同一 run 在内容块与对比窗口中保持一致。绘图受总点数预算控制，采样明确标注；精确原始点通过实验详情的“实验数据”页读取，图表页不展开原始数据。部分来源不可用时合并为一个可展开警告并保留其他可用曲线，权限错误仍拒绝读取。画布不可用时显示实验数据页入口。
 
-[ExperimentDataWorkspace](../../../../frontend/src/features/experiments/ExperimentDataWorkspace.tsx) 按运行呈现多指标数据表，读取全部指标目录，默认选前 12 列，最多同时显示 24 列并显示已选数量。每页通过 `/api/research/experiments/table` 一次读取所选各列最多 100 个原始点，校验目录中的内容版本；Agent 的 `read_experiment series` 继续使用独立的小预算精确范围。前端在当前页按横坐标对齐，未出现在本页的值显示横线，不补零或插值，重复横坐标保留多条记录。行按实际视口高度虚拟化，冻结表头及横坐标列；TSV 复制包含当前页全部行，数值保留来源精度。页面及比较请求携带取消信号，切换范围时停止前端接收失效结果。
+[ExperimentDataWorkspace](../../../../frontend/src/features/experiments/ExperimentDataWorkspace.tsx) 按运行呈现多指标数据表，读取全部指标目录，默认选前 12 列，最多同时显示 24 列并显示已选数量。系列身份由指标 key 和横轴 xKey 共同决定；同名不同横轴各占一列，列名显示横轴。每页通过 `/api/research/experiments/table` 的 metrics 选择数组一次读取所选各列最多 100 个原始点，每项携带 key、xKey 及目录的 expectedContentVersion。Agent 的 `read_experiment series` 使用目录 readHint 中的 metric、xKey 与版本读取独立的小预算精确范围；仅给名称而匹配多种横轴时返回歧义错误。前端在当前页按横坐标对齐，未出现在本页的值显示横线，不补零或插值，重复横坐标保留多条记录。行按实际视口高度虚拟化，冻结表头及横坐标列；TSV 复制包含当前页全部行，数值保留来源精度。页面及比较请求携带取消信号，切换范围时停止前端接收失效结果。
 
 [ExperimentCompareDialog](../../../../frontend/src/features/experiments/ExperimentCompareDialog.tsx) 从拓扑图选中的多个实验进入，按实验身份载入各实验的全部 run，超过 24 次运行也不截断。`nodeIds` 指定完整实验范围，显式 `selections` 保留按 run 读取的合同；两种输入互斥。服务限制同时读取的来源数量并控制绘图点预算，保留失败和无指标的 run，只叠加完全同名的指标。实验节点内部不再提供重复的运行比较入口，比较窗口可调整实验范围、切换指标或通过图例隐藏运行。人和 Agent 的比较均为临时读取，不创建比较对象、内容块或候选；分析另建研究笔记，Agent 写入沿用审批。
 

@@ -233,8 +233,8 @@ function MetricChart({
     [lines],
   );
   const label = useMemo(
-    () => (line: RecordLine) => lineLabel(line, multiNode),
-    [multiNode],
+    () => { const mixed = new Set(lines.map(line => line.xKey)).size > 1; return (line: RecordLine) => lineLabel(line, multiNode) + (mixed ? ` · ${line.xKey}` : ""); },
+    [multiNode, lines],
   );
   const visible = useMemo(
     () => lines.filter((line) => !hidden.includes(runKey(line))),
@@ -478,8 +478,8 @@ function MetricChart({
             {visible.slice(0, 12).map((line) => {
               const point = nearestPoint(line.points, hoverX);
               return point ? (
-                <span key={runKey(line)}>
-                  {lineLabel(line, multiNode)}: {format(point.y)}
+                <span key={JSON.stringify([runKey(line), line.xKey])}>
+                  {label(line)}: {format(point.y)}
                 </span>
               ) : null;
             })}

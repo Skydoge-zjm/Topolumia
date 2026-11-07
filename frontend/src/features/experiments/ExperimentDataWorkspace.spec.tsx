@@ -21,6 +21,24 @@ const runs = [
 ];
 const precise = 0.123456789012345;
 
+it("selects and reads identical metric names independently by their axes", async () => {
+  const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.startsWith("/api/research-nodes/")) return Response.json({ runs: [runs[0]] });
+    const input = JSON.parse(String(options?.body));
+    if (input.mode === "metrics") return Response.json({ data: { items: ["step", "epoch"].map(xKey => ({ key: "loss", xKey, pointCount: 1, readHint: { expectedContentVersion: "v1" } })) } });
+    return Response.json({ columns: input.metrics.map((metric: { key: string; xKey: string }) => ({ metric: metric.key, xKey: metric.xKey, pointCount: 1, points: [{ x: 0, y: metric.xKey === "step" ? 0.2 : 0.7 }], nextOffset: null })) });
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><ExperimentDataWorkspace nodeId="experiment" en /></QueryClientProvider>);
+  await screen.findByRole("columnheader", { name: "loss · step" });
+  expect(screen.getByRole("columnheader", { name: "loss · epoch" })).toBeVisible();
+  const request = fetch.mock.calls.find(([url]) => url.endsWith("/table"))!;
+  expect(JSON.parse(String(request[1]?.body)).metrics).toEqual([{ key: "loss", xKey: "step", expectedContentVersion: "v1" }, { key: "loss", xKey: "epoch", expectedContentVersion: "v1" }]);
+  fireEvent.click(screen.getByRole("button", { name: "loss · step" }));
+  await waitFor(() => expect(screen.queryByRole("columnheader", { name: "loss · step" })).toBeNull());
+  expect(await screen.findByRole("cell", { name: "0.7" })).toBeVisible();
+});
+
 function show({ sparse = false } = {}) {
   const fetch = vi.fn(async (url: string, options?: RequestInit) => {
     if (url.startsWith("/api/research-nodes/")) return Response.json({ runs });
@@ -42,7 +60,7 @@ function show({ sparse = false } = {}) {
       });
     }
     return Response.json({
-      columns: input.metricKeys.map((metric: string) => {
+      columns: input.metrics.map(({ key: metric }: { key: string }) => {
         const points = sparse
           ? metric === "train/loss"
             ? [
@@ -147,7 +165,7 @@ it("paginates exact points and handles a failed run without metrics", async () =
   expect(
     requests.filter(
       (request) =>
-        request.metricKeys?.length === 4 && request.pointOffset === 100,
+        request.metrics?.length === 4 && request.pointOffset === 100,
     ),
   ).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Data run" }));

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { api, projectId } from "@/shared/lib/api";
 import { useUiStore } from "@/shared/state/ui";
-import { useResearchPermissions } from "@/features/research/useResearch";
+import { useResearchPermissions, confirmUnsavedChanges } from "@/features/research/useResearch";
 import { nodeUrl, text } from "@/features/research/model";
 import type { ResearchNode } from "@/features/research/model";
 import { nodeKinds } from "@domain/research/node-fields";
@@ -28,10 +28,10 @@ function NodeDetail() {
   const { id } = useParams(), [params, setParams] = useSearchParams(), en = useUiStore(state => state.locale) === "en", permissions = useResearchPermissions(), client = useQueryClient(), navigate = useNavigate();
   const [editingCore, setEditingCore] = useState(false), [deleting, setDeleting] = useState(false);
   const requestedTab = params.get("tab");
-  const tab = requestedTab === "runs" ? "data" : ["content", "data", "relations"].includes(requestedTab ?? "") ? requestedTab! : "content", setTab = (value: string) => setParams(current => { const next = new URLSearchParams(current); next.set("tab", value); return next; }, { replace: true });
+  const tab = requestedTab === "runs" ? "data" : ["content", "data", "relations"].includes(requestedTab ?? "") ? requestedTab! : "content", setTab = (value: string) => { if (value === tab || !confirmUnsavedChanges()) return; setParams(current => { const next = new URLSearchParams(current); next.set("tab", value); return next; }, { replace: true }); };
   const query = useQuery({ queryKey: ["research-node", projectId(), id], enabled: Boolean(id), queryFn: () => api<Detail>("/api/research-nodes/" + encodeURIComponent(id!)) });
   const kind = query.data?.node.kind ?? params.get("kind") ?? "note";
-  const refresh = () => { void client.invalidateQueries({ queryKey: ["research-node", projectId(), id] }); void client.invalidateQueries({ queryKey: ["topology", projectId()] }); void client.invalidateQueries({ queryKey: ["experiment-runs", projectId(), id] }); void client.invalidateQueries({ queryKey: ["research-experiments", projectId()] }); void client.invalidateQueries({ queryKey: ["experiment-record-plot", projectId(), id] }); void client.invalidateQueries({ queryKey: ["temporary-experiment-compare", projectId()] }); };
+  const refresh = () => { void client.invalidateQueries({ queryKey: ["research-node", projectId(), id] }); void client.invalidateQueries({ queryKey: ["topology", projectId()] }); for (const key of ["experiment-runs", "experiment-data-overview", "experiment-data-metrics", "experiment-data-table"]) void client.invalidateQueries({ queryKey: [key, projectId(), id] }); void client.invalidateQueries({ queryKey: ["research-experiments", projectId()] }); void client.invalidateQueries({ queryKey: ["experiment-record-plot", projectId(), id] }); void client.invalidateQueries({ queryKey: ["temporary-experiment-compare", projectId()] }); };
   if (id && query.isPending) return <section className="research-workspace research-detail"><Link className="research-back" to="/topology">← {en ? "Research topology" : "科研拓扑"}</Link><LoadingSkeleton layout="detail" heading label={en ? "Loading research node…" : "载入科研节点…"} /></section>;
   if (id && !query.data) return <section className="research-workspace research-detail"><p role="alert">{query.error?.message ?? (en ? "Research node not found." : "科研节点不存在。")}</p><button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button><Link to="/topology">{en ? "Back to topology" : "返回拓扑"}</Link></section>;
   if (!id) return <NewNodePage kind={kind} en={en} onSaved={nextId => navigate(nodeUrl(nextId))} onCancel={() => navigate("/topology")} />;
@@ -45,7 +45,7 @@ function NodeDetail() {
     {query.error && <p role="alert">{query.error.message}<button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button></p>}
     <header className="research-page-heading"><div className="research-detail-title"><h1 title={title}>{title}</h1>
       {paper && <PaperCitation core={data.core} en={en} />}
-    </div><div className="research-actions"><span className="research-badge">{en ? nodeKinds[kind]?.en ?? kind : nodeKinds[kind]?.label ?? kind}</span>{permissions.nodes && <button className="button" onClick={() => setEditingCore(true)}><Pencil size={15} />{en ? "Edit core" : "编辑核心信息"}</button>}</div></header>
+    </div><div className="research-actions"><span className="research-badge">{en ? nodeKinds[kind]?.en ?? kind : nodeKinds[kind]?.label ?? kind}</span>{permissions.nodes && <button className="button" onClick={() => { if (confirmUnsavedChanges()) setEditingCore(true); }}><Pencil size={15} />{en ? "Edit core" : "编辑核心信息"}</button>}</div></header>
     {paper
       ? <PaperBibliography core={data.core} en={en} initialExpanded={!data.contentBlocks.length && !data.pendingCandidates?.length} />
       : summary && <section className="research-card research-core-summary"><p>{summary}</p></section>}
@@ -53,7 +53,7 @@ function NodeDetail() {
     {Array.isArray(data.core.tags) && data.core.tags.length > 0 && <div className="research-inline-facts">{data.core.tags.map((tag: string) => <span className="research-badge" key={tag}>{tag}</span>)}</div>}
     </div><PendingObjectChanges candidates={data.pendingCandidates ?? []} owner={owner} en={en} empty={!data.contentBlocks.length} />
     {tab === "content" && (kind === "experiment"
-      ? <ExperimentWorkbench nodeId={id} owner={owner} blocks={data.contentBlocks} en={en} canEdit={permissions.nodes} onChanged={refresh}>
+      ? <ExperimentWorkbench nodeId={id} owner={owner} blocks={data.contentBlocks} collectionRevision={data.blockCollectionRevision} en={en} canEdit={permissions.nodes} onChanged={refresh}>
           <ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={data.contentBlocks.filter(block => block.type === "experimentRecord").map(block => block.id)} nodeKind={kind} onChanged={refresh} />
         </ExperimentWorkbench>
       : <>{kind === "note" && <NoteBodyWorkspace owner={owner} block={bodyBlock} collectionRevision={data.blockCollectionRevision} en={en} canEdit={permissions.nodes} onChanged={refresh} />}<ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={bodyBlock ? [bodyBlock.id] : []} nodeKind={kind} onChanged={refresh} /></>)}

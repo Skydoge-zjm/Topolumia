@@ -102,6 +102,12 @@ export type ExperimentPoint = {
   y: number;
   timestamp?: number | null;
 };
+export type ExperimentMetricSelection = {
+  key: string;
+  xKey: string;
+  expectedContentVersion?: string;
+};
+export const experimentMetricId = (metric: { key: string; xKey: string }) => JSON.stringify([metric.key, metric.xKey]);
 export type ExperimentSeries = {
   key: string;
   xKey: string;

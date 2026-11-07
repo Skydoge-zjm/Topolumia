@@ -8,6 +8,8 @@
 
 后端同时服务前端构建，生产式本机运行使用 5510；5610 用于 Vite 开发。修改端口后同时检查代理 apiUrl，并重启受影响服务。
 
+[静态资源服务](../../src/http/static.ts) 对可压缩文本协商 Brotli/gzip，按内容生成表示对应的 ETag，并支持条件 GET/HEAD。Vite assets 中带内容哈希的文件使用一年 immutable 缓存，HTML 和非哈希入口必须验证；内存缓存同时限制条数和字节体积。前端更新通过 HTML 引用的新哈希文件生效。
+
 当前 [config.ts](../../src/config.ts) 仍有部分历史环境变量覆盖入口。排查配置不生效时检查进程是否带有覆盖，但用户常规配置采用文件，不继续扩展旧环境变量命名。
 
 Agent 原生配置在各项目应用数据目录编辑与保存，使用配置页或 [配置模块](../technical/modules/agent-workbench/configuration.md) 的机制，不能替换为改用户主目录全局文件。

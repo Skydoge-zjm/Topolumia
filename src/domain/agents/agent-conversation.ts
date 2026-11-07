@@ -77,13 +77,42 @@ function streamKey(event: ConversationEvent): string | null {
   return null;
 }
 
+type ConversationIndex = { length: number; keys: Map<string, number>; removals: ConversationEvent[] };
+const conversationIndexes = new WeakMap<ConversationEvent[], ConversationIndex>();
+function conversationIndex(events: ConversationEvent[]): ConversationIndex {
+  let index = conversationIndexes.get(events);
+  if (!index || index.length !== events.length) {
+    index = { length: events.length, keys: new Map(), removals: [] };
+    const directory = index;
+    events.forEach((event, position) => {
+      const key = streamKey(event);
+      if (key !== null && !directory.keys.has(key)) directory.keys.set(key, position);
+      if (event.type === "content.removed") directory.removals.push(event);
+    });
+    conversationIndexes.set(events, index);
+  }
+  return index;
+}
+export function isConversationContentRemoved(events: ConversationEvent[], event: ConversationEvent): boolean {
+  return conversationIndex(events).removals.some(removal => isRemovedContent(event, removal));
+}
+function indexConversation<T extends ConversationEvent>(previous: T[], next: T[], index: ConversationIndex, key: string | null, position: number): T[] {
+  // Only the newest array owns the mutable index. Branching from an older
+  // immutable snapshot rebuilds its index instead of sharing stale positions.
+  conversationIndexes.delete(previous);
+  if (key !== null) index.keys.set(key, position);
+  index.length = next.length;
+  conversationIndexes.set(next, index);
+  return next;
+}
+
 export function appendConversationEvent<T extends ConversationEvent>(events: T[], event: T): T[] {
   if (!retainedTypes.has(event.type)) return events;
   if (event.type === "content.removed") {
     return [...events.filter(existing => !isRemovedContent(existing, event) && !(existing.type === "content.removed" && streamKey(existing) === streamKey(event))), event];
   }
   if (event.payload.restored) events = events.filter(existing => existing.type !== "content.removed" || !isRemovedContent(event, existing));
-  if (events.some(existing => existing.type === "content.removed" && isRemovedContent(event, existing))) return events;
+  if (isConversationContentRemoved(events, event)) return events;
   if (event.type === "tool.updated" && !event.payload.toolCallId && !(event.payload.item as { id?: string } | undefined)?.id) return events;
   if (event.type === "tool.completed" || event.type === "tool.failed") {
     const call = event.payload.toolCallId ?? (event.payload.item as { id?: string } | undefined)?.id;
@@ -106,8 +135,9 @@ export function appendConversationEvent<T extends ConversationEvent>(events: T[]
     events = events.filter(candidate => candidate.type !== "tool.updated" || !sameCall(candidate));
   }
   const key = streamKey(event);
-  const index = key === null ? -1 : events.findIndex(existing => streamKey(existing) === key);
-  if (index < 0) return [...events, event];
+  const directory = conversationIndex(events);
+  const index = key === null ? -1 : (directory.keys.get(key) ?? -1);
+  if (index < 0) return indexConversation(events, [...events, event], directory, key, events.length);
   const previous = events[index];
   const payload = { ...previous.payload, ...event.payload };
   if (event.type === "assistant.message.delta" || event.type === "reasoning.summary.delta") {
@@ -131,7 +161,7 @@ export function appendConversationEvent<T extends ConversationEvent>(events: T[]
   const next = events.slice();
   // Preserve the first occurrence's position and identity while replacing text.
   next[index] = { ...previous, type: event.type, payload, updatedCursor: event.cursor };
-  return next;
+  return indexConversation(events, next, directory, key, index);
 }
 
 export function compactConversationEvents<T extends ConversationEvent>(events: T[]): T[] {

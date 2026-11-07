@@ -8,7 +8,7 @@ export class ResearchObjectService {
   constructor(commands) { this.c = commands; this.store = commands.store; }
   get(owner) { const parsed = objectRefSchema.safeParse(owner); if (!parsed.success) fail("OBJECT_REF_INVALID", "Supply a node/group object reference."); const ref = parsed.data; return ref.kind === "group" ? this.c.groups.get(ref.id) : this.c.nodes.node(ref.id); }
   from(view, owner) { if (!objectRefSchema.safeParse(owner).success) fail("OBJECT_REF_INVALID", "Supply a node/group object reference."); return view[owner.kind === "group" ? "groups" : "nodes"].find(item => item.id === owner.id && !item.deleted) ?? fail("RESEARCH_OBJECT_NOT_FOUND", "Research object not found.", 404); }
-  blocks(owner, archived = false) { this.get(owner); return this.store.all("blocks").filter(block => sameObject(block.owner, owner) && (archived || block.lifecycle !== "archived")).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)); }
+  blocks(owner, archived = false) { this.get(owner); return this.store.blocksForOwner(owner).filter(block => archived || block.lifecycle !== "archived").sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)); }
   block(owner, id) { this.get(owner); const block = this.store.get("blocks", id); if (!block || !sameObject(block.owner, owner) || block.lifecycle === "archived") fail("CONTENT_BLOCK_NOT_FOUND", "Content block not found.", 404); return block; }
   blockVersion(owner, id, revision) { this.get(owner); if (!Number.isInteger(revision) || revision < 1) fail("INPUT_INVALID", "Invalid material revision.", 422); const block = this.store.get("versions", id + ":" + revision); if (!block || block.id !== id || !sameObject(block.owner, owner)) fail("CONTENT_BLOCK_NOT_FOUND", "Material version not found.", 404); return block; }
   sources(values = [], actor) { return values.map(source => { const { clientRef, delivery: _delivery, ...rest } = source; return { ...rest, id: source.id ?? "source:" + randomUUID(), delivery: actor.isAgent ? "agentReported" : "humanRecorded", ...(clientRef ? { clientRef } : {}) }; }); }
@@ -43,7 +43,7 @@ export class ResearchObjectService {
     this.store.put("versions", objectKey(owner) + ":" + object.revision, { owner, object, blocks, previousRevision: old?.revision ?? null });
     for (const block of blocks) { this.store.put("blocks", block.id, block); this.store.put("versions", block.id + ":" + block.revision, block); }
   }
-  relations(owner, scope = "direct", view = this.c.snapshot(null, { isAgent: false })) {
+  relations(owner, scope = "direct", view = this.c.snapshot(null, { isAgent: false }, { includeBlocks: false })) {
     this.from(view, owner);
     if (scope === "direct") return view.topology.edges.filter(edge => sameObject(edge.from, owner) || sameObject(edge.to, owner));
     if (owner.kind !== "group" || scope !== "groupBoundary") fail("INPUT_INVALID", "groupBoundary requires a group.");

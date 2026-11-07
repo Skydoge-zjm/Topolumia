@@ -4,6 +4,7 @@ import { api, projectId } from "@/shared/lib/api";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { RunStatusDot } from "./RunStatusDot";
+import { experimentMetricId } from "@domain/research/experiment-records";
 import "./experiment-records.css";
 
 type Run = { id: string; label: string; status: string };
@@ -83,7 +84,7 @@ export function ExperimentDataWorkspace({
     [metrics.data],
   );
   useEffect(() => {
-    const keys = metricItems.map((item) => item.key);
+    const keys = metricItems.map(experimentMetricId);
     setSelectedMetrics((current) => {
       const kept = current.filter((key) => keys.includes(key));
       return kept.length ? kept.slice(0, 24) : keys.slice(0, 12);
@@ -95,8 +96,14 @@ export function ExperimentDataWorkspace({
     if (scrollHost.current) scrollHost.current.scrollTop = 0;
   }, [runId, offset, selectedMetrics]);
   const visibleMetrics = metricItems.filter((item) =>
-    selectedMetrics.includes(item.key),
+    selectedMetrics.includes(experimentMetricId(item)),
   );
+  const repeatedKeys = useMemo(() => {
+    const seen = new Set<string>(), repeated = new Set<string>();
+    for (const metric of metricItems) { if (seen.has(metric.key)) repeated.add(metric.key); seen.add(metric.key); }
+    return repeated;
+  }, [metricItems]);
+  const metricLabel = (item: Metric) => repeatedKeys.has(item.key) ? `${item.key} · ${item.xKey}` : item.key;
   const table = useQuery({
     queryKey: [
       "experiment-data-table",
@@ -105,6 +112,7 @@ export function ExperimentDataWorkspace({
       runId,
       visibleMetrics.map((item) => [
         item.key,
+        item.xKey,
         item.readHint?.expectedContentVersion,
       ]),
       offset,
@@ -117,15 +125,9 @@ export function ExperimentDataWorkspace({
         body: JSON.stringify({
           nodeId,
           runId,
-          metricKeys: visibleMetrics.map((item) => item.key),
+          metrics: visibleMetrics.map((item) => ({ key: item.key, xKey: item.xKey, expectedContentVersion: item.readHint?.expectedContentVersion })),
           pointOffset: offset,
           pointLimit: 100,
-          expectedVersions: Object.fromEntries(
-            visibleMetrics.map((item) => [
-              item.key,
-              item.readHint?.expectedContentVersion,
-            ]),
-          ),
         }),
       }),
   });
@@ -195,7 +197,7 @@ export function ExperimentDataWorkspace({
   const copy = () => {
     if (!rows.length) return;
     const lines = [
-      [mixedAxes ? "x" : xKey, ...visibleMetrics.map((item) => item.key)].join(
+      [mixedAxes ? "x" : xKey, ...visibleMetrics.map(metricLabel)].join(
         "\t",
       ),
       ...rows.map((row) =>
@@ -280,10 +282,11 @@ export function ExperimentDataWorkspace({
                 {en ? "columns · up to 24" : "列 · 最多同时显示 24 列"}
               </span>
               {metricItems.map((item) => {
-                const selected = selectedMetrics.includes(item.key);
+                const identity = experimentMetricId(item);
+                const selected = selectedMetrics.includes(identity);
                 return (
                   <button
-                    key={item.key}
+                    key={identity}
                     type="button"
                     className={
                       "experiment-data-metric-toggle" +
@@ -291,15 +294,16 @@ export function ExperimentDataWorkspace({
                     }
                     disabled={!selected && selectedMetrics.length >= 24}
                     aria-pressed={selected}
-                    onClick={() =>
+                    onClick={() => {
+                      setOffset(0);
                       setSelectedMetrics((current) =>
                         selected
-                          ? current.filter((key) => key !== item.key)
-                          : [...current, item.key],
-                      )
-                    }
+                          ? current.filter((key) => key !== identity)
+                          : [...current, identity],
+                      );
+                    }}
                   >
-                    {item.key}
+                    {metricLabel(item)}
                   </button>
                 );
               })}
@@ -353,8 +357,8 @@ export function ExperimentDataWorkspace({
                     <tr>
                       <th scope="col">{mixedAxes ? "x" : xKey}</th>
                       {visibleMetrics.map((item) => (
-                        <th scope="col" key={item.key}>
-                          {item.key}
+                        <th scope="col" key={experimentMetricId(item)}>
+                          {metricLabel(item)}
                         </th>
                       ))}
                     </tr>
@@ -378,7 +382,7 @@ export function ExperimentDataWorkspace({
                         <tr key={row.key} aria-rowindex={firstRow + index + 2}>
                           <td>{mixedAxes ? `${row.axis} ${row.x}` : row.x}</td>
                           {row.values.map((value, index) => (
-                            <td key={visibleMetrics[index].key}>
+                            <td key={experimentMetricId(visibleMetrics[index])}>
                               {value ?? "—"}
                             </td>
                           ))}

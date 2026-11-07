@@ -78,6 +78,28 @@ async function fixture(t) {
   return { c, actor, create, upload, add };
 }
 
+test("exact metric reads distinguish identical names on different axes", async t => {
+  const { c, actor, create, upload, add } = await fixture(t), node = create("experiment", "Mixed axes");
+  const asset = await upload("mixed-axes.json", JSON.stringify({ id: "source", series: [
+    { key: "loss", xKey: "step", points: [{ x: 10, y: 0.2 }] },
+    { key: "loss", xKey: "epoch", points: [{ x: 1, y: 0.7 }] },
+  ] }));
+  const imported = await c.records.inspect("wandb", [asset.id], actor);
+  const block = add(node.id, { type: "experimentRecord", title: "Records", payload: { provider: "wandb", runs: imported.runs.map(({ metrics, ...run }) => run) }, representations: [{ kind: "asset", assetId: asset.id, role: "source" }] });
+  const runId = block.payload.runs[0].runId;
+  const directory = await c.records.read({ mode: "metrics", nodeId: node.id, runId, maxChars: 16000 }, actor);
+  assert.deepEqual(directory.data.items.map(item => item.readHint.xKey), ["step", "epoch"]);
+  const table = await c.records.table({ nodeId: node.id, runId, metrics: directory.data.items.map(item => ({ key: item.key, xKey: item.xKey, expectedContentVersion: item.readHint.expectedContentVersion })) }, actor);
+  assert.deepEqual(table.columns.map(column => [column.xKey, column.points[0].y]), [["step", 0.2], ["epoch", 0.7]]);
+  for (const metric of directory.data.items) {
+    const { tool, ...input } = metric.readHint;
+    const value = await executeResearchTool({ researchCommands: c }, tool, input, actor);
+    assert.equal(value.data.xKey, metric.xKey);
+    assert.equal(value.data.points[0].y, metric.xKey === "step" ? 0.2 : 0.7);
+  }
+  await assert.rejects(c.records.read({ mode: "series", nodeId: node.id, runId, metric: "loss" }, actor), { code: "EXPERIMENT_METRIC_AMBIGUOUS" });
+});
+
 test("large point reads and batched columns preserve exact ranges without loading project snapshots", async (t) => {
   const { c, actor, create, upload, add } = await fixture(t),
     node = create("experiment", "Large archived run");
@@ -138,7 +160,7 @@ test("large point reads and batched columns preserve exact ranges without loadin
   assert.equal(raw.data.points[0].x, count - 10);
   assert.equal(raw.data.points.at(-1).y, (count - 1) / 7);
   const table = await c.records.table(
-    { nodeId: node.id, runId, metricKeys: ["loss", "accuracy"], pointLimit: 3 },
+    { nodeId: node.id, runId, metrics: [{ key: "loss", xKey: "step" }, { key: "accuracy", xKey: "step" }], pointLimit: 3 },
     actor,
   );
   assert.deepEqual(table.columns[1].points, [
@@ -152,27 +174,26 @@ test("large point reads and batched columns preserve exact ranges without loadin
       {
         nodeId: node.id,
         runId,
-        metricKeys: ["loss"],
-        expectedVersions: { loss: "stale" },
+        metrics: [{ key: "loss", xKey: "step", expectedContentVersion: "stale" }],
       },
       actor,
     ),
     { code: "OBJECT_VERSION_CONFLICT" },
   );
   await assert.rejects(
-    c.records.table({ nodeId: node.id, runId, metricKeys: ["missing"] }, actor),
+    c.records.table({ nodeId: node.id, runId, metrics: [{ key: "missing", xKey: "step" }] }, actor),
     { code: "EXPERIMENT_METRIC_NOT_FOUND" },
   );
   await assert.rejects(
     c.records.table(
-      { nodeId: node.id, runId, metricKeys: ["loss", "loss"] },
+      { nodeId: node.id, runId, metrics: [{ key: "loss", xKey: "step" }, { key: "loss", xKey: "step" }] },
       actor,
     ),
     { code: "INPUT_INVALID" },
   );
   await assert.rejects(
     c.records.table(
-      { nodeId: node.id, runId, metricKeys: ["loss"] },
+      { nodeId: node.id, runId, metrics: [{ key: "loss", xKey: "step" }] },
       { ...actor, permissions: [] },
     ),
     { code: "FORBIDDEN" },

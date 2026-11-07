@@ -21,6 +21,18 @@ function identity(event: ConversationEvent): string {
   return `${event.type}:${event.id}`;
 }
 
+const traceIndexes = new WeakMap<ConversationEvent[], { length: number; keys: Map<string, number> }>();
+function traceIndex(events: ConversationEvent[]) {
+  let index = traceIndexes.get(events);
+  if (!index || index.length !== events.length) {
+    index = { length: events.length, keys: new Map() };
+    const directory = index;
+    events.forEach((event, position) => { const key = identity(event); if (!directory.keys.has(key)) directory.keys.set(key, position); });
+    traceIndexes.set(events, index);
+  }
+  return index;
+}
+
 // Durable Trace is a state log: one full record per message block/tool call.
 // Token deltas remain on the live SSE stream, never as historical log rows.
 export function appendTraceEvent<T extends ConversationEvent>(events: T[], event: T): T[] {
@@ -41,7 +53,8 @@ export function appendTraceEvent<T extends ConversationEvent>(events: T[], event
     });
   }
   const key = identity(event);
-  const index = events.findIndex(existing => identity(existing) === key);
+  const directory = traceIndex(events);
+  const index = directory.keys.get(key) ?? -1;
   const previous = index < 0 ? undefined : events[index];
   const p = event.payload;
   const old = previous?.payload ?? {};
@@ -91,8 +104,14 @@ export function appendTraceEvent<T extends ConversationEvent>(events: T[], event
   payload.updateKind = "snapshot";
   const record = { ...event, id: previous?.id ?? event.id, cursor: event.updatedCursor ?? event.cursor, type, payload,
     occurredAt: previous?.occurredAt ?? event.occurredAt } as T;
-  if (index < 0) return [...events, record];
-  const next = events.slice(); next[index] = record; return next;
+  const next = events.slice();
+  if (index < 0) next.push(record);
+  else next[index] = record;
+  traceIndexes.delete(events);
+  directory.keys.set(key, index < 0 ? events.length : index);
+  directory.length = next.length;
+  traceIndexes.set(next, directory);
+  return next;
 }
 
 export function compactTraceEvents<T extends ConversationEvent>(events: T[]): T[] {

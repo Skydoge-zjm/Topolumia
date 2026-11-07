@@ -1,5 +1,5 @@
 import type { ContentBlock } from "@/features/topology/details/ContentBlockRenderer";
-import { ContentBlockRenderer } from "@/features/topology/details/ContentBlockRenderer";
+import { ObjectContentWorkspace } from "@/features/topology/details/ObjectContentWorkspace";
 import type { ResearchObjectRef } from "@/features/research/model";
 import { ExperimentRunsPanel } from "./ExperimentRunsPanel";
 import "./experiment-records.css";
@@ -13,6 +13,7 @@ export function ExperimentWorkbench({
   nodeId,
   owner,
   blocks,
+  collectionRevision,
   en,
   canEdit,
   onChanged,
@@ -21,6 +22,7 @@ export function ExperimentWorkbench({
   nodeId: string;
   owner: ResearchObjectRef;
   blocks: ContentBlock[];
+  collectionRevision: number;
   en: boolean;
   canEdit: boolean;
   onChanged: () => void;
@@ -40,18 +42,17 @@ export function ExperimentWorkbench({
       </aside>
       <div className="experiment-main">
         {recordBlocks.length > 0 && (
-          <div className="content-block-list">
-            {recordBlocks.map((block) => (
-              <article className="content-block-card" key={block.id}>
-                <header>
-                  <div className="content-block-title">
-                    <h3>{block.title}</h3>
-                  </div>
-                </header>
-                <ContentBlockRenderer block={block} owner={owner} en={en} />
-              </article>
-            ))}
-          </div>
+          <ObjectContentWorkspace
+            owner={owner}
+            en={en}
+            canEdit={canEdit}
+            allowAdd={false}
+            collectionRevision={collectionRevision}
+            initialBlocks={blocks}
+            hiddenBlockIds={blocks.filter(block => block.type !== "experimentRecord").map(block => block.id)}
+            nodeKind="experiment"
+            onChanged={onChanged}
+          />
         )}
         {children}
       </div>

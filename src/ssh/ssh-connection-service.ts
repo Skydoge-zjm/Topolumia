@@ -369,6 +369,7 @@ export class SshConnectionService {
   }
   async connect(owner, id) {
     const profile = await this.profile(owner, id);
+    if (this.closed) throw new AppError("SSH_SERVICE_CLOSED", "SSH 服务已关闭。", { status: 503 });
     const previous = this.sessions.get(this.sessionKey(owner, id));
     if (
       previous &&
@@ -402,7 +403,9 @@ export class SshConnectionService {
             session.storageWarning = "保存的凭据无法解密，请重新输入。";
           }
         }
+        this.assertConnecting(session);
         const target = await this.target(profile);
+        this.assertConnecting(session);
         session.effective = target;
         let sock = null;
         if (target.proxyJump) {
@@ -419,7 +422,9 @@ export class SshConnectionService {
               { user: match[1], port: match[3] },
               this.commandRunner,
             );
+            this.assertConnecting(session);
             const client = await this.openClient(session, hopTarget, sock);
+            this.assertConnecting(session);
             const next = hops[index + 1];
             let nextTarget = target;
             if (next) {
@@ -433,6 +438,7 @@ export class SshConnectionService {
                 { user: parsed[1], port: parsed[3] },
                 this.commandRunner,
               );
+              this.assertConnecting(session);
             }
             sock = await new Promise((resolve, reject) =>
               client.forwardOut(
@@ -440,11 +446,19 @@ export class SshConnectionService {
                 0,
                 nextTarget.host,
                 nextTarget.port,
-                (error, stream) => (error ? reject(error) : resolve(stream)),
+                (error, stream) => {
+                  if (error) return reject(error);
+                  try { this.assertConnecting(session); }
+                  catch (cancelled) { stream.destroy(); reject(cancelled); return; }
+                  session.channels.add(stream);
+                  stream.once("close", () => session.channels.delete(stream));
+                  resolve(stream);
+                },
               ),
             );
           }
         } else if (target.proxyCommand) {
+          this.assertConnecting(session);
           const command = target.proxyCommand
             .replace(/%%/g, "\0")
             .replace(/%h/g, target.host)
@@ -467,7 +481,7 @@ export class SshConnectionService {
           sock = Duplex.from({ writable: child.stdin, readable: child.stdout });
         }
         session.client = await this.openClient(session, target, sock);
-        if (session.cancelled) return;
+        this.assertConnecting(session);
         session.status = "connected";
         session.stage = "connected";
         session.connectedAt = new Date().toISOString();
@@ -475,6 +489,7 @@ export class SshConnectionService {
         if (session.remember) {
           try {
             profile.ciphertext = await this.vault.protect(session.credentials);
+            this.assertConnecting(session);
             await this.persist(owner);
           } catch {
             session.storageWarning =
@@ -494,6 +509,7 @@ export class SshConnectionService {
           };
         });
         await session.infoTask;
+        this.assertConnecting(session);
         if (session.info?.status === "ready") {
           profile.lastInfo = session.info;
           await this.persist(owner);
@@ -516,8 +532,14 @@ export class SshConnectionService {
     void task.finally(() => this.tasks.delete(task));
     return this.publicProfile(profile, session);
   }
+  assertConnecting(session) {
+    if (this.closed || session.cancelled || this.sessions.get(this.sessionKey(session.owner, session.profile.id)) !== session)
+      throw new AppError("SSH_CONNECTION_CANCELLED", "SSH 连接已取消。", { status: 409 });
+  }
   async openClient(session, target, sock) {
+    this.assertConnecting(session);
     const records = await knownHostKeys(target, this.commandRunner);
+    this.assertConnecting(session);
     const keys = [];
     for (const file of target.identityFiles ?? []) {
       try {
@@ -527,6 +549,7 @@ export class SshConnectionService {
         /* Try the next configured identity. */
       }
     }
+    this.assertConnecting(session);
     if (target.auth === "key" && !keys.length)
       throw new Error("Authentication key unavailable");
     const targetId = `${target.user}@${target.host}:${target.port}`;
@@ -677,6 +700,8 @@ export class SshConnectionService {
       client.once("connect", () => clearTimeout(dialTimer));
       client.once("handshake", () => clearTimeout(dialTimer));
       client.once("ready", () => {
+        try { this.assertConnecting(session); }
+        catch (error) { clearTimeout(dialTimer); client.end(); reject(error); return; }
         ready = true;
         clearTimeout(dialTimer);
         resolve(client);
@@ -922,7 +947,7 @@ export class SshConnectionService {
       session.challenge = null;
       for (const stream of session.channels) {
         try {
-          stream.signal("TERM");
+          stream.signal?.("TERM");
           stream.close();
         } catch {}
       }
@@ -943,6 +968,7 @@ export class SshConnectionService {
       : this.publicProfile(await this.profile(owner, id));
   }
   async close() {
+    this.closed = true;
     for (const session of this.sessions.values())
       await this.disconnect(session.owner, session.profile.id).catch(() => {});
     await Promise.allSettled([...this.tasks]);
