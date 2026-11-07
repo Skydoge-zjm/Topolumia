@@ -1,24 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-import { api, projectId } from "@/shared/lib/api";
-import { SelectMenu } from "@/shared/ui/SelectMenu";
 import {
   AXIS_INK,
   CHART_COLORS,
-  DASH_PATTERNS,
   GRID_INK,
   buildData,
   format,
-  formatValue,
   lineLabel,
-  nearestValue,
   runColor,
   runKey,
   seriesByMetric,
-  seriesKey,
   tickFormat,
   type RecordLine,
 } from "./chartModel";
@@ -38,15 +31,9 @@ export type RecordPlot = {
 export function ExperimentPlots({
   plot,
   en,
-  blockId,
-  blockRevision,
-  candidateId,
 }: {
   plot: RecordPlot;
   en: boolean;
-  blockId?: string;
-  blockRevision?: number;
-  candidateId?: string;
 }) {
   const groups = useMemo(() => seriesByMetric(plot.series), [plot.series]);
   // One toggle per run, acting on every metric at once: repeating the same three
@@ -56,10 +43,13 @@ export function ExperimentPlots({
     [plot.series],
   );
   const legendEntries = useMemo(
-    () => [...new Map(plot.series.map((line) => [runKey(line), line])).values()],
+    () => [
+      ...new Map(plot.series.map((line) => [runKey(line), line])).values(),
+    ],
     [plot.series],
   );
   const [hidden, setHidden] = useState<string[]>([]);
+  const [hoverX, setHoverX] = useState<number | null>(null);
   const grouped = new Map<
     string,
     { runId: string; label: string; message: string }[]
@@ -130,10 +120,6 @@ export function ExperimentPlots({
                   <path
                     d="M0 6 H24"
                     stroke={CHART_COLORS[style]}
-                    strokeDasharray={
-                      DASH_PATTERNS[style % DASH_PATTERNS.length].join(" ") ||
-                      undefined
-                    }
                     strokeWidth="2"
                   />
                 </svg>
@@ -150,9 +136,8 @@ export function ExperimentPlots({
           lines={metricLines}
           en={en}
           hidden={hidden}
-          blockId={blockId}
-          blockRevision={blockRevision}
-          candidateId={candidateId}
+          hoverX={hoverX}
+          onHoverX={setHoverX}
         />
       ))}
       {!groups.length && (
@@ -193,17 +178,15 @@ function MetricChart({
   lines,
   en,
   hidden,
-  blockId,
-  blockRevision,
-  candidateId,
+  hoverX,
+  onHoverX,
 }: {
   metric: string;
   lines: RecordLine[];
   en: boolean;
   hidden: string[];
-  blockId?: string;
-  blockRevision?: number;
-  candidateId?: string;
+  hoverX: number | null;
+  onHoverX: (value: number | null) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const live = useRef<HTMLSpanElement>(null);
@@ -267,7 +250,6 @@ function MetricChart({
             label: label(line),
             stroke: CHART_COLORS[style],
             width: 1.8,
-            dash: DASH_PATTERNS[style % DASH_PATTERNS.length],
             points: {
               show: line.points.length === 1,
               size: 6,
@@ -282,22 +264,15 @@ function MetricChart({
             if (!live.current) return;
             if (self.cursor.idx == null) {
               live.current.textContent = "";
+              onHoverX(null);
               return;
             }
             const index = self.cursor.idx,
               xValue = self.data[0][index];
-            const values = visible
-              .slice(0, 6)
-              .map(
-                (line, position) =>
-                  `${label(line)}: ${formatValue(nearestValue(self.data[position + 1] as (number | null)[], index))}`,
-              );
-            live.current.textContent =
-              values.join(" · ") +
-              (visible.length > 6
-                ? ` · ${en ? `+${visible.length - 6} more` : `另 ${visible.length - 6} 条`}`
-                : "") +
-              ` @ ${format(xValue ?? 0)}`;
+            if (typeof xValue === "number") {
+              live.current.textContent = `@ ${format(xValue)}`;
+              onHoverX(xValue);
+            }
           },
         ],
       },
@@ -317,7 +292,23 @@ function MetricChart({
       chart.current = null;
     };
     // The x domain and visible series fully describe the chart; rebuilding on any render would reset zoom.
-  }, [canvas, visible, data, en, label, xAxisLabel]);
+  }, [canvas, visible, data, label, xAxisLabel, onHoverX]);
+
+  useEffect(() => {
+    const instance = chart.current;
+    if (!instance) return;
+    if (hoverX === null || !data[0].length) {
+      instance.setCursor({ left: -10, top: -10 });
+      return;
+    }
+    const first = data[0][0] ?? hoverX;
+    const last = data[0].at(-1) ?? hoverX;
+    const value = Math.max(first, Math.min(last, hoverX));
+    instance.setCursor({
+      left: instance.valToPos(value, "x"),
+      top: instance.bbox.top + instance.bbox.height / 2,
+    });
+  }, [hoverX, data]);
 
   const zoom = (factor: number) => {
     const instance = chart.current;
@@ -383,17 +374,33 @@ function MetricChart({
         aria-label={`${metric} · ${visible.length} ${en ? "runs" : "次运行"}`}
         onDoubleClick={reset}
       >
-        {!canvas && <FallbackTable lines={visible} xs={data[0]} en={en} />}
+        {!canvas && (
+          <p className="experiment-chart-fallback research-hint">
+            {en
+              ? "Open the Experiment data tab to inspect raw points."
+              : "请打开“实验数据”页面查看原始数据点。"}
+          </p>
+        )}
+        {hoverX !== null && visible.length > 0 && (
+          <div className="experiment-chart-tooltip" role="status">
+            <strong>@ {format(hoverX)}</strong>
+            {visible.map((line) => {
+              const point = line.points.reduce((best, current) =>
+                Math.abs(current.x - hoverX) < Math.abs(best.x - hoverX)
+                  ? current
+                  : best,
+              );
+              return (
+                <span key={runKey(line)}>
+                  {lineLabel(line, multiNode)}: {format(point.y)}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
       <span ref={live} className="visually-hidden" aria-live="polite" />
       <div className="experiment-chart-metadata">
-        <RawValues
-          lines={lines}
-          en={en}
-          blockId={blockId}
-          blockRevision={blockRevision}
-          candidateId={candidateId}
-        />
         {lines.some((line) => line.sampled) && (
           <span className="research-badge">
             {en ? "Sampled display" : "曲线展示已采样"}
@@ -401,197 +408,5 @@ function MetricChart({
         )}
       </div>
     </figure>
-  );
-}
-
-function FallbackTable({
-  lines,
-  xs,
-  en,
-}: {
-  lines: RecordLine[];
-  xs: (number | null)[];
-  en: boolean;
-}) {
-  const columns = lines.map((line) => {
-    const points = new Map(line.points.map((point) => [point.x, point.y]));
-    return xs.map((x) => (x === null ? null : (points.get(x) ?? null)));
-  });
-  return (
-    <div className="experiment-chart-fallback">
-      <p role="status">
-        {en
-          ? "Charts need a canvas; showing the first data points."
-          : "当前环境无画布，显示前若干数据点。"}
-      </p>
-      <div className="research-table-wrap">
-        <table className="research-table">
-          <thead>
-            <tr>
-              <th>{lines[0]?.xKey ?? "x"}</th>
-              {lines.map((line) => (
-                <th key={seriesKey(line)}>
-                  {line.nodeName} · {line.runLabel}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {xs.slice(0, 12).map((x, index) => (
-              <tr key={String(x)}>
-                <td>{format(x ?? 0)}</td>
-                {columns.map((column, position) => (
-                  <td key={position}>
-                    {column[index] === null ? "—" : format(column[index]!)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function RawValues({
-  lines,
-  en,
-  blockId,
-  blockRevision,
-  candidateId,
-}: {
-  lines: RecordLine[];
-  en: boolean;
-  blockId?: string;
-  blockRevision?: number;
-  candidateId?: string;
-}) {
-  const [open, setOpen] = useState(false),
-    [selected, setSelected] = useState("0"),
-    [offset, setOffset] = useState(0);
-  const index = Math.min(Number(selected), Math.max(0, lines.length - 1));
-  const line = lines[index] ?? lines[0];
-  const query = useQuery({
-    queryKey: [
-      "experiment-values",
-      projectId(),
-      line.nodeId,
-      line.runId,
-      line.key,
-      blockId,
-      blockRevision,
-      candidateId,
-      offset,
-      line.sources,
-    ],
-    enabled: open,
-    queryFn: () =>
-      api<any>("/api/research/experiments/read", {
-        method: "POST",
-        body: JSON.stringify({
-          mode: "series",
-          nodeId: line.nodeId,
-          runId: line.runId,
-          metric: line.key,
-          blockId,
-          blockRevision,
-          candidateId,
-          expectedContentVersion: line.contentVersion,
-          pointOffset: offset,
-          pointLimit: 40,
-          maxChars: 16000,
-        }),
-      }),
-  });
-  const data = query.data?.data;
-  const copy = () => {
-    if (!data) return;
-    const text = [
-      data.xKey + "\t" + data.metric,
-      ...data.points.map(
-        (point: { x: number; y: number }) => `${point.x}\t${point.y}`,
-      ),
-    ].join("\n");
-    void navigator.clipboard?.writeText(text);
-  };
-  return (
-    <details
-      className="experiment-raw-values"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>{en ? "Data points" : "数据点"}</summary>
-      {open && (
-        <>
-          <SelectMenu
-            ariaLabel={en ? "Data run" : "数据运行"}
-            value={String(index)}
-            onChange={(value) => {
-              setSelected(value);
-              setOffset(0);
-            }}
-            options={lines.map((item, position) => ({
-              value: String(position),
-              label: item.nodeName + " · " + item.runLabel,
-            }))}
-          />
-          {query.isPending && (
-            <p role="status">{en ? "Loading…" : "读取中…"}</p>
-          )}
-          {query.error && <p role="alert">{query.error.message}</p>}
-          {data && (
-            <>
-              <div className="research-table-wrap">
-                <table className="research-table">
-                  <thead>
-                    <tr>
-                      <th>{data.xKey}</th>
-                      <th>{data.metric}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.points.map(
-                      (point: { x: number; y: number }, pointIndex: number) => (
-                        <tr key={offset + pointIndex}>
-                          <td>{point.x}</td>
-                          <td>{point.y}</td>
-                        </tr>
-                      ),
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="research-pagination">
-                <button
-                  className="button"
-                  disabled={!offset || query.isFetching}
-                  onClick={() => setOffset(Math.max(0, offset - 40))}
-                >
-                  {en ? "Previous" : "上一页"}
-                </button>
-                <span>
-                  {data.offset + 1}–{data.offset + data.points.length} /{" "}
-                  {data.pointCount}
-                </span>
-                <button
-                  className="button"
-                  disabled={data.nextOffset === null || query.isFetching}
-                  onClick={() => setOffset(data.nextOffset)}
-                >
-                  {en ? "Next" : "下一页"}
-                </button>
-                <button
-                  className="button"
-                  disabled={!navigator.clipboard}
-                  onClick={copy}
-                >
-                  {en ? "Copy" : "复制"}
-                </button>
-              </div>
-            </>
-          )}
-        </>
-      )}
-    </details>
   );
 }

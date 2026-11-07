@@ -30,6 +30,9 @@
 }
 
 @media (max-width: 760px) {
+  .app { height: auto; min-height: 100dvh; overflow: visible; }
+  .app .shell { height: auto; overflow: visible; }
+  .app .main { height: auto; overflow: visible; }
   .app, .project-shell { width: 100%; min-width: 0; }
   .topbar, .project-topbar { min-width: 0; padding: 0 16px; gap: 8px; }
   .topbar .brand, .project-topbar .brand { min-width: 0; gap: 8px; }

@@ -30,9 +30,9 @@ run 标签不要求唯一，来源身份用于重复导入的识别；用户也�
 
 [实验路由](../../../../src/http/routes/research/experiment-records.ts) 提供运行维护、只读数据与绘图接口。`read_experiment` 经共同 MCP / CLI / HTTP 合同提供 runs、materials、metrics、series、inspect 与 compare。通常先读取 run 目录，再读取指标目录，最后按范围读取准确数据点；材料返回可调用的 read_blocks / read_assets 提示。精确合同以 [tools.ts](../../../../src/domain/research/interfaces/tools.ts) 为准。
 
-[ExperimentWorkbench](../../../../frontend/src/features/experiments/ExperimentWorkbench.tsx) 把实验详情组织为常驻的运行栏与研究材料：选中 run 时曲线按所选运行过滤，材料关联就地展开，不再需要先切换到另一个标签页记住内容块标题。运行栏支持重命名、改状态与删除；删除前说明指向该 run 的材料关联数，记录块仍在引用时拒绝删除并指出需先处理的内容块。
+[ExperimentWorkbench](../../../../frontend/src/features/experiments/ExperimentWorkbench.tsx) 把实验详情组织为常驻的运行栏与研究材料：运行栏固定在页面滚动容器内，材料关联就地展开，不再需要先切换到另一个标签页记住内容块标题。运行栏支持重命名、改状态与删除；删除前说明指向该 run 的材料关联数，记录块仍在引用时拒绝删除并指出需先处理的内容块。
 
-[ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 基于 uPlot 画布按指标绘制多 run 交互曲线，支持图例开关、框选缩放、键盘操作和精确点分页。曲线颜色由 run 身份哈希决定，同一 run 在内容块与对比窗口中保持一致；刻度使用 1/2/5 × 10ⁿ 步长。绘图受总点数预算控制，采样明确标注；精确读取与显示采样分开。部分来源不可用时合并为一个可展开警告并保留其他可用曲线，权限错误仍拒绝读取。画布不可用时（如测试环境）退化为数据点表格，图例与读取入口不变。
+[ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 基于 uPlot 画布按指标绘制多 run 交互曲线，支持统一 run 图例、框选缩放、跨图表同步十字线、悬浮数值和键盘操作。曲线只使用稳定的 run 颜色区分，同一 run 在内容块与对比窗口中保持一致；刻度使用 1/2/5 × 10ⁿ 步长。绘图受总点数预算控制，采样明确标注；精确原始点读取移到实验详情的“实验数据”页，图表页不再展开原始数据。部分来源不可用时合并为一个可展开警告并保留其他可用曲线，权限错误仍拒绝读取。画布不可用时显示实验数据页入口。
 
 [ExperimentCompareDialog](../../../../frontend/src/features/experiments/ExperimentCompareDialog.tsx) 允许从不同实验选择 run，只叠加完全同名的指标；选择列表带状态与来源，到 24 条上限时说明原因。人和 Agent 的比较均为临时读取，不创建比较对象、内容块或候选。分析需要另建研究笔记，Agent 写入沿用审批。
 

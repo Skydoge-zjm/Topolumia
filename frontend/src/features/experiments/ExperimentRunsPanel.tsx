@@ -12,7 +12,7 @@ import {
 import { ExperimentCompareDialog } from "./ExperimentCompareDialog";
 import { AssetTableRowFields, AssetTableRowView } from "./AssetTableRows";
 import { RunStatusDot } from "./RunStatusDot";
-import { CHART_COLORS, DASH_PATTERNS, runColor } from "./chartModel";
+import { CHART_COLORS, runColor } from "./chartModel";
 import type {
   ExperimentRun,
   ExperimentMaterialLink,
@@ -165,7 +165,6 @@ export function ExperimentRunsPanel({
                   <path
                     d="M1 5 H17"
                     stroke={CHART_COLORS[runStyle]}
-                    strokeDasharray={DASH_PATTERNS[runStyle % DASH_PATTERNS.length].join(" ") || undefined}
                     strokeWidth="2.4"
                   />
                 </svg>

@@ -3,7 +3,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -79,52 +78,28 @@ it("shows one chart per exact metric and toggles a run across all of them at onc
 
 it("keeps colours bound to the run identity, not to its position", () => {
   expect(runColor("experiment", "run:1")).toBe(runColor("experiment", "run:1"));
-  expect(runColor("experiment", "run:1")).toBeLessThan(runColor("experiment", "run:1") + 8);
-  const order = ["a", "b", "c", "d", "e", "f"].map((id) => runColor("experiment", id));
+  expect(runColor("experiment", "run:1")).toBeLessThan(
+    runColor("experiment", "run:1") + 8,
+  );
+  const order = ["a", "b", "c", "d", "e", "f"].map((id) =>
+    runColor("experiment", id),
+  );
   expect(new Set(order).size).toBeGreaterThan(1);
 });
 
 it("places ticks on 1/2/5 × 10ⁿ steps instead of raw min/max fractions", () => {
-  expect(niceTicks(0, 1, 5)).toEqual([0, 0.2, 0.4, 0.6000000000000001, 0.8, 1].map((value) => Number(value.toPrecision(12))));
+  expect(niceTicks(0, 1, 5)).toEqual(
+    [0, 0.2, 0.4, 0.6000000000000001, 0.8, 1].map((value) =>
+      Number(value.toPrecision(12)),
+    ),
+  );
   expect(niceTicks(-3, 7, 5)).toEqual([-2, 0, 2, 4, 6]);
 });
 
-it("reads exact source points separately from the sampled chart and pages without rounding values", async () => {
-  const fetch = vi.fn(async (_url: string, options: { body: string }) => {
-    const request = JSON.parse(options.body);
-    return new Response(
-      JSON.stringify({
-        data: {
-          metric: request.metric,
-          xKey: "step",
-          points: [{ x: request.pointOffset, y: 0.123456789012345 }],
-          offset: request.pointOffset,
-          pointCount: 260,
-          nextOffset: request.pointOffset + 40,
-          sampled: false,
-        },
-      }),
-      { status: 200 },
-    );
-  });
-  vi.stubGlobal("fetch", fetch);
+it("keeps raw point controls off the chart page", () => {
   show();
-  const loss = within(screen.getByRole("figure", { name: "train/loss" }));
-  fireEvent.click(loss.getByText("Data points"));
-  await waitFor(() =>
-    expect(loss.getByText("0.123456789012345")).toBeVisible(),
-  );
-  expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({
-    mode: "series",
-    nodeId: "experiment",
-    runId: "run:1",
-    metric: "train/loss",
-    pointOffset: 0,
-  });
-  fireEvent.click(loss.getByRole("button", { name: "Next" }));
-  await waitFor(() =>
-    expect(JSON.parse(fetch.mock.calls.at(-1)![1].body).pointOffset).toBe(40),
-  );
+  expect(screen.queryByText("Data points")).toBeNull();
+  expect(screen.queryByText("数据点")).toBeNull();
 });
 
 it("keeps a run with one recorded observation readable without a canvas", () => {
@@ -148,5 +123,7 @@ it("keeps a run with one recorded observation readable without a canvas", () => 
     </QueryClientProvider>,
   );
   const loss = within(screen.getByRole("figure", { name: "loss" }));
-  expect(loss.getByRole("cell", { name: "0.5" })).toBeVisible();
+  expect(
+    loss.getByText("Open the Experiment data tab to inspect raw points."),
+  ).toBeVisible();
 });

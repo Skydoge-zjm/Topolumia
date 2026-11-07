@@ -33,7 +33,7 @@ export function ContentBlockRenderer({ block, en, owner, assetUrl, candidateId }
   const [selected,setSelected]=useState<string | undefined>();
   const current=selected && (selected === "inline" || reps.some(r=>r.id===selected)) ? selected : defaultView;
   const representation=reps.find(r=>r.id===current);
-  const options=[...(hasInline ? [{value:"inline",label:en?"Content":"内容数据"}] : []),...reps.map(r=>({value:r.id,label:r.label || r.role || r.kind}))];
+  const options=block.type==="experimentRecord" ? [] : [...(hasInline ? [{value:"inline",label:en?"Content":"内容数据"}] : []),...reps.map(r=>({value:r.id,label:r.label || r.role || r.kind}))];
   return <div translate="no">{options.length>1 && <SelectMenu ariaLabel={en?"Content representation":"内容表示方式"} value={current || options[0].value} onChange={setSelected} options={options} />}{representation ? representation.kind==="link" ? <a className="content-block-link" href={representation.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={15}/>{representation.label || representation.url}</a> : <AssetRepresentation block={block} representation={representation} owner={owner} en={en} candidateId={candidateId} /> : <InlineContent block={block} owner={owner} en={en} assetUrl={assetUrl} candidateId={candidateId} />}</div>;
 }
 function AssetRepresentation({block,representation,owner,en,candidateId}:{block:ContentBlock;representation:any;owner: ResearchObjectRef;en:boolean;candidateId?:string}){

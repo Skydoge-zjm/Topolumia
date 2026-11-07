@@ -1,8 +1,6 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, projectId } from "@/shared/lib/api";
 import type { ResearchObjectRef } from "@/features/research/model";
-import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { ExperimentPlots } from "@/features/experiments/ExperimentPlots";
 import type { RecordPlot } from "@/features/experiments/ExperimentPlots";
@@ -19,7 +17,6 @@ export function ExperimentRecordBlock({
   en: boolean;
   candidateId?: string;
 }) {
-  const [metric, setMetric] = useState("");
   const selections = (block.payload?.runs ?? [])
     .filter((run: any) => run.runId)
     .map((run: any) => ({ nodeId: owner.id, runId: run.runId }));
@@ -32,7 +29,6 @@ export function ExperimentRecordBlock({
       block.revision,
       candidateId,
       block.payload,
-      metric,
     ],
     enabled: selections.length > 0,
     queryFn: () =>
@@ -43,7 +39,6 @@ export function ExperimentRecordBlock({
           blockId: block.id,
           blockRevision: block.revision,
           candidateId,
-          ...(metric ? { metricKeys: [metric] } : {}),
         }),
       }),
   });
@@ -82,26 +77,10 @@ export function ExperimentRecordBlock({
               <span aria-hidden="true">·</span>
               {query.data.runs.length} {en ? "runs" : "次运行"}
             </span>
-            <SelectMenu
-              className="experiment-record-metric"
-              ariaLabel={en ? "Curve metric" : "曲线指标"}
-              value={metric}
-              onChange={setMetric}
-              options={[
-                { value: "", label: en ? "Metric overview" : "指标概览" },
-                ...query.data.metricKeys.map((value) => ({
-                  value,
-                  label: value,
-                })),
-              ]}
-            />
           </div>
           <ExperimentPlots
             plot={query.data}
             en={en}
-            blockId={block.id}
-            blockRevision={block.revision}
-            candidateId={candidateId}
           />
         </>
       )}

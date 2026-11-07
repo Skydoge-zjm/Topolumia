@@ -39,7 +39,8 @@
 }
 .experiment-chart-title strong {
   color: var(--color-ink);
-  font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+  font-family:
+    ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -87,6 +88,7 @@
 .experiment-chart-surface {
   position: relative;
   min-width: 0;
+  min-height: 260px;
 }
 .experiment-chart-surface > svg {
   display: block;
@@ -140,6 +142,12 @@
   border: 1px solid #aabcb0;
   font-size: 12px;
   pointer-events: none;
+  z-index: 3;
+}
+.experiment-chart-surface .u-cursor-x,
+.experiment-chart-surface .u-cursor-y {
+  border-color: var(--color-mint);
+  opacity: 0.8;
 }
 .experiment-chart-metadata {
   display: flex;
@@ -158,20 +166,45 @@
   background: var(--color-warn-soft);
   color: var(--color-warn);
 }
-.experiment-raw-values {
+.experiment-data-workspace {
+  display: grid;
+  gap: 16px;
+  padding: 4px 0 40px;
+}
+.experiment-data-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.experiment-data-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.experiment-data-heading p {
+  margin: 5px 0 0;
+  color: var(--color-muted);
   font-size: 12px;
 }
-.experiment-raw-values > summary {
-  width: fit-content;
-  padding: 3px 0;
+.experiment-data-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.experiment-data-toolbar .select-menu {
+  min-width: min(320px, 100%);
+}
+.experiment-data-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
   color: var(--color-muted);
-  cursor: pointer;
+  font-size: 12px;
 }
-.experiment-raw-values > summary:hover {
-  color: var(--color-mint);
-}
-.experiment-raw-values > .select-menu {
-  margin: 10px 0;
+.experiment-data-table {
+  max-height: 560px;
 }
 .note-body-workspace {
   padding: 12px 0 24px;
@@ -232,6 +265,10 @@
   gap: 32px;
   align-items: start;
   margin-top: 8px;
+}
+.research-detail.is-experiment {
+  max-width: none;
+  margin-inline: 0;
 }
 .experiment-rail {
   position: sticky;
@@ -637,7 +674,8 @@
    The experiment page is read as a notebook: a strong title, one sentence of
    intent, then the data. Chrome recedes so the curves and run labels lead. */
 .research-detail.is-experiment {
-  max-width: 1440px;
+  max-width: none;
+  margin-inline: 0;
 }
 .research-detail.is-experiment .research-page-heading {
   align-items: flex-start;
@@ -712,8 +750,15 @@
   font-weight: 600;
 }
 /* A representation switch is a control, not a headline: keep it at its own width. */
-.research-detail.is-experiment .content-block-card > div > [translate="no"] > .select-menu,
-.research-detail.is-experiment .content-block-card [translate="no"] > .select-menu {
+.research-detail.is-experiment
+  .content-block-card
+  > div
+  > [translate="no"]
+  > .select-menu,
+.research-detail.is-experiment
+  .content-block-card
+  [translate="no"]
+  > .select-menu {
   width: min(260px, 100%);
   margin-bottom: 14px;
 }
