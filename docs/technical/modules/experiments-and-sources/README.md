@@ -34,7 +34,9 @@ run 标签不要求唯一，来源身份用于重复导入的识别；用户也�
 
 [ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 基于 uPlot 画布按指标绘制多 run 交互曲线，支持统一 run 图例、框选缩放、跨图表同步十字线、悬浮数值和键盘操作。曲线只使用稳定的 run 颜色区分，同一 run 在内容块与对比窗口中保持一致；刻度使用 1/2/5 × 10ⁿ 步长。绘图受总点数预算控制，采样明确标注；精确原始点读取移到实验详情的“实验数据”页，图表页不再展开原始数据。部分来源不可用时合并为一个可展开警告并保留其他可用曲线，权限错误仍拒绝读取。画布不可用时显示实验数据页入口。
 
-[ExperimentCompareDialog](../../../../frontend/src/features/experiments/ExperimentCompareDialog.tsx) 允许从不同实验选择 run，只叠加完全同名的指标；选择列表带状态与来源，到 24 条上限时说明原因。人和 Agent 的比较均为临时读取，不创建比较对象、内容块或候选。分析需要另建研究笔记，Agent 写入沿用审批。
+[ExperimentDataWorkspace](../../../../frontend/src/features/experiments/ExperimentDataWorkspace.tsx) 按运行呈现多指标数据表，默认读取全部指标目录并展示各指标列，支持列开关、分页和整页 TSV 复制。每列按 100 个原始采样分页，在当前页按横坐标对齐；未出现在本页的值显示横线，不补零或插值，重复横坐标保留多条记录。表格冻结表头及横坐标列，数值保留来源精度，目录与数据读取失败分别提供反馈。
+
+[ExperimentCompareDialog](../../../../frontend/src/features/experiments/ExperimentCompareDialog.tsx) 从拓扑图选中的多个实验进入，按实验身份载入各实验的全部 run，超过 24 次运行也不截断。`nodeIds` 指定完整实验范围，显式 `selections` 保留按 run 读取的合同；两种输入互斥。服务限制同时读取的来源数量并控制绘图点预算，保留失败和无指标的 run，只叠加完全同名的指标。实验节点内部不再提供重复的运行比较入口，比较窗口可调整实验范围、切换指标或通过图例隐藏运行。人和 Agent 的比较均为临时读取，不创建比较对象、内容块或候选；分析另建研究笔记，Agent 写入沿用审批。
 
 ## 服务来源与刷新
 

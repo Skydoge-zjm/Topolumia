@@ -17,7 +17,7 @@ export const transferSchema = z.discriminatedUnion("direction", [
 const definitions = {
   read_experiment: {
     description: "Read an experiment's shared run registry, material associations, metric directory or exact points. Use runs → metrics → series to select precise ranges. Inspect uploaded W&B/TensorBoard records before proposing an experimentRecord block. Compare is always temporary and uses exact metric names; save analysis in a new note candidate.",
-    schema: z.strictObject({ ...page, mode: z.enum(["runs", "materials", "metrics", "series", "compare", "inspect"]), nodeId: id.optional(), runId: id.optional(), blockId: id.optional(), blockRevision: rev.optional(), candidateId: id.optional(), expectedRevision: rev.optional(), expectedContentVersion: id.optional(), provider: z.enum(experimentProviders).optional(), assetIds: z.array(id).min(1).max(40).optional(), metric: id.optional(), metricKeys: z.array(id).max(32).optional(), selections: z.array(z.strictObject({ nodeId: id, runId: id })).min(1).max(24).optional(), pointOffset: z.number().int().nonnegative().optional(), pointLimit: z.number().int().min(1).max(100).optional() }),
+    schema: z.strictObject({ ...page, mode: z.enum(["runs", "materials", "metrics", "series", "compare", "inspect"]), nodeIds: z.array(id).min(2).max(100).optional(), nodeId: id.optional(), runId: id.optional(), blockId: id.optional(), blockRevision: rev.optional(), candidateId: id.optional(), expectedRevision: rev.optional(), expectedContentVersion: id.optional(), provider: z.enum(experimentProviders).optional(), assetIds: z.array(id).min(1).max(40).optional(), metric: id.optional(), metricKeys: z.array(id).max(32).optional(), selections: z.array(z.strictObject({ nodeId: id, runId: id })).min(1).max(24).optional(), pointOffset: z.number().int().nonnegative().optional(), pointLimit: z.number().int().min(1).max(100).optional() }),
     kind: "experiment", defaultBudget: 6000, command: "experiment",
   },
   get_context: { description: "Read a small project brief. Search then read exact content; summaries are not full evidence.", schema: z.strictObject({ ...budget, query: z.string().max(500).optional() }), kind: "context", defaultBudget: 3000, command: "context" },
@@ -39,7 +39,7 @@ function conditions(name, input) {
   const reject = (message) => { throw Object.assign(new Error(message), { code: "INPUT_INVALID", status: 422 }); };
   if (name === "read_experiment") {
     if (input.mode === "inspect" && (!input.provider || !input.assetIds)) reject("inspect requires provider and assetIds");
-    if (input.mode === "compare" && !input.selections) reject("compare requires selections");
+    if (input.mode === "compare" && Boolean(input.selections) === Boolean(input.nodeIds)) reject("compare requires either selections or nodeIds");
     if (["runs", "materials", "metrics", "series"].includes(input.mode) && !input.nodeId) reject("nodeId is required");
     if (input.mode === "metrics" && !input.runId) reject("metrics requires runId");
     if (input.mode === "series" && (!input.runId || !input.metric)) reject("series requires runId and exact metric name");

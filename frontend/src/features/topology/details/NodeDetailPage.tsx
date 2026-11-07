@@ -43,15 +43,15 @@ function NodeDetail() {
   if (editingCore) return <section translate="no" className="research-workspace research-detail"><button className="research-back button" onClick={() => setEditingCore(false)}>← {en ? "Research node" : "科研节点"}</button><header className="research-page-heading"><h1>{en ? "Edit core information" : "编辑核心信息"}</h1></header><NodeCoreEditor kind={kind} initial={data.core} en={en} onSave={saveCore} onCancel={() => setEditingCore(false)} /></section>;
   return <section translate="no" className={"research-workspace research-detail is-" + kind}><Link className="research-back" to="/topology">← {en ? "Research topology" : "科研拓扑"}</Link>
     {query.error && <p role="alert">{query.error.message}<button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button></p>}
-    <header className="research-page-heading"><div className="research-detail-title"><h1>{title}</h1>
+    <header className="research-page-heading"><div className="research-detail-title"><h1 title={title}>{title}</h1>
       {paper && <PaperCitation core={data.core} en={en} />}
     </div><div className="research-actions"><span className="research-badge">{en ? nodeKinds[kind]?.en ?? kind : nodeKinds[kind]?.label ?? kind}</span>{permissions.nodes && <button className="button" onClick={() => setEditingCore(true)}><Pencil size={15} />{en ? "Edit core" : "编辑核心信息"}</button>}</div></header>
     {paper
       ? <PaperBibliography core={data.core} en={en} initialExpanded={!data.contentBlocks.length && !data.pendingCandidates?.length} />
       : summary && <section className="research-card research-core-summary"><p>{summary}</p></section>}
-    <nav className="research-tabs" aria-label={en ? "Node workspace" : "节点工作区"}>{[{ value: "content", label: en ? "Research material" : "研究材料" }, ...(kind === "experiment" ? [{ value: "data", label: en ? "Experiment data" : "实验数据" }] : []), { value: "relations", label: en ? "Relations" : "关系与来源" }].map(item => <button key={item.value} className={tab === item.value ? "is-active" : ""} onClick={() => setTab(item.value)}>{item.label}</button>)}</nav>
-    <PendingObjectChanges candidates={data.pendingCandidates ?? []} owner={owner} en={en} empty={!data.contentBlocks.length} />
+    <div className={kind === "experiment" ? "experiment-detail-navigation" : undefined}><nav className="research-tabs" aria-label={en ? "Node workspace" : "节点工作区"}>{[{ value: "content", label: en ? "Research material" : "研究材料" }, ...(kind === "experiment" ? [{ value: "data", label: en ? "Experiment data" : "实验数据" }] : []), { value: "relations", label: en ? "Relations" : "关系与来源" }].map(item => <button key={item.value} className={tab === item.value ? "is-active" : ""} onClick={() => setTab(item.value)}>{item.label}</button>)}</nav>
     {Array.isArray(data.core.tags) && data.core.tags.length > 0 && <div className="research-inline-facts">{data.core.tags.map((tag: string) => <span className="research-badge" key={tag}>{tag}</span>)}</div>}
+    </div><PendingObjectChanges candidates={data.pendingCandidates ?? []} owner={owner} en={en} empty={!data.contentBlocks.length} />
     {tab === "content" && (kind === "experiment"
       ? <ExperimentWorkbench nodeId={id} owner={owner} blocks={data.contentBlocks} en={en} canEdit={permissions.nodes} onChanged={refresh}>
           <ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={data.contentBlocks.filter(block => block.type === "experimentRecord").map(block => block.id)} nodeKind={kind} onChanged={refresh} />

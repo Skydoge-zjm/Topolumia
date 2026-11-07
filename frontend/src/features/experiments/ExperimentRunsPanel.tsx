@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Link2, Trash2, ChartLine } from "lucide-react";
+import { Plus, Pencil, Link2, Trash2 } from "lucide-react";
 import { api, projectId } from "@/shared/lib/api";
 import { ResearchDialog } from "@/features/research/components/ResearchUi";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
@@ -9,7 +9,6 @@ import {
   ContentBlockRenderer,
   type ContentBlock,
 } from "@/features/topology/details/ContentBlockRenderer";
-import { ExperimentCompareDialog } from "./ExperimentCompareDialog";
 import { AssetTableRowFields, AssetTableRowView } from "./AssetTableRows";
 import { RunStatusDot } from "./RunStatusDot";
 import { CHART_COLORS, runColor } from "./chartModel";
@@ -55,21 +54,16 @@ export function ExperimentRunsPanel({
   en,
   canEdit,
   onChanged,
-  selected,
-  onSelectedChange,
 }: {
   nodeId: string;
   blocks: ContentBlock[];
   en: boolean;
   canEdit: boolean;
   onChanged: () => void;
-  selected: string[];
-  onSelectedChange: (runIds: string[]) => void;
 }) {
   const [viewMaterial, setViewMaterial] = useState<ExperimentOverview["materialLinks"][number] | null>(null);
   const [removing, setRemoving] = useState<ExperimentRunOverview | null>(null);
   const client = useQueryClient(),
-    [compare, setCompare] = useState(false),
     [editor, setEditor] = useState<ExperimentRun | "new" | null>(null),
     [linkRun, setLinkRun] = useState<string | null>(null),
     [error, setError] = useState(""),
@@ -104,8 +98,6 @@ export function ExperimentRunsPanel({
   const pages = Math.max(1, Math.ceil(data.runs.length / PAGE_SIZE));
   const currentPage = Math.min(page, pages - 1);
   const visible = data.runs.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
-  const toggle = (runId: string) =>
-    onSelectedChange(selected.includes(runId) ? selected.filter((id) => id !== runId) : [...selected, runId]);
   const removedRun = removing ? removing : null;
   return (
     <div className="experiment-rail-body">
@@ -116,21 +108,11 @@ export function ExperimentRunsPanel({
             {en ? "Add run" : "添加运行"}
           </button>
         )}
-        <button className="button" onClick={() => setCompare(true)}>
-          <ChartLine size={15} />
-          {en ? "Compare runs" : "比较运行"}
-          {selected.length > 0 && ` (${selected.length})`}
-        </button>
       </div>
       <div className="experiment-run-summary">
         <span>
           {data.runs.length} {en ? "runs" : "次运行"}
         </span>
-        {selected.length > 0 && (
-          <button className="button" onClick={() => onSelectedChange([])}>
-            {en ? "Clear selection" : "清除选择"}
-          </button>
-        )}
       </div>
       {(error || query.error) && (
         <p role="alert" className="experiment-record-error">
@@ -150,17 +132,10 @@ export function ExperimentRunsPanel({
         {visible.map((run) => {
           const links = data.materialLinks.filter((link) => link.runId === run.id);
           const providers = [...new Set(run.sources.map((source) => providerLabel(source.provider)))];
-          const isSelected = selected.includes(run.id);
           const runStyle = runColor(nodeId, run.id);
           return (
-            <li key={run.id} className={"experiment-run-item" + (isSelected ? " is-selected" : "")}>
-              <label className="experiment-run-toggle">
-                <input
-                  type="checkbox"
-                  aria-label={(en ? "Select " : "选择 ") + run.label}
-                  checked={isSelected}
-                  onChange={() => toggle(run.id)}
-                />
+            <li key={run.id} className="experiment-run-item">
+              <div className="experiment-run-toggle">
                 <svg className="experiment-run-swatch" width="18" height="10" aria-hidden="true">
                   <path
                     d="M1 5 H17"
@@ -169,7 +144,7 @@ export function ExperimentRunsPanel({
                   />
                 </svg>
                 <strong>{run.label}</strong>
-              </label>
+              </div>
               <span className="experiment-run-facts">
                 <RunStatusDot status={run.status} en={en} />
                 <span className="experiment-run-source">
@@ -309,7 +284,6 @@ export function ExperimentRunsPanel({
                 : {}),
               removeRunIds: [removedRun.id],
             });
-            onSelectedChange(selected.filter((id) => id !== removedRun.id));
             setRemoving(null);
             void query.refetch();
           }}
@@ -333,13 +307,6 @@ export function ExperimentRunsPanel({
       )}
       {viewMaterial && (
         <MaterialVersionViewer nodeId={nodeId} link={viewMaterial} en={en} onClose={() => setViewMaterial(null)} />
-      )}
-      {compare && (
-        <ExperimentCompareDialog
-          en={en}
-          initial={selected.map((runId) => ({ nodeId, runId }))}
-          onClose={() => setCompare(false)}
-        />
       )}
     </div>
   );

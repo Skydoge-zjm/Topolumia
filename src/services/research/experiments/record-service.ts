@@ -340,12 +340,31 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
   }
   async plot(input, actor) {
     this.c.check(actor, "research.view");
-    const selections = input.selections;
+    const wholeExperiments = input.nodeIds !== undefined;
+    let selections = input.selections;
+    if (wholeExperiments) {
+      if (
+        input.selections !== undefined ||
+        input.blockId !== undefined ||
+        !Array.isArray(input.nodeIds) ||
+        input.nodeIds.length < 2 ||
+        input.nodeIds.length > 100 ||
+        input.nodeIds.some(
+          (id) => typeof id !== "string" || !id || id.length > 500,
+        ) ||
+        new Set(input.nodeIds).size !== input.nodeIds.length
+      )
+        fail("INPUT_INVALID", "请选择 2–100 个不同的实验。", 422);
+      selections = input.nodeIds.flatMap((nodeId) => {
+        const { node } = this.experiment(nodeId, actor, input.candidateId);
+        return (node.runs ?? []).map((run) => ({ nodeId, runId: run.id }));
+      });
+    }
     const selectionLimit = input.blockId ? 200 : 24;
     if (
       !Array.isArray(selections) ||
-      !selections.length ||
-      selections.length > selectionLimit ||
+      (!wholeExperiments &&
+        (!selections.length || selections.length > selectionLimit)) ||
       selections.some(
         (item) =>
           !item ||
@@ -370,18 +389,27 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     const maxPoints = input.maxPoints ?? 800;
     if (!Number.isInteger(maxPoints) || maxPoints < 2 || maxPoints > 2000)
       fail("INPUT_INVALID", "maxPoints 必须为 2–2000。", 422);
-    const runs = await Promise.all(
-      selections.map((selection) =>
-        this.runSeries(
-          selection,
-          actor,
-          input.candidateId,
-          input.blockId,
-          input.blockRevision,
-          true,
-        ),
-      ),
-    );
+    const runs: any[] = [];
+    // Reading a set of experiments must retain every run, including failures.
+    // Bound source reads instead of silently truncating the run directory.
+    for (let offset = 0; offset < selections.length; offset += 8) {
+      runs.push(
+        ...(await Promise.all(
+          selections
+            .slice(offset, offset + 8)
+            .map((selection) =>
+              this.runSeries(
+                selection,
+                actor,
+                input.candidateId,
+                input.blockId,
+                input.blockRevision,
+                true,
+              ),
+            ),
+        )),
+      );
+    }
     const allKeys = [
       ...new Set<string>(
         runs.flatMap((run) => run.series.map((line) => line.key)),
@@ -463,6 +491,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         params,
         {
           selections: input.selections,
+          nodeIds: input.nodeIds,
           metrics: input.metricKeys,
           versions: plot.series.map((line) => line.sources),
         },

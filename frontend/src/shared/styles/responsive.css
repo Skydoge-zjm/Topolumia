@@ -32,7 +32,7 @@
 @media (max-width: 760px) {
   .app { height: auto; min-height: 100dvh; overflow: visible; }
   .app .shell { height: auto; overflow: visible; }
-  .app .main { height: auto; overflow: visible; }
+  .app .main { height: auto; overflow: visible; flex: none; }
   .app, .project-shell { width: 100%; min-width: 0; }
   .topbar, .project-topbar { min-width: 0; padding: 0 16px; gap: 8px; }
   .topbar .brand, .project-topbar .brand { min-width: 0; gap: 8px; }
@@ -45,7 +45,7 @@
   .project-topbar .button { padding: 0 8px; font-size: 12px; }
   .project-topbar .account-chip { margin: 0; }
   .app .shell, .app .shell.is-collapsed, .app .shell:has(.agent-workbench) { display: flex; flex-direction: column; min-width: 0; }
-  .app .shell > .sidebar { display: flex; flex-direction: row; align-items: center; gap: 4px; flex: none; width: 100%; min-width: 0; min-height: 0; padding: 8px; border-right: 0; border-bottom: 1px solid var(--color-line); }
+  .app .shell > .sidebar { display: flex; flex-direction: row; align-items: center; gap: 4px; flex: none; width: 100%; height: auto; min-width: 0; min-height: 0; padding: 8px; border-right: 0; border-bottom: 1px solid var(--color-line); }
   .app .shell .sidebar nav { display: flex; flex: 1; min-width: 0; flex-wrap: nowrap; gap: 4px; overflow-x: auto; }
   .app .shell .sidebar .nav-item { flex: 0 0 auto; gap: 6px; min-height: 40px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
   .app .shell .sidebar .nav-item span:last-child { display: inline; }

@@ -1,15 +1,13 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import { api, projectId } from "@/shared/lib/api";
 import { ResearchDialog } from "@/features/research/components/ResearchUi";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { ExperimentPlots } from "./ExperimentPlots";
-import { RunStatusDot } from "./RunStatusDot";
-import { X } from "lucide-react";
 import type { RecordPlot } from "./ExperimentPlots";
 
-export type RunSelection = { nodeId: string; runId: string };
 export type ExperimentIndex = {
   items: {
     id: string;
@@ -18,100 +16,105 @@ export type ExperimentIndex = {
     runs: { id: string; label: string; status: string }[];
   }[];
 };
-const selectionKey = (value: RunSelection) =>
-  JSON.stringify([value.nodeId, value.runId]);
 
 export function ExperimentCompareDialog({
-  initial = [],
+  nodeIds,
   en,
   onClose,
 }: {
-  initial?: RunSelection[];
+  nodeIds?: string[];
   en: boolean;
   onClose: () => void;
 }) {
-  const [selections, setSelections] = useState(initial),
-    [metric, setMetric] = useState(""),
-    [search, setSearch] = useState("");
-  const [picking, setPicking] = useState(initial.length === 0);
+  const [selected, setSelected] = useState(() => [...new Set(nodeIds ?? [])]);
+  const [picking, setPicking] = useState(!nodeIds?.length);
+  const [metric, setMetric] = useState("");
+  const [search, setSearch] = useState("");
   const index = useQuery({
     queryKey: ["research-experiments", projectId()],
-    enabled: picking,
     queryFn: () => api<ExperimentIndex>("/api/research-experiments"),
   });
+  const selectedItems = useMemo(
+    () => index.data?.items.filter((item) => selected.includes(item.id)) ?? [],
+    [index.data?.items, selected],
+  );
+  const runCount = selectedItems.reduce(
+    (count, item) => count + item.runs.length,
+    0,
+  );
   const plot = useQuery({
-    queryKey: ["temporary-experiment-compare", projectId(), selections, metric],
-    enabled: selections.length > 0 && !picking,
+    queryKey: ["temporary-experiment-compare", projectId(), selected, metric],
+    enabled: selected.length >= 2 && !picking,
     queryFn: () =>
       api<RecordPlot>("/api/research/experiments/plot", {
         method: "POST",
         body: JSON.stringify({
-          selections,
+          nodeIds: selected,
           ...(metric ? { metricKeys: [metric] } : {}),
         }),
       }),
   });
-  const toggle = (value: RunSelection) =>
-    setSelections((current) =>
-      current.some((item) => selectionKey(item) === selectionKey(value))
-        ? current.filter((item) => selectionKey(item) !== selectionKey(value))
-        : current.length < 24
-          ? [...current, value]
-          : current,
+  const toggle = (id: string) =>
+    setSelected((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
     );
   return (
     <ResearchDialog
       title={en ? "Compare experiments" : "实验对比"}
       onClose={onClose}
     >
-      <div className="experiment-run-toolbar">
-        <button className="button" onClick={() => setPicking(true)}>
-          {en ? "Select runs" : "选择运行"} ({selections.length})
+      <div className="experiment-run-toolbar experiment-compare-toolbar">
+        <button
+          className="button"
+          onClick={() => setPicking((value) => !value)}
+        >
+          {en ? "Select experiments" : "选择实验"} ({selected.length})
         </button>
+        {index.data && (
+          <span className="research-hint">
+            {runCount} {en ? "runs" : "次运行"}
+          </span>
+        )}
         {picking && (
           <input
-            aria-label={en ? "Find experiments and runs" : "查找实验与运行"}
-            placeholder={en ? "Search experiments and runs" : "搜索实验与运行"}
+            aria-label={en ? "Find experiments" : "查找实验"}
+            placeholder={en ? "Search experiments" : "搜索实验"}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
         )}
       </div>
-      {selections.length > 0 && (
-        <ul className="experiment-compare-chips" aria-label={en ? "Selected runs" : "已选运行"}>
-          {selections.map((value) => {
-            const node = index.data?.items.find((item) => item.id === value.nodeId);
-            const run = node?.runs.find((item) => item.id === value.runId);
-            return (
-              <li key={selectionKey(value)}>
-                <span>
-                  {node?.name ?? value.nodeId} · {run?.label ?? value.runId}
-                </span>
-                <button
-                  type="button"
-                  className="research-icon-button"
-                  aria-label={(en ? "Remove " : "移除 ") + (run?.label ?? value.runId)}
-                  onClick={() => toggle(value)}
-                >
-                  <X size={14} />
-                </button>
-              </li>
-            );
-          })}
+      {selectedItems.length > 0 && (
+        <ul
+          className="experiment-compare-chips"
+          aria-label={en ? "Selected experiments" : "已选实验"}
+        >
+          {selectedItems.map((item) => (
+            <li key={item.id}>
+              <span>
+                {item.name} · {item.runs.length} {en ? "runs" : "次运行"}
+              </span>
+              <button
+                type="button"
+                className="research-icon-button"
+                aria-label={(en ? "Remove " : "移除 ") + item.name}
+                onClick={() => toggle(item.id)}
+              >
+                <X size={14} />
+              </button>
+            </li>
+          ))}
         </ul>
       )}
-      {selections.length >= 24 && (
-        <p className="research-hint" role="status">
-          {en ? "24 runs is the comparison limit." : "对比最多同时显示 24 次运行。"}
-        </p>
-      )}
-      {picking && index.isPending && (
+      {index.isPending && (
         <LoadingSkeleton
           layout="rows"
           label={en ? "Loading experiments…" : "正在读取实验…"}
         />
       )}
-      {picking && index.error && (
+      {index.error && (
         <p role="alert">
           {index.error.message}
           <button className="button" onClick={() => void index.refetch()}>
@@ -119,66 +122,54 @@ export function ExperimentCompareDialog({
           </button>
         </p>
       )}
-      {picking && (
+      {picking && index.data && (
         <>
-          <div className="experiment-compare-picker">
-            <div className="research-table-wrap">
-              <table className="research-table">
-                <thead>
-                  <tr>
-                    <th>{en ? "Select" : "选择"}</th>
-                    <th>{en ? "Experiment" : "实验"}</th>
-                    <th>{en ? "Run" : "运行"}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {index.data?.items.flatMap((node) =>
-                    node.runs
-                      .filter((run) =>
-                        (node.name + " " + run.label)
-                          .toLowerCase()
-                          .includes(search.toLowerCase()),
-                      )
-                      .map((run) => {
-                        const value = { nodeId: node.id, runId: run.id },
-                          checked = selections.some(
-                            (item) =>
-                              selectionKey(item) === selectionKey(value),
-                          );
-                        return (
-                          <tr key={selectionKey(value)}>
-                            <td>
-                              <input
-                                type="checkbox"
-                                aria-label={node.name + " · " + run.label}
-                                checked={checked}
-                                disabled={!checked && selections.length >= 24}
-                                onChange={() => toggle(value)}
-                              />
-                            </td>
-                            <td>{node.name}</td>
-                            <td>
-                              {run.label}
-                              <RunStatusDot status={run.status} en={en} />
-                            </td>
-                          </tr>
-                        );
-                      }),
-                  )}
-                </tbody>
-              </table>
-            </div>
+          <div className="experiment-compare-picker research-table-wrap">
+            <table className="research-table">
+              <thead>
+                <tr>
+                  <th>{en ? "Select" : "选择"}</th>
+                  <th>{en ? "Experiment" : "实验"}</th>
+                  <th>{en ? "Runs" : "运行"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {index.data.items
+                  .filter((item) =>
+                    item.name.toLowerCase().includes(search.toLowerCase()),
+                  )
+                  .map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={item.name}
+                          checked={selected.includes(item.id)}
+                          onChange={() => toggle(item.id)}
+                        />
+                      </td>
+                      <td>{item.name}</td>
+                      <td>{item.runs.length}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
           </div>
           <button
             className="button primary"
-            disabled={!selections.length}
+            disabled={selected.length < 2}
             onClick={() => setPicking(false)}
           >
             {en ? "View comparison" : "查看对比"}
           </button>
         </>
       )}
-      {!picking && plot.isPending && selections.length > 0 && (
+      {!picking && selected.length < 2 && (
+        <p className="research-empty">
+          {en ? "Select at least two experiments." : "请选择至少两个实验。"}
+        </p>
+      )}
+      {!picking && selected.length >= 2 && plot.isPending && (
         <LoadingSkeleton
           layout="cards"
           label={en ? "Loading comparison…" : "正在读取对比…"}
@@ -192,7 +183,7 @@ export function ExperimentCompareDialog({
           </button>
         </p>
       )}
-      {!picking && plot.data && (
+      {!picking && selected.length >= 2 && plot.data && (
         <>
           <div className="experiment-run-toolbar">
             <SelectMenu

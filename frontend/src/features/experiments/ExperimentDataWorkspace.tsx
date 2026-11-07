@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api, projectId } from "@/shared/lib/api";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
@@ -15,6 +15,14 @@ type Metric = {
   sampled?: boolean;
   readHint?: { expectedContentVersion?: string };
 };
+type Point = { x: number; y: number };
+type DataPage = {
+  xKey: string;
+  pointCount: number;
+  sampled?: boolean;
+  nextOffset: number | null;
+  points: Point[];
+};
 
 export function ExperimentDataWorkspace({
   nodeId,
@@ -24,7 +32,7 @@ export function ExperimentDataWorkspace({
   en: boolean;
 }) {
   const [runId, setRunId] = useState("");
-  const [metric, setMetric] = useState("");
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
   const [offset, setOffset] = useState(0);
   const overview = useQuery({
     queryKey: ["experiment-data-overview", projectId(), nodeId],
@@ -35,80 +43,145 @@ export function ExperimentDataWorkspace({
   });
   const runs = useMemo(() => overview.data?.runs ?? [], [overview.data?.runs]);
   useEffect(() => {
-    if (!runs.length) {
-      setRunId("");
-      return;
-    }
+    if (!runs.length) return setRunId("");
     if (!runs.some((run) => run.id === runId)) setRunId(runs[0].id);
   }, [runs, runId]);
   const metrics = useQuery({
     queryKey: ["experiment-data-metrics", projectId(), nodeId, runId],
     enabled: Boolean(runId),
-    queryFn: () =>
-      api<any>("/api/research/experiments/read", {
-        method: "POST",
-        body: JSON.stringify({
-          mode: "metrics",
-          nodeId,
-          runId,
-          limit: 100,
-          maxChars: 16000,
-        }),
-      }),
+    queryFn: async () => {
+      const items: Metric[] = [];
+      let cursor: string | null = null;
+      do {
+        const page: {
+          data: { items: Metric[] };
+          page?: { nextCursor?: string | null };
+        } = await api("/api/research/experiments/read", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "metrics",
+            nodeId,
+            runId,
+            limit: 100,
+            maxChars: 16000,
+            ...(cursor ? { cursor } : {}),
+          }),
+        });
+        items.push(...page.data.items);
+        cursor = page.page?.nextCursor ?? null;
+      } while (cursor);
+      return items;
+    },
   });
   const metricItems: Metric[] = useMemo(
-    () => metrics.data?.data?.items ?? [],
-    [metrics.data?.data?.items],
+    () => metrics.data ?? [],
+    [metrics.data],
   );
   useEffect(() => {
-    if (!metricItems.length) {
-      setMetric("");
-      return;
-    }
-    if (!metricItems.some((item) => item.key === metric))
-      setMetric(metricItems[0].key);
-  }, [metricItems, metric]);
-  useEffect(() => setOffset(0), [runId, metric]);
-  const selectedMetric = metricItems.find((item) => item.key === metric);
-  const series = useQuery({
-    queryKey: [
-      "experiment-data-series",
-      projectId(),
-      nodeId,
-      runId,
-      metric,
-      offset,
-      selectedMetric?.readHint?.expectedContentVersion,
-    ],
-    enabled: Boolean(runId && metric),
-    queryFn: () =>
-      api<any>("/api/research/experiments/read", {
-        method: "POST",
-        body: JSON.stringify({
-          mode: "series",
-          nodeId,
-          runId,
-          metric,
-          expectedContentVersion:
-            selectedMetric?.readHint?.expectedContentVersion,
-          pointOffset: offset,
-          pointLimit: 40,
-          maxChars: 16000,
+    const keys = metricItems.map((item) => item.key);
+    setSelectedMetrics((current) => {
+      const kept = current.filter((key) => keys.includes(key));
+      return kept.length ? kept : keys;
+    });
+  }, [metricItems]);
+  useEffect(() => setOffset(0), [runId]);
+  const visibleMetrics = metricItems.filter((item) =>
+    selectedMetrics.includes(item.key),
+  );
+  const pointQueries = useQueries({
+    queries: visibleMetrics.map((item) => ({
+      queryKey: [
+        "experiment-data-series",
+        projectId(),
+        nodeId,
+        runId,
+        item.key,
+        offset,
+        item.readHint?.expectedContentVersion,
+      ],
+      enabled: Boolean(runId),
+      queryFn: () =>
+        api<any>("/api/research/experiments/read", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "series",
+            nodeId,
+            runId,
+            metric: item.key,
+            expectedContentVersion: item.readHint?.expectedContentVersion,
+            pointOffset: offset,
+            pointLimit: 100,
+            maxChars: 16000,
+          }),
         }),
-      }),
+    })),
   });
-  const data = series.data?.data;
-  const run = runs.find((item) => item.id === runId);
-  const copy = () => {
-    if (!data) return;
-    void navigator.clipboard?.writeText(
-      [
-        data.xKey + "\t" + data.metric,
-        ...data.points.map(
-          (point: { x: number; y: number }) => `${point.x}\t${point.y}`,
-        ),
-      ].join("\n"),
+  const loadingPoints = pointQueries.some((query) => query.isPending);
+  const pointData: DataPage[] = pointQueries
+    .map((query) => query.data?.data)
+    .filter(Boolean);
+  const errors = pointQueries.map((query) => query.error).filter(Boolean);
+  const xKey = pointData[0]?.xKey ?? "step";
+  const mixedAxes = new Set(pointData.map((data) => data.xKey)).size > 1;
+  const rows = useMemo(() => {
+    const aligned = new Map<
+      string,
+      {
+        key: string;
+        axis: string;
+        x: number;
+        occurrence: number;
+        values: (number | null)[];
+      }
+    >();
+    pointData.forEach((data, column) => {
+      const occurrences = new Map<number, number>();
+      for (const point of data.points) {
+        const occurrence = occurrences.get(point.x) ?? 0;
+        occurrences.set(point.x, occurrence + 1);
+        const key = JSON.stringify([data.xKey, point.x, occurrence]);
+        const row = aligned.get(key) ?? {
+          key,
+          axis: data.xKey,
+          x: point.x,
+          occurrence,
+          values: Array<number | null>(pointData.length).fill(null),
+        };
+        row.values[column] = point.y;
+        aligned.set(key, row);
+      }
+    });
+    return [...aligned.values()].sort(
+      (a, b) =>
+        a.axis.localeCompare(b.axis) ||
+        a.x - b.x ||
+        a.occurrence - b.occurrence,
     );
+  }, [pointData]);
+  const run = runs.find((item) => item.id === runId);
+  const pointCount = Math.max(
+    0,
+    ...pointData.map((data) => data.pointCount ?? 0),
+  );
+  const sampled = pointData.some((data) => data.sampled);
+  const nextOffset = pointData.reduce<number | null>(
+    (next, data) => next ?? data.nextOffset ?? null,
+    null,
+  );
+  const copy = () => {
+    if (!rows.length) return;
+    const lines = [
+      [mixedAxes ? "x" : xKey, ...visibleMetrics.map((item) => item.key)].join(
+        "\t",
+      ),
+      ...rows.map((row) =>
+        [
+          mixedAxes ? `${row.axis} ${row.x}` : row.x,
+          ...row.values.map((value) => value ?? ""),
+        ].join("\t"),
+      ),
+    ];
+    void navigator.clipboard?.writeText(lines.join("\n"));
   };
   if (overview.isPending)
     return (
@@ -121,21 +194,8 @@ export function ExperimentDataWorkspace({
   return (
     <section
       className="experiment-data-workspace"
-      aria-labelledby="experiment-data-heading"
+      aria-label={en ? "Experiment data" : "实验数据"}
     >
-      <header className="experiment-data-heading">
-        <div>
-          <h2 id="experiment-data-heading">
-            {en ? "Experiment data" : "实验数据"}
-          </h2>
-          <p>
-            {en
-              ? "Inspect exact source points for one run and metric."
-              : "查看单个运行和指标的精确原始数据点。"}
-          </p>
-        </div>
-        {run && <RunStatusDot status={run.status} en={en} />}
-      </header>
       {!runs.length ? (
         <p className="research-empty">
           {en ? "No runs recorded." : "尚无运行记录。"}
@@ -146,51 +206,99 @@ export function ExperimentDataWorkspace({
             <SelectMenu
               ariaLabel={en ? "Data run" : "数据运行"}
               value={runId}
-              onChange={setRunId}
+              onChange={(value) => {
+                setRunId(value);
+                setOffset(0);
+              }}
               options={runs.map((item) => ({
                 value: item.id,
                 label: item.label,
               }))}
             />
-            {metrics.isPending ? (
-              <span className="research-hint">
-                {en ? "Loading metrics…" : "正在读取指标…"}
-              </span>
-            ) : metricItems.length ? (
-              <SelectMenu
-                ariaLabel={en ? "Data metric" : "数据指标"}
-                value={metric}
-                onChange={setMetric}
-                options={metricItems.map((item) => ({
-                  value: item.key,
-                  label: item.key,
-                }))}
-              />
-            ) : (
-              <span className="research-hint">
-                {en
-                  ? "No scalar metrics for this run."
-                  : "这次运行没有标量指标。"}
-              </span>
-            )}
+            {run && <RunStatusDot status={run.status} en={en} />}
+            <span className="research-hint">
+              {pointCount}{" "}
+              {en ? "points per metric (max)" : "点 / 指标（最多）"}
+            </span>
+            <button
+              className="button experiment-data-copy"
+              disabled={
+                !navigator.clipboard ||
+                !rows.length ||
+                loadingPoints ||
+                Boolean(errors.length)
+              }
+              onClick={copy}
+            >
+              {en ? "Copy table" : "复制表格"}
+            </button>
           </div>
-          {series.isPending && (
+          {metrics.isPending ? (
+            <LoadingSkeleton
+              layout="rows"
+              label={en ? "Loading metrics…" : "正在读取指标…"}
+            />
+          ) : metrics.error ? (
+            <p role="alert">
+              {metrics.error.message}
+              <button className="button" onClick={() => void metrics.refetch()}>
+                {en ? "Retry" : "重试"}
+              </button>
+            </p>
+          ) : metricItems.length ? (
+            <div
+              className="experiment-data-metric-toggles"
+              role="group"
+              aria-label={en ? "Data columns" : "数据列"}
+            >
+              {metricItems.map((item) => {
+                const selected = selectedMetrics.includes(item.key);
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={
+                      "experiment-data-metric-toggle" +
+                      (selected ? " is-selected" : "")
+                    }
+                    aria-pressed={selected}
+                    onClick={() =>
+                      setSelectedMetrics((current) =>
+                        selected
+                          ? current.filter((key) => key !== item.key)
+                          : [...current, item.key],
+                      )
+                    }
+                  >
+                    {item.key}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="research-hint">
+              {en
+                ? "No scalar metrics for this run."
+                : "这次运行没有标量指标。"}
+            </p>
+          )}
+          {errors.length > 0 && <p role="alert">{String(errors[0])}</p>}
+          {loadingPoints && (
             <LoadingSkeleton
               layout="rows"
               label={en ? "Loading source points…" : "正在读取原始数据点…"}
             />
           )}
-          {series.error && <p role="alert">{series.error.message}</p>}
-          {data && (
+          {visibleMetrics.length > 0 && !loadingPoints && !errors.length && (
             <>
               <div className="experiment-data-meta">
                 <span>
-                  {data.xKey} · {data.metric}
+                  {rows.length} {en ? "rows" : "行"}
                 </span>
                 <span>
-                  {data.pointCount} {en ? "points" : "个数据点"}
+                  {visibleMetrics.length} {en ? "metrics" : "个指标"}
                 </span>
-                {data.sampled && (
+                {sampled && (
                   <span className="research-badge">
                     {en ? "Source sampled" : "来源已采样"}
                   </span>
@@ -200,47 +308,53 @@ export function ExperimentDataWorkspace({
                 <table className="research-table">
                   <thead>
                     <tr>
-                      <th>{data.xKey}</th>
-                      <th>{data.metric}</th>
+                      <th scope="col">{mixedAxes ? "x" : xKey}</th>
+                      {visibleMetrics.map((item) => (
+                        <th scope="col" key={item.key}>
+                          {item.key}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {data.points.map(
-                      (point: { x: number; y: number }, index: number) => (
-                        <tr key={offset + index}>
-                          <td>{point.x}</td>
-                          <td>{point.y}</td>
-                        </tr>
-                      ),
-                    )}
+                    {rows.map((row) => (
+                      <tr key={row.key}>
+                        <td>{mixedAxes ? `${row.axis} ${row.x}` : row.x}</td>
+                        {row.values.map((value, index) => (
+                          <td key={visibleMetrics[index].key}>
+                            {value ?? "—"}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
               <div className="research-pagination">
                 <button
                   className="button"
-                  disabled={!offset || series.isFetching}
-                  onClick={() => setOffset(Math.max(0, offset - 40))}
+                  disabled={
+                    !offset || pointQueries.some((query) => query.isFetching)
+                  }
+                  onClick={() => setOffset(Math.max(0, offset - 100))}
                 >
                   {en ? "Previous" : "上一页"}
                 </button>
                 <span>
-                  {data.offset + 1}–{data.offset + data.points.length} /{" "}
-                  {data.pointCount}
+                  {Math.floor(offset / 100) + 1} /{" "}
+                  {Math.max(1, Math.ceil(pointCount / 100))}
                 </span>
                 <button
                   className="button"
-                  disabled={data.nextOffset === null || series.isFetching}
-                  onClick={() => setOffset(data.nextOffset)}
+                  disabled={
+                    nextOffset === null ||
+                    pointQueries.some((query) => query.isFetching)
+                  }
+                  onClick={() => {
+                    if (nextOffset !== null) setOffset(nextOffset);
+                  }}
                 >
                   {en ? "Next" : "下一页"}
-                </button>
-                <button
-                  className="button"
-                  disabled={!navigator.clipboard}
-                  onClick={copy}
-                >
-                  {en ? "Copy" : "复制"}
                 </button>
               </div>
             </>

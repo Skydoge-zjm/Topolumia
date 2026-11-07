@@ -118,13 +118,19 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await expect(page.getByRole("figure")).toHaveCount(4);
     await expect(page.locator('figure[data-series-count="3"]')).toHaveCount(4);
     const loss = page.getByRole("figure", { name: "train/loss", exact: true });
-    const chartBox = await loss.locator(".experiment-chart-surface").boundingBox();
-    await page.mouse.move(chartBox!.x + chartBox!.width * 0.55, chartBox!.y + chartBox!.height * 0.45);
+    const chartBox = await loss
+      .locator(".experiment-chart-surface")
+      .boundingBox();
+    await page.mouse.move(
+      chartBox!.x + chartBox!.width * 0.55,
+      chartBox!.y + chartBox!.height * 0.45,
+    );
     await expect(page.locator(".experiment-chart-tooltip")).toHaveCount(4);
     await page.getByRole("button", { name: "实验数据", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "实验数据", exact: true }),
+      page.getByRole("region", { name: "实验数据", exact: true }),
     ).toBeVisible();
+    await expect(page.getByRole("columnheader")).toHaveCount(5);
     await expect(
       page.getByRole("cell", { name: "1", exact: true }).first(),
     ).toBeVisible();
@@ -321,7 +327,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
       actor,
     ).node;
     const source = await c.assets.upload(
-      Readable.from([Buffer.from(history(4))]),
+      Readable.from([Buffer.from(JSON.stringify({ runs: Array.from({ length: 25 }, (_, index) => JSON.parse(history(index + 4))) }))]),
       {
         originalName: "baseline.json",
         mediaType: "application/json",
@@ -356,26 +362,22 @@ test("notes, multi-run records, versioned material links and temporary compariso
     );
     const nodeCount = c.nodes.nodes().length,
       blockCount = c.store.all("blocks").length;
+    await expect(page.getByRole("button", { name: /比较运行/ })).toHaveCount(0);
+    await page.goto(app.url + "/#/topology");
+    await page.getByRole("button", { name: "选择节点", exact: true }).click();
     await page
-      .getByRole("checkbox", { name: "选择 Run 3", exact: true })
+      .getByRole("checkbox", { name: "选择 Rank 4 微调", exact: true })
       .check();
     await page
-      .getByRole("button", { name: "比较运行 (1)", exact: true })
+      .getByRole("checkbox", { name: "选择 Rank 8 微调", exact: true })
+      .check();
+    await page
+      .getByRole("button", { name: "进入比较（2）", exact: true })
       .click();
     dialog = page.getByRole("dialog");
-    await dialog
-      .getByRole("button", { name: "选择运行 (1)", exact: true })
-      .click();
-    await dialog
-      .getByRole("checkbox", { name: "Rank 8 微调 · Run 4", exact: true })
-      .check();
-    await dialog.getByRole("button", { name: "查看对比", exact: true }).click();
     await expect(dialog.getByRole("figure")).toHaveCount(4);
-    await dialog.getByRole("button", { name: "对比指标", exact: true }).click();
-    await page.getByRole("option", { name: "train/loss", exact: true }).click();
-    await expect(dialog.getByRole("figure")).toHaveCount(1);
-    await expect(dialog.locator('figure[data-series-count="2"]')).toHaveCount(
-      1,
+    await expect(dialog.locator('figure[data-series-count="28"]')).toHaveCount(
+      4,
     );
     await mkdir("runtime/self-review", { recursive: true });
     await page.screenshot({
@@ -388,11 +390,15 @@ test("notes, multi-run records, versioned material links and temporary compariso
     expect(c.nodes.nodes().length).toBe(nodeCount);
     expect(c.store.all("blocks").length).toBe(blockCount);
     expect(c.store.all("candidates").length).toBe(0);
+    await page.goto(
+      app.url + "/#/topology/nodes/" + encodeURIComponent(experiment.id),
+    );
     await page.screenshot({
       path: "runtime/self-review/experiment-record-desktop.png",
       fullPage: true,
     });
     await page.setViewportSize({ width: 390, height: 844 });
+    expect((await page.locator(".sidebar").boundingBox())!.height).toBeLessThan(90);
     await expect(page.getByRole("figure")).toHaveCount(4);
     expect(
       await page.evaluate(

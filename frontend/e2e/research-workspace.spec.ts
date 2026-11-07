@@ -89,7 +89,7 @@ test("groups collapse to a group node, expand, and open editable scientific deta
   await expect(curve.locator(".uplot")).toBeVisible();
   await expect(page.getByRole("link", { name: /W&B experiment dashboard/ })).toHaveAttribute("href", "https://wandb.ai/lab/study/runs/one");
   await page.getByRole("button", { name: "实验数据", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "实验数据", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "实验数据", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "0.25", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "研究材料", exact: true }).click();
   await expect(curve).toContainText("曲线展示已采样");

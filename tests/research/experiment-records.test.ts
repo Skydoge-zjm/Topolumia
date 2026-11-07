@@ -651,6 +651,93 @@ test("distinct uploads with identical anonymous results remain distinct attempts
   assert.equal(directory.data.items.length, 0);
 });
 
+test("whole-experiment comparison includes every run beyond the manual selection limit", async (t) => {
+  const { c, actor, create, upload, add } = await fixture(t);
+  const nodes = [
+    create("experiment", "Rank 4"),
+    create("experiment", "Rank 8"),
+  ];
+  for (const [index, node] of nodes.entries()) {
+    const asset = await upload(
+      `all-runs-${index}.json`,
+      JSON.stringify({
+        runs: Array.from({ length: 15 }, (_, run) => ({
+          id: `source-${index}-${run}`,
+          name: `Run ${run}`,
+          status: run === 0 ? "failed" : "finished",
+          history:
+            run === 0
+              ? []
+              : [
+                  { _step: 0, loss: 0.7 },
+                  { _step: 1, loss: 0.3 },
+                ],
+        })),
+      }),
+    );
+    const imported = await c.records.inspect("wandb", [asset.id], actor);
+    add(node.id, {
+      title: "All attempts",
+      type: "experimentRecord",
+      payload: {
+        provider: "wandb",
+        runs: imported.runs.map(({ metrics, ...run }) => run),
+      },
+      representations: [{ kind: "asset", assetId: asset.id, role: "source" }],
+    });
+  }
+  const nodeIds = nodes.map((node) => node.id),
+    readOnly = { ...actor, permissions: ["research.view"] };
+  const count = c.store.all("blocks").length;
+  const plot = await c.records.plot({ nodeIds }, readOnly);
+  assert.equal(plot.temporary, true);
+  assert.equal(plot.runs.length, 30);
+  assert.equal(plot.series.length, 28);
+  assert.equal(plot.runs.filter((run) => run.status === "failed").length, 2);
+  assert.equal(c.store.all("blocks").length, count);
+  const result = await executeResearchTool(
+    { researchCommands: c },
+    "read_experiment",
+    {
+      mode: "compare",
+      nodeIds,
+      metricKeys: ["loss"],
+      pointLimit: 2,
+      limit: 1,
+      maxChars: 16000,
+    },
+    readOnly,
+    null,
+  );
+  assert.equal(result.data.runs.length, 30);
+  assert.equal(result.data.items.length, 1);
+  await assert.rejects(
+    c.records.plot({ nodeIds: [nodes[0].id, nodes[0].id] }, actor),
+    { code: "INPUT_INVALID" },
+  );
+  await assert.rejects(c.records.plot({ nodeIds, selections: [] }, actor), {
+    code: "INPUT_INVALID",
+  });
+  await assert.rejects(
+    c.records.plot(
+      { nodeIds: [nodes[0].id, create("note", "Analysis").id] },
+      actor,
+    ),
+    { code: "NODE_NOT_EXPERIMENT" },
+  );
+  const empty = await c.records.plot(
+    {
+      nodeIds: [
+        create("experiment", "Empty A").id,
+        create("experiment", "Empty B").id,
+      ],
+    },
+    actor,
+  );
+  assert.equal(empty.runs.length, 0);
+  assert.equal(empty.series.length, 0);
+});
+
 test("a record block can render more runs than a temporary cross-experiment comparison", async (t) => {
   const { c, actor, create, upload, add } = await fixture(t),
     node = create("experiment", "Many attempts");

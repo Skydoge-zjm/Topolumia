@@ -168,23 +168,8 @@
 }
 .experiment-data-workspace {
   display: grid;
-  gap: 16px;
+  gap: 10px;
   padding: 4px 0 40px;
-}
-.experiment-data-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-.experiment-data-heading h2 {
-  margin: 0;
-  font-size: 16px;
-}
-.experiment-data-heading p {
-  margin: 5px 0 0;
-  color: var(--color-muted);
-  font-size: 12px;
 }
 .experiment-data-toolbar {
   display: flex;
@@ -193,7 +178,30 @@
   align-items: center;
 }
 .experiment-data-toolbar .select-menu {
-  min-width: min(320px, 100%);
+  width: min(320px, 100%);
+}
+.experiment-data-copy {
+  margin-left: auto;
+}
+.experiment-data-metric-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.experiment-data-metric-toggle {
+  padding: 4px 9px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-panel);
+  color: var(--color-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.experiment-data-metric-toggle.is-selected {
+  border-color: var(--color-mint);
+  background: var(--color-mint-soft);
+  color: var(--color-green2);
 }
 .experiment-data-meta {
   display: flex;
@@ -204,7 +212,37 @@
   font-size: 12px;
 }
 .experiment-data-table {
-  max-height: 560px;
+  max-height: max(300px, calc(100dvh - 300px));
+}
+.experiment-data-table .research-table {
+  font-size: 12px;
+}
+.experiment-data-table .research-table th,
+.experiment-data-table .research-table td {
+  padding: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.experiment-data-table .research-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+.experiment-data-table .research-table th:first-child,
+.experiment-data-table .research-table td:first-child {
+  position: sticky;
+  left: 0;
+  width: 72px;
+  background: var(--color-panel);
+  z-index: 1;
+}
+.experiment-data-table .research-table thead th:first-child {
+  z-index: 2;
+  background: var(--color-mint-pale);
+}
+.experiment-data-table .research-table th:not(:first-child),
+.experiment-data-table .research-table td:not(:first-child) {
+  text-align: right;
 }
 .note-body-workspace {
   padding: 12px 0 24px;
@@ -243,6 +281,9 @@
   overflow: auto;
   margin-bottom: 16px;
 }
+.research-dialog:has(.experiment-compare-toolbar) {
+  width: min(1440px, calc(100vw - 40px));
+}
 .experiment-record-error {
   white-space: pre-wrap;
 }
@@ -269,6 +310,9 @@
 .research-detail.is-experiment {
   max-width: none;
   margin-inline: 0;
+}
+.research-detail.is-experiment > .research-back {
+  margin-bottom: 10px;
 }
 .experiment-rail {
   position: sticky;
@@ -679,14 +723,19 @@
 }
 .research-detail.is-experiment .research-page-heading {
   align-items: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+  gap: 12px;
+}
+.research-detail.is-experiment .research-detail-title {
+  flex: 1;
 }
 .research-detail.is-experiment .research-detail-title h1 {
-  max-width: 22ch;
-  font-size: 26px;
+  max-width: none;
+  font-size: 24px;
   font-weight: 650;
-  line-height: 1.25;
+  line-height: 1.2;
   letter-spacing: -0.03em;
+  white-space: normal;
 }
 .research-detail.is-experiment .research-actions {
   display: flex;
@@ -703,31 +752,42 @@
   letter-spacing: 0.04em;
 }
 .research-detail.is-experiment .research-core-summary {
-  margin-bottom: 20px;
-  padding: 0 0 0 14px;
+  margin-bottom: 8px;
+  padding: 0 0 0 10px;
   border: 0;
   border-left: 3px solid var(--color-mint);
   border-radius: 0;
   background: transparent;
 }
 .research-detail.is-experiment .research-core-summary p {
-  max-width: 78ch;
+  max-width: none;
   color: var(--color-ink-soft);
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: normal;
 }
 .research-detail.is-experiment .research-tabs {
   gap: 2px;
-  margin-bottom: 18px;
+  margin: 0;
+  border-bottom: 0;
 }
 .research-detail.is-experiment .research-tabs button {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-bottom-width: 2px;
   font-size: 14px;
 }
 .research-detail.is-experiment .research-inline-facts {
   gap: 6px;
-  margin: -4px 0 16px;
+  margin: 0;
+}
+.experiment-detail-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-line);
 }
 .research-detail.is-experiment .research-inline-facts .research-badge {
   padding: 2px 9px;
