@@ -32,6 +32,8 @@ get_context 提供小梗概，search 负责定位，read_nodes 返回核心和�
 
 get_environment 只读缓存梗概，不枚举全部包。PDF 或图像未索引时，使用下载与原生读取提示，而不是重复尝试无法读取的文本接口。
 
+`read_experiment` 按 runs → metrics → series 逐级定位运行、指标与原始点；materials 返回配置、表格行和日志的版本化关联及可直接调用的读取提示。inspect 检查已上传的原生记录，compare 提供同名指标的临时比较。曲线绘图采样与精确点读取分别返回；来源已采样时明确标记。运行和材料的观察回执只覆盖实际交付的 ID，读取一页不能授权修改未读的运行。具体机制见 [实验模块](../modules/experiments-and-sources/README.md)。
+
 create_candidate/edit_candidate 接受节点、内容块与增量修改的业务表达，内部编译成操作；Agent 不应手写内部事务序列。候选编辑不重述未修改正文。
 
 ## 节点组接口

@@ -66,6 +66,9 @@
     "parserTimeoutMs": 10000,
     "maxDepth": 4
   },
+  "experimentRecords": {
+    "pythonCommand": "python"
+  },
   "docker": {
     "executionEnabled": false
   },

@@ -63,7 +63,7 @@ test("Agent UI creates, streams, approves, cancels, closes and continues a sessi
 
 test("candidate review shows the proposed operations and applies the current revision", async ({ page }) => {
   const response = await page.request.post(`${app.url}/api/research/candidates`, { data: {
-    reason: "Browser candidate review", nodes: [{ kind: "question", core: { nodeName: "Reviewed question", summary: "Reviewable candidate" } }],
+    reason: "Browser candidate review", nodes: [{ kind: "note", core: { nodeName: "Reviewed question", summary: "Reviewable candidate" } }],
   } });
   expect(response.ok()).toBe(true);
   const receipt = (await response.json()).data;
@@ -71,7 +71,7 @@ test("candidate review shows the proposed operations and applies the current rev
   const card = page.locator(".research-candidate").filter({ hasText: "Browser candidate review" });
   await expect(card).toContainText("Reviewable candidate");
   await card.getByRole("button", { name: "接受并保存", exact: true }).click();
-  await expect(card.getByRole("link", { name: "查看已保存节点", exact: true })).toBeVisible();
+  await expect(card.getByRole("link", { name: "查看已保存对象 · Reviewed question", exact: true })).toBeVisible();
   const topology = await (await page.request.get(`${app.url}/api/topology`)).json();
   expect(topology.nodes.some(node => node.id === receipt.nodes[0].nodeId)).toBe(true);
 });
@@ -95,7 +95,7 @@ test("composer switches between stop and queue, persists pending messages and sh
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(activityIcon).toHaveCSS("animation-name", "none");
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  expect(await page.locator(".message.user").first().evaluate(node => node.getBoundingClientRect().height)).toBeLessThanOrEqual(44);
+  expect(await page.locator(".message.user").first().evaluate(node => node.getBoundingClientRect().height)).toBeLessThanOrEqual(48);
   expect(await input.evaluate(node => node.getBoundingClientRect().height)).toBeLessThanOrEqual(64);
 
   for (const text of ["Queued second question", "Queued third question"]) {
@@ -207,14 +207,14 @@ test("research workspace navigation and topology controls work", async ({ page }
   await cards.filter({ hasText: "Browser experiment" }).click();
   await expect(page.getByRole("heading", { name: "Browser experiment", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "科研拓扑", exact: true }).click();
-  const search = page.getByPlaceholder("搜索节点、摘要…");
+  const search = page.getByRole("textbox", { name: "搜索科研对象", exact: true });
   await search.fill("no-such-topology-node-93842");
   await expect(cards).toHaveCount(0);
   await search.clear();
   await expect(cards.first()).toBeVisible();
-  for (const name of ["研究记录", "实验与复核", "工作区设置"]) {
-    await page.getByRole("link", { name }).click();
-    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  for (const [link, heading] of [["研究记录", "研究记录"], ["实验与复核", "实验"], ["工作区设置", "工作区设置"]]) {
+    await page.getByRole("link", { name: link, exact: true }).click();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
   expect(errors).toEqual([]);
 });

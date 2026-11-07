@@ -21,7 +21,7 @@ export async function handleResearchObjectRoutes({ request, response, pathname, 
   requirePermission(actor, request.method === "GET" ? "research.view" : "research.applyChange"); c.objects.get(owner);
   if (request.method === "GET") {
     if (segment === "versions") { const versions = c.store.all("versions").filter(value => value.owner && sameObject(value.owner, owner)); const value = blockId ? versions.find(version => String(version.object.revision) === blockId) : { items: versions.map(version => ({ revision: version.object.revision, updatedAt: version.object.updatedAt })).sort((a, b) => b.revision - a.revision) }; if (!value) fail("RESEARCH_REVISION_NOT_FOUND", "Revision not found.", 404); sendJson(response, 200, value); }
-    else if (blockId) sendJson(response, 200, c.objects.block(owner, blockId));
+    else if (blockId) sendJson(response, 200, url.searchParams.has("revision") ? c.objects.blockVersion(owner, blockId, Number(url.searchParams.get("revision"))) : c.objects.block(owner, blockId));
     else sendJson(response, 200, await c.queries.readBlocks({ actor, mode: "list", owner, limit: Number(url.searchParams.get("limit") ?? 20), cursor: url.searchParams.get("cursor") ?? undefined, maxChars: 16000 }));
     return true;
   }

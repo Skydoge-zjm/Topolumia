@@ -3,6 +3,7 @@ import { contentBlockInput, sourceRef, paperCoreSchema, genericCoreSchema } from
 import { researchNodeKinds } from "../node-kinds.js";
 import { groupCoreSchema, groupMembersSchema, membershipPatchSchema, primaryRelationsSchema } from "../groups.js";
 import { objectRefSchema, endpointVersionsSchema } from "../object-schemas.js";
+import { experimentPatchSchema } from "../experiment-records.js";
 
 const id = z.string().min(1).max(240);
 const revision = z.number().int().positive();
@@ -30,6 +31,8 @@ export const nodeChange = z.strictObject({
   expectedCoreRevision: revision.optional(),
   expectedCollectionRevision: revision.optional(),
   corePatch: z.record(z.string(), z.unknown()).optional().describe("Merge supplied core fields; null removes an optional field. First change to formal core requires expectedCoreRevision and a current core read."),
+  expectedExperimentRevision: revision.optional(),
+  experimentPatch: experimentPatchSchema.optional().describe("Edit an experiment's run registry or link a versioned block/file/table row to an existing run. Read the experiment first; agent changes remain candidates."),
   sourceRefs: sourceRefs.optional().describe("Replace node sources; omitted sources stay unchanged."),
   addBlocks: blocks.optional(),
   updateBlocks: z.array(z.strictObject({ blockId: id, expectedRevision: revision.optional(), patch: blockPatch })).max(80).optional(),
@@ -40,7 +43,7 @@ export const proposalGroup = z.strictObject({
   core: groupCoreSchema, members: groupMembersSchema.optional(), parentId: id.nullable().optional(),
   expectedParentRevision: revision.optional(), ...nodeFields,
 });
-export const groupChange = nodeChange.omit({ nodeId: true }).extend({
+export const groupChange = nodeChange.omit({ nodeId: true, experimentPatch: true, expectedExperimentRevision: true }).extend({
   groupId: id, expectedMembershipRevision: revision.optional(), membersPatch: membershipPatchSchema.optional(),
   parentId: id.nullable().optional(), expectedParentRevisions: z.record(z.string(), revision).optional(),
   primaryRelations: primaryRelationsSchema.optional(), expectedRelationRevision: revision.optional(),

@@ -23,12 +23,13 @@
     "evaluate:context": "npm run build:backend && node dist/scripts/diagnostics/evaluate-research-context.js",
     "setup:experiment-test-env": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/integration/setup-experiment-test-env.ps1",
     "test:experiment-integration": "npm run build:backend && node --test dist/tests/experiments/experiment-tracking.integration.js",
+    "test:experiment-records-integration": "npm run build:backend && node --test dist/tests/research/experiment-records.integration.js",
     "check": "npm run build && node --check dist/src/server.js",
     "release:source": "node scripts/release/export-source.mjs",
     "typecheck:frontend": "tsc --noEmit -p frontend/tsconfig.json",
     "typecheck:backend": "tsc -p tsconfig.backend.check.json",
     "lint:frontend": "eslint --config frontend/eslint.config.js frontend --max-warnings=0",
-    "lint:backend": "eslint --config eslint.backend.config.js src/domain/agents src/domain/research/review-policy.ts src/http/streams.ts src/services/agents/agent-attachment-service.ts src/services/agents/agent-image-service.ts src/services/agents/agent-history-store.ts src/services/agents/agent-session-persistence.ts src/services/agents/session-checkpoint.ts src/services/agents/agent-candidate-turns.ts src/services/agents/approval-policy.ts src/adapters/agents/shared/prompt-images.ts --max-warnings=0"
+    "lint:backend": "eslint --config eslint.backend.config.js src/domain/agents src/domain/research/review-policy.ts src/http/streams.ts src/services/agents/agent-attachment-service.ts src/services/agents/agent-image-service.ts src/services/agents/agent-history-store.ts src/services/agents/agent-session-persistence.ts src/services/agents/session-checkpoint.ts src/services/agents/agent-candidate-turns.ts src/services/agents/approval-policy.ts src/adapters/agents/shared/prompt-images.ts src/domain/research/experiment-records.ts src/domain/research/interfaces/schema-output.ts src/services/research/experiments src/services/research/changes/experiment-mutations.ts --max-warnings=0"
   },
   "engines": {
     "node": "^22.13.0 || ^24.0.0 || >=26.0.0"

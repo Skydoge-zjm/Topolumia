@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fail, principal, actorIdentity } from "../../../domain/research/access.js";
 import { objectKey, sameObject, nodeRef, groupRef } from "../../../domain/research/object-ref.js";
+import { applyExperimentPatch, registerRecordRuns } from "./experiment-mutations.js";
 
 const merge = (old, patch) => { const value = { ...old }; for (const [key, item] of Object.entries(patch)) item === null ? delete value[key] : value[key] = item; return value; };
 
@@ -33,10 +34,12 @@ export function simulateChange(c, operations, actor, allocation = {}, candidateI
   };
   const checkObject = (owner, field, expected, kind = "core", content = false) => { if (newObjects.has(objectKey(owner))) return; const base = original.get(objectKey(owner)); cas(base?.[field], expected, owner.id); evidence(kind, owner.id, base[field], owner, content); };
   const localize = (input, key) => { const value = structuredClone(input); value.sourceRefs = (value.sourceRefs ?? []).map((source, i) => { const { delivery: _delivery, ...rest } = source; return { ...rest, id: source.id ?? allocate("source", key + ":" + (source.clientRef ?? i)) }; }); value.representations = (value.representations ?? []).map((rep, i) => ({ ...rep, id: rep.id ?? allocate("representation", key + ":" + (rep.clientRef ?? i)) })); return value; };
-  const normalize = (input, id) => {
+  const normalize = (input, id, owner = undefined) => {
     const value = localize(input, id);
     if (value.payloadFromAsset) { if (value.payload !== undefined || value.type !== "richText") fail("CONTENT_BLOCK_INVALID", "payloadFromAsset requires richText and excludes payload."); value.payload = { format: value.payloadFromAsset.format, body: c.assets.textSync(value.payloadFromAsset.assetId, actor) }; assetIds.add(value.payloadFromAsset.assetId); delete value.payloadFromAsset; }
-    const block = c.objects.validateBlock(value, actor); for (const source of [...block.sourceRefs, ...block.representations]) if (source.assetId) assetIds.add(source.assetId); return block;
+    const block = c.objects.validateBlock(value, actor);
+    if (block.type === "experimentRecord") { if (!owner) fail("NODE_NOT_EXPERIMENT", "Experiment owner required."); registerRecordRuns(c, get(owner), owner, block, actor, allocate); }
+    for (const source of [...block.sourceRefs, ...block.representations]) if (source.assetId) assetIds.add(source.assetId); return block;
   };
   const siblings = owner => [...blocks.values()].filter(block => sameObject(block.owner, owner) && block.lifecycle !== "archived").sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const relate = owner => { if (objects.get(objectKey(owner)) && !objects.get(objectKey(owner)).deleted) touch(owner, relationOwners); };
@@ -49,6 +52,7 @@ export function simulateChange(c, operations, actor, allocation = {}, candidateI
       if (objects.has(key)) fail("CLIENT_REF_INVALID", "Repeated object reference.");
       const value = { id, projectId: c.projectId, ...(kind === "node" ? { kind: op.kind } : { members: structuredClone(op.members), parentId: op.parentId, primaryRelations: {}, membershipRevision: 1 }), core: kind === "node" ? c.nodes.core(op.core, op.kind) : c.groups.core(op.core), sourceRefs: c.objects.sources(localize({ sourceRefs: op.sourceRefs }, key).sourceRefs, actor), revision: 1, coreRevision: 1, blockCollectionRevision: 1, relationRevision: 1, status: "active", createdBy: actorIdentity(actor) };
       objects.set(key, value); newObjects.add(key); touch(owner);
+      if (kind === "node" && op.kind === "experiment") Object.assign(value, { runs: [], materialLinks: [], experimentRevision: 1 });
       if (kind === "group" && op.parentId) { const parentOwner = groupRef(resolve(op.parentId, "group")); get(parentOwner); checkObject(parentOwner, "membershipRevision", op.expectedParentRevision, "membership"); value.parentId = parentOwner.id; touch(parentOwner, memberships); }
       continue;
     }
@@ -66,6 +70,24 @@ export function simulateChange(c, operations, actor, allocation = {}, candidateI
       continue;
     }
     const owner = op.owner ? ref(op.owner) : op.groupId ? groupRef(resolve(op.groupId, "group")) : nodeRef(resolve(op.nodeId, "node")), object = get(owner), key = objectKey(owner), base = original.get(key);
+    if (op.op === "editExperiment") {
+      checkObject(owner, "experimentRevision", op.expectedExperimentRevision, "experiment", true);
+      if (checkEvidence && actor.isAgent && !newObjects.has(key)) {
+        const observed = permitted.filter(read => read.scope === "formal" && read.object.kind === "experiment" && sameObject(read.owner, owner) && read.version === base.experimentRevision);
+        const runs = new Set(observed.filter(read => read.delivered?.section === "runs").flatMap(read => read.delivered.runIds ?? []));
+        const links = new Set(observed.filter(read => read.delivered?.section === "materials").flatMap(read => read.delivered.linkIds ?? []));
+        const formalRunIds = new Set((base.runs ?? []).map(run => run.id)), formalLinkIds = new Set((base.materialLinks ?? []).map(link => link.id));
+        if ([...(op.patch.updateRuns ?? []).map(run => run.id), ...(op.patch.removeRunIds ?? []), ...(op.patch.addLinks ?? []).map(link => link.runId)].some(id => formalRunIds.has(id) && !runs.has(id)) || (op.patch.removeLinkIds ?? []).some(id => formalLinkIds.has(id) && !links.has(id))) fail("EVIDENCE_SCOPE_INSUFFICIENT", "Read the run records or material associations you are changing.", 422);
+        for (const link of op.patch.addLinks ?? []) {
+          if (!newBlocks.has(link.blockId)) evidence("block", link.blockId, link.blockRevision, owner);
+          if (link.selection.kind === "assetRow") {
+            const asset=c.assets.assert(link.selection.assetId,actor),sheet=link.selection.sheet??asset.defaultSheet??null;
+            if(!permitted.some(read=>(read.scope==="formal"||read.candidateId===candidateId)&&read.object.kind==="asset"&&read.object.id===asset.id&&read.version===asset.checksum&&read.delivered?.tableRanges?.some(range=>(range.sheet??null)===sheet&&range.start<=link.selection.rowIndex&&range.end>link.selection.rowIndex)))fail("EVIDENCE_SCOPE_INSUFFICIENT","Read the selected file's worksheet row before associating it.",422);
+          }
+        }
+      }
+      applyExperimentPatch(c, object, owner, op.patch, blocks, allocate, index, actor, assetIds); touch(owner); continue;
+    }
     if (op.op === "updateCore") { checkObject(owner, "coreRevision", op.expectedCoreRevision, "core", true); object.core = owner.kind === "group" ? c.groups.core(merge(object.core, op.patch)) : c.nodes.core(merge(object.core, op.patch), object.kind); if (op.sourceRefs) object.sourceRefs = c.objects.sources(localize({ sourceRefs: op.sourceRefs }, key).sourceRefs, actor); touch(owner, cores); continue; }
     if (op.op === "updateMembers") {
       checkObject(owner, "membershipRevision", op.expectedMembershipRevision, "membership", true);
@@ -104,7 +126,7 @@ export function simulateChange(c, operations, actor, allocation = {}, candidateI
       const id = allocate("block", op.clientRef); if (blocks.has(id)) fail("CLIENT_REF_INVALID", "Repeated block reference.");
       const { op: _op, owner: _owner, clientRef: _client, insertAfterBlockId, expectedCollectionRevision: _version, ...input } = op, items = siblings(owner); let order = items.length;
       if (insertAfterBlockId) { const at = items.findIndex(block => block.id === resolve(insertAfterBlockId, "block")); if (at < 0) fail("CONTENT_BLOCK_NOT_FOUND", "Insertion anchor not found."); order = at + 1; for (const block of items.slice(order)) block.order++; }
-      blocks.set(id, { ...normalize(input, id), id, owner, order, revision: 1, lifecycle: "active", createdAt: new Date().toISOString(), createdBy: actorIdentity(actor) }); newBlocks.add(id); changedBlocks.add(id); touch(owner, collections); continue;
+      blocks.set(id, { ...normalize(input, id, owner), id, owner, order, revision: 1, lifecycle: "active", createdAt: new Date().toISOString(), createdBy: actorIdentity(actor) }); newBlocks.add(id); changedBlocks.add(id); touch(owner, collections); continue;
     }
     if (op.op === "reorderBlocks") { checkObject(owner, "blockCollectionRevision", op.expectedCollectionRevision, "collection"); const ids = op.blockIds.map(id => resolve(id, "block")), items = siblings(owner); if (ids.length !== items.length || new Set(ids).size !== items.length || items.some(block => !ids.includes(block.id))) fail("CONTENT_BLOCK_ORDER_INVALID", "Supply all active blocks exactly once."); ids.forEach((id, order) => blocks.get(id).order = order); touch(owner, collections); continue; }
     const blockId = resolve(op.blockId ?? op.blockRef, "block"), block = blocks.get(blockId), previous = originalBlocks.get(blockId);
@@ -119,11 +141,35 @@ export function simulateChange(c, operations, actor, allocation = {}, candidateI
       else if (op.op === "unbindAsset") { if (!current.representations.some(rep => rep.id === op.representationId)) fail("REPRESENTATION_NOT_FOUND", "Representation unavailable."); next = { ...current, representations: current.representations.filter(rep => rep.id !== op.representationId) }; delete next.primaryRepresentationId; }
       if (!next) fail("INPUT_INVALID", "Unsupported operation.");
       if (op.op === "bindAsset" && op.makePrimary) next.primaryRepresentationId = next.representations.at(-1).id;
-      const normalized = normalize(next, blockId);
+      const normalized = normalize(next, blockId, owner);
       if (op.op !== "updateBlock" || !Object.hasOwn(op.patch, "sourceRefs")) normalized.sourceRefs = normalized.sourceRefs.map(source => ({ ...source, delivery: current.sourceRefs.find(original => original.id === source.id)?.delivery ?? source.delivery }));
       for (const field of ["payload", "primaryRepresentationId"]) if (!Object.hasOwn(normalized, field)) delete block[field]; Object.assign(block, normalized);
     }
     changedBlocks.add(blockId); touch(owner);
+  }
+  for (const key of newObjects) {
+    const object = objects.get(key);
+    if (object.kind !== "note") continue;
+    const owner = nodeRef(object.id), items = siblings(owner);
+    if (!items.some(block => block.role === "body")) {
+      const first = items.find(block => block.type === "richText");
+      if (first) first.role = "body";
+      else {
+        const id = allocate("block", "body:" + object.id);
+        blocks.set(id, { ...normalize({ title: "正文", type: "richText", role: "body", payload: { format: "markdown", body: "" } }, id), id, owner, order: items.length, revision: 1, lifecycle: "active", createdAt: new Date().toISOString(), createdBy: actorIdentity(actor) });
+        newBlocks.add(id); changedBlocks.add(id); touch(owner, collections);
+      }
+    }
+  }
+  for (const [key, object] of objects) {
+    if (object.deleted) continue;
+    const owner = key.startsWith('["node",') ? nodeRef(object.id) : groupRef(object.id);
+    const bodies = siblings(owner).filter(block => block.role === "body");
+    if (bodies.length && (object.kind !== "note" || bodies.length > 1)) fail("CONTENT_BLOCK_INVALID", "Only a research note can have one primary body.");
+    if (object.kind === "experiment" && !newObjects.has(key)) {
+      const before = original.get(key);
+      if (JSON.stringify([before?.runs ?? [], before?.materialLinks ?? []]) !== JSON.stringify([object.runs ?? [], object.materialLinks ?? []])) { object.experimentRevision = (before?.experimentRevision ?? 1) + 1; touch(owner); }
+    }
   }
   const nodes = [...objects].filter(([key]) => key.startsWith('["node",')).map(([, value]) => value), groups = [...objects].filter(([key]) => key.startsWith('["group",')).map(([, value]) => value);
   c.groups.validate(groups, nodes, edges);

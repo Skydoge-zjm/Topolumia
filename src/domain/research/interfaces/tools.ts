@@ -4,6 +4,7 @@ import { researchNodeKinds } from "../node-kinds.js";
 import { contentBlockTypes } from "../content-blocks.js";
 import { objectRefSchema } from "../object-schemas.js";
 import { compactSchemaOutput } from "./schema-output.js";
+import { experimentProviders } from "../experiment-records.js";
 const id = z.string().min(1).max(240), rev = z.number().int().positive();
 const budget = { locale: z.enum(["zh", "en"]).optional(), maxChars: z.number().int().min(2000).max(16000).optional() };
 const page = { ...budget, limit: z.number().int().min(1).max(100).optional().describe("Optional page size, 1–100. Defaults to a small page; the character budget may return fewer items."), cursor: z.string().max(8192).optional() };
@@ -14,6 +15,11 @@ export const transferSchema = z.discriminatedUnion("direction", [
   z.strictObject({ direction: z.literal("download"), relativePath: path, idempotencyKey: id, target: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("asset"), assetId: id, expectedChecksum: id.optional() }), z.strictObject({ kind: z.literal("block"), owner: objectRefSchema, blockId: id, expectedRevision: rev, representationId: id.optional(), candidateId: id.optional() })]), variant: z.enum(["original", "compiledPdf", "previewImage", "xlsx", "tex"]) }),
 ]);
 const definitions = {
+  read_experiment: {
+    description: "Read an experiment's shared run registry, material associations, metric directory or exact points. Use runs → metrics → series to select precise ranges. Inspect uploaded W&B/TensorBoard records before proposing an experimentRecord block. Compare is always temporary and uses exact metric names; save analysis in a new note candidate.",
+    schema: z.strictObject({ ...page, mode: z.enum(["runs", "materials", "metrics", "series", "compare", "inspect"]), nodeId: id.optional(), runId: id.optional(), blockId: id.optional(), blockRevision: rev.optional(), candidateId: id.optional(), expectedRevision: rev.optional(), expectedContentVersion: id.optional(), provider: z.enum(experimentProviders).optional(), assetIds: z.array(id).min(1).max(40).optional(), metric: id.optional(), metricKeys: z.array(id).max(32).optional(), selections: z.array(z.strictObject({ nodeId: id, runId: id })).min(1).max(24).optional(), pointOffset: z.number().int().nonnegative().optional(), pointLimit: z.number().int().min(1).max(100).optional() }),
+    kind: "experiment", defaultBudget: 6000, command: "experiment",
+  },
   get_context: { description: "Read a small project brief. Search then read exact content; summaries are not full evidence.", schema: z.strictObject({ ...budget, query: z.string().max(500).optional() }), kind: "context", defaultBudget: 3000, command: "context" },
   get_environment: { description: "Read the selected local/SSH research environment cached brief. Use your own tools to inspect and execute there.", schema: z.strictObject({ locale: budget.locale }), kind: "environment", defaultBudget: 4000, command: "environment" },
   search: { description: "Find research nodes, blocks, registered assets or sources. Results exclude full content. Follow readHint only for indexed content; otherwise use nativeReadHint/downloadHint. Application runtime files are excluded.", schema: z.strictObject({ ...page, query: z.string().min(1).max(500), target: z.enum(["all","nodes","groups","blocks","sources","assets"]).optional(), owner: objectRefSchema.optional(), kinds: z.array(id).max(12).optional(), status: id.optional() }), kind: "search", defaultBudget: 4000, command: "search" },
@@ -21,7 +27,7 @@ const definitions = {
   read_groups: { description: 'Read a group directory, one compact overview, or paginated members. Use mode=show,section=deleteImpact before proposing group deletion. No member bodies are loaded automatically.', schema:z.strictObject({...page,mode:z.enum(["list","show","members"]),groupId:id.optional(),scope:z.enum(["direct","recursive"]).optional(),section:z.enum(["overview","deleteImpact"]).optional(),query:z.string().max(500).optional(),candidateId:id.optional()}),kind:"groups",defaultBudget:6000,command:"group" },
   neighbors: { description: "Explore one-hop logical relations without loading neighbor content.", schema: z.strictObject({ ...page, object: objectRefSchema, scope:z.enum(["direct","groupBoundary"]).optional(),candidateId:id.optional(), direction: z.enum(["in","out","both"]).optional(), relationTypes: z.array(id).max(12).optional() }), kind: "neighbors", defaultBudget: 6000, command: "neighbors" },
   read_source: { description: "Read an indexed source or returned coreRef, pinned to its version. Pass candidateId for a pending node's coreRef. Unindexed PDFs/images need native reading, not repeated read_source attempts.", schema: z.strictObject({ ...budget, ref: z.string().min(1).max(1000), candidateId: id.optional(), offset: z.number().int().nonnegative().optional(), expectedVersion: id.optional(), factPaths: z.array(z.string().max(300)).max(12).optional() }), kind: "source", defaultBudget: 6000, command: "source" },
-  read_blocks: { description: "List block summaries or read one block's text, values or manifest. Pin revision and select ranges; styles are excluded.", schema: z.strictObject({ ...page, mode: z.enum(["list","read"]), owner: objectRefSchema, blockId: id.optional(), view: z.enum(["text","values","manifest"]).optional(), titleQuery: z.string().max(240).optional(), types: z.array(id).max(11).optional(), review: id.optional(), candidateId: id.optional(), expectedRevision: rev.optional(), expectedContentVersion: id.optional(), representationId: id.optional(), selection: selection.optional() }), kind: "blocks", defaultBudget: 6000, command: "block" },
+  read_blocks: { description: "List block summaries or read one block's text, values or manifest. Pin revision and select ranges; styles are excluded.", schema: z.strictObject({ ...page, mode: z.enum(["list","read"]), owner: objectRefSchema, blockId: id.optional(), view: z.enum(["text","values","manifest"]).optional(), titleQuery: z.string().max(240).optional(), types: z.array(id).max(contentBlockTypes.length).optional(), review: id.optional(), candidateId: id.optional(), revision: rev.optional(), expectedRevision: rev.optional(), expectedContentVersion: id.optional(), representationId: id.optional(), selection: selection.optional() }), kind: "blocks", defaultBudget: 6000, command: "block" },
   read_assets: { description: "Inspect an asset or read already indexed text/table ranges. Unindexed PDF stays unavailable; download for native reading.", schema: z.strictObject({ ...budget, assetId: id, view: z.enum(["metadata","text","values"]).optional(), selection: selection.optional(), expectedChecksum: id.optional(), expectedContentVersion: id.optional(), candidateId: id.optional() }), kind: "asset", defaultBudget: 6000, command: "asset" },
   transfer_asset: { description: "Upload out/ files or download into in/ within the session transfer directory. No base64. Upload needs propose permission. Poll pending with identical input.", schema: transferSchema, kind: "transfer", defaultBudget: 2000, command: "asset", transfer: true },
   get_schema: { description: `Optional advanced format reference. Omit name to list legal names. nodeCore: ${researchNodeKinds.join(", ")}. contentBlock: ${contentBlockTypes.join(", ")}. proposal: create, edit. Ordinary paper + markdown saving needs no schema discovery.`, schema: z.strictObject({ topic: z.enum(["nodeCore","groupCore","contentBlock","proposal"]), name: id.optional(), locale: budget.locale }), kind: "schema", defaultBudget: 16000, command: "schema" },
@@ -31,11 +37,18 @@ const definitions = {
 };
 function conditions(name, input) {
   const reject = (message) => { throw Object.assign(new Error(message), { code: "INPUT_INVALID", status: 422 }); };
+  if (name === "read_experiment") {
+    if (input.mode === "inspect" && (!input.provider || !input.assetIds)) reject("inspect requires provider and assetIds");
+    if (input.mode === "compare" && !input.selections) reject("compare requires selections");
+    if (["runs", "materials", "metrics", "series"].includes(input.mode) && !input.nodeId) reject("nodeId is required");
+    if (input.mode === "metrics" && !input.runId) reject("metrics requires runId");
+    if (input.mode === "series" && (!input.runId || !input.metric)) reject("series requires runId and exact metric name");
+  }
   if (name === "search" && input.owner && input.target !== "blocks") reject("owner requires target=blocks");
   if (name === "read_groups") { if(input.mode!=="list"&&!input.groupId)reject("groupId is required");if(input.mode==="list"&&(input.groupId||input.scope||input.section))reject("list excludes group details");if(input.mode!=="members"&&input.scope)reject("scope requires members");if(input.mode!=="show"&&input.section)reject("section requires show"); }
   if(name==="neighbors"&&input.scope==="groupBoundary"&&input.object.kind!=="group")reject("groupBoundary requires a group");
   if (name === "read_blocks") {
-    if (input.mode === "list" && ["blockId","view","selection","representationId","expectedRevision","expectedContentVersion"].some(k => input[k] !== undefined)) reject("list excludes block content parameters");
+    if (input.mode === "list" && ["blockId","view","selection","representationId","revision","expectedRevision","expectedContentVersion"].some(k => input[k] !== undefined)) reject("list excludes block content parameters");
     if (input.mode === "read" && (!input.blockId || !input.view || ["cursor","limit","titleQuery","types","review"].some(k => input[k] !== undefined))) reject("read requires blockId/view and excludes list parameters");
     if (input.view === "manifest" && input.selection) reject("manifest excludes selection");
   }

@@ -1,6 +1,6 @@
 import { versionHash } from "../../lib/hash.js";
 import { AppError } from "../../lib/errors.js";
-import { researchNodeKinds } from "../../domain/research/node-kinds.js";
+import { researchNodeKinds, storedResearchNodeKind } from "../../domain/research/node-kinds.js";
 import { nodeRef, objectKey } from "../../domain/research/object-ref.js";
 import {
   aggregateResearchExperiments,
@@ -23,7 +23,7 @@ export function isResearchNodeKind(kind) {
 function node(id, kind, code, x, y, labelZh, labelEn, summaryZh, summaryEn, options = {}) {
   return {
     id,
-    kind,
+    kind: storedResearchNodeKind(kind) ?? kind,
     code,
     position: { x, y },
     label: bilingual(labelZh, labelEn),
@@ -303,10 +303,12 @@ export class TopologyService {
 
     for (const previous of previousTopology.nodes ?? []) {
       if (deleted.has(previous.id)) continue;
-      if (!isResearchNodeKind(previous.kind)) continue;
+      const kind = storedResearchNodeKind(previous.kind);
+      if (!kind) continue;
       const current = nodeById.get(previous.id);
       if (!current) {
         const carried = structuredClone(previous);
+        carried.kind = kind;
         delete carried.candidate;
         delete carried.candidatePatchId;
         nodes.push(carried);
@@ -336,7 +338,7 @@ export class TopologyService {
   }
 
   clearCandidate(topology) {
-    const nodes = structuredClone(topology.nodes).filter((item) => isResearchNodeKind(item.kind));
+    const nodes = structuredClone(topology.nodes).flatMap(item => { const kind = storedResearchNodeKind(item.kind); return kind ? [{ ...item, kind }] : []; });
     const groups = structuredClone(topology.groups ?? []).filter(group => !group.deleted);
     const objects = new Set([...nodes.map(item => objectKey(nodeRef(item.id))), ...groups.map(item => objectKey({ kind: "group", id: item.id }))]);
     const edges = structuredClone(topology.edges).filter(item => objects.has(objectKey(item.from)) && objects.has(objectKey(item.to)) && !item.candidate);

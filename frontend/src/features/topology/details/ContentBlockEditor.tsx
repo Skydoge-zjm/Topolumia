@@ -2,10 +2,14 @@ import { useMemo, useState } from "react";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import type { ContentBlock } from "./ContentBlockRenderer";
 import { contentBlockTypes } from "@domain/research/content-blocks";
+import { inspectRecordAssets } from "./experimentRecordImport";
+import { ProviderRunPicker } from "./ProviderRunPicker";
+import { RecordRunAssignment } from "./RecordRunAssignment";
+import { runStatusLabel } from "@/features/experiments/runPresentation";
 
 export type ImportedAsset = { id: string; preview: any | null; originalName: string };
 const labels: Record<string, [string, string]> = {
-  richText: ["文字 / Markdown", "Rich text / Markdown"], metric: ["指标", "Metrics"], table: ["表格", "Table"], image: ["图片 / 截图", "Image"], document: ["文档", "Document"], spreadsheet: ["电子表格", "Spreadsheet"], link: ["链接", "Link"], quote: ["原文摘录", "Quote"], code: ["代码 / 命令", "Code"], chart: ["图表", "Chart"], file: ["文件", "File"],
+  richText: ["文字 / Markdown", "Rich text / Markdown"], metric: ["指标", "Metrics"], table: ["表格", "Table"], image: ["图片 / 截图", "Image"], document: ["文档", "Document"], spreadsheet: ["电子表格", "Spreadsheet"], link: ["链接", "Link"], quote: ["原文摘录", "Quote"], code: ["代码 / 命令", "Code"], chart: ["图表", "Chart"], file: ["文件", "File"], experimentRecord: ["实验记录", "Experiment record"],
 };
 const accepts: Record<string, string> = {
   table: ".tex,.xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv",
@@ -13,6 +17,7 @@ const accepts: Record<string, string> = {
   document: ".pdf,.tex,.md,.txt,application/pdf,text/markdown,text/plain",
   image: ".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp",
   file: "*/*",
+  experimentRecord: "*/*",
 };
 const toTsv = (payload: any) => !payload?.columns?.length ? "" : [payload.columns.map((column: any) => column.label).join("\t"), ...(payload.rows ?? []).map((row: any) => payload.columns.map((column: any) => String(row[column.key] ?? "")).join("\t"))].join("\n");
 const parseTsv = (value: string, previous: any) => {
@@ -38,17 +43,20 @@ const defaults = (type: string): any => ({
   richText: { format: "markdown", body: "" }, metric: { items: [] }, image: { alt: "" },
   document: { format: "text" }, spreadsheet: { format: "xlsx" }, link: { url: "" },
   quote: { text: "", sourceRefIds: [] }, code: { code: "" }, chart: { chartType: "line", dataBlockId: "", config: {} }, file: {},
+  experimentRecord: { provider: "wandb", runs: [] },
 })[type];
 type BlockEdit = { title?: string; type?: string; payload?: any; sourceRefs?: any[]; review?: string; representations?: any[]; primaryRepresentationId?: string | null };
 
-export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload }: {
+export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, experimentId }: {
   en: boolean;
   initial?: Partial<ContentBlock>;
   onSave: (value: BlockEdit) => Promise<void> | void;
   onCancel: () => void;
   onUpload?: (file: File) => Promise<ImportedAsset>;
+  experimentId?: string;
 }) {
   const [title, setTitle] = useState(initial?.title ?? ""), [type, setType] = useState(initial?.type ?? "richText");
+  const [pickRuns, setPickRuns] = useState(false);
   const [payload, setPayload] = useState<any>(() => initial?.id ? structuredClone(initial.payload) : initial?.payload === undefined ? defaults(initial?.type ?? "richText") : structuredClone(initial.payload));
   const [tableText, setTableText] = useState(() => toTsv(initial?.payload));
   const [sourceRefs, setSourceRefs] = useState<any[]>(() => structuredClone(initial?.sourceRefs ?? []));
@@ -57,8 +65,24 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload }: 
   const textField = (key: string, zh: string, english: string, multiline = false) => <label>{en ? english : zh}{multiline
     ? <textarea rows={3} value={payload?.[key] ?? ""} onChange={event => field(key, event.target.value)} />
     : <input value={payload?.[key] ?? ""} onChange={event => field(key, event.target.value)} />}</label>;
-  const options = useMemo(() => contentBlockTypes.map(value => ({ value, label: labels[value]?.[en ? 1 : 0] ?? value })), [en]);
-  const resetType = (next: string) => { setType(next); setFiles([]); setPayload(defaults(next)); setTableText(""); setError(""); };
+  const options = useMemo(() => [...contentBlockTypes.filter(value => value !== "experimentRecord").map(value => ({ value, label: labels[value]?.[en ? 1 : 0] ?? value })), ...(experimentId || initial?.type === "experimentRecord" ? [{ value: "experimentRecord:wandb", label: en ? "Experiment record — W&B" : "实验记录—W&B" }, { value: "experimentRecord:tensorboard", label: en ? "Experiment record — TensorBoard" : "实验记录—TensorBoard" }, { value: "experimentRecord:mlflow", label: en ? "Experiment record — MLflow" : "实验记录—MLflow" }] : [])], [en, experimentId, initial?.type]);
+  const resetType = (next: string) => { const [kind, provider] = next.split(":"); setType(kind); setFiles([]); setPayload(kind === "experimentRecord" ? { provider, runs: [] } : defaults(kind)); setTableText(""); setError(""); };
+  const uploadFiles = async () => {
+    const reps = [...representations];
+    if (reps.length + files.length > 40) throw new Error(en ? "A block can contain up to 40 representations." : "每个内容块最多保存 40 份材料表示。");
+    for (const file of files) {
+      if (!onUpload) throw new Error(en ? "File upload is unavailable." : "当前无法上传文件。");
+      const imported = await onUpload(file);
+      reps.push({ kind: "asset", assetId: imported.id, role: /\.tex$/i.test(file.name) ? "rendering" : /\.(xlsx|csv)$/i.test(file.name) ? "transcription" : "source", label: imported.originalName });
+    }
+    return reps;
+  };
+  const readRecords = async () => {
+    setSaving(true); setError("");
+    try { const reps = await uploadFiles(); setRepresentations(reps); setFiles([]); const value = await inspectRecordAssets(payload?.provider ?? "wandb", reps, payload?.runs); setPayload(value); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setSaving(false); }
+  };
   const fileInput = (label: string) => <label>{label}<input type="file" multiple aria-label={label} accept={accepts[type]} onChange={event => setFiles(Array.from(event.target.files ?? []))} />{files.length > 0 && <small>{files.map(file => file.name).join("；")}</small>}</label>;
 
   return <form className="content-block-editor" onSubmit={async event => {
@@ -68,13 +92,9 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload }: 
       let nextPayload = payload;
       if (type === "table" && tableText !== toTsv(payload)) nextPayload = parseTsv(tableText, payload);
       const sources = sourceRefs.map(source => { const value = { ...source }; delete value.delivery; return value; });
-      const reps = [...representations];
-      for (const file of files) {
-        if (!onUpload) throw new Error(en ? "File upload is unavailable." : "当前无法上传文件。");
-        const imported = await onUpload(file);
-        const role = /\.tex$/i.test(file.name) ? "rendering" : /\.(xlsx|csv)$/i.test(file.name) ? "transcription" : "source";
-        reps.push({ kind:"asset", assetId:imported.id, role, label:imported.originalName });
-      }
+      const reps = await uploadFiles();
+      if (type === "experimentRecord" && files.length) { setRepresentations(reps); setFiles([]); nextPayload = await inspectRecordAssets(payload?.provider ?? "wandb", reps, payload?.runs); setPayload(nextPayload); }
+      if (type === "experimentRecord" && !nextPayload?.runs?.length) throw new Error(en ? "Read a record file or select an existing run." : "请先读取记录文件或选择已有运行。");
       if (files.length && ["document", "spreadsheet"].includes(type)) {
         const name = files[0].name;
         const format = type === "spreadsheet" ? (/\.csv$/i.test(name) ? "csv" : "xlsx")
@@ -97,7 +117,8 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload }: 
     } catch (cause) { setError(cause instanceof Error ? cause.message : (en ? "Unable to save this content block." : "无法保存这个内容块。")); }
     finally { setSaving(false); }
   }}>
-    <div className="research-form-grid"><label>{en ? "Block title" : "内容块标题"}<input required value={title} onChange={event => setTitle(event.target.value)} placeholder={en ? "e.g. Table 2 metrics" : "例如：Table 2 指标"} /></label><label>{en ? "Content type" : "内容类型"}<SelectMenu ariaLabel={en ? "Content type" : "内容类型"} value={type} onChange={resetType} options={options} /></label></div>
+    <div className="research-form-grid"><label>{en ? "Block title" : "内容块标题"}<input required value={title} onChange={event => setTitle(event.target.value)} placeholder={en ? "e.g. Table 2 metrics" : "例如：Table 2 指标"} /></label><label>{en ? "Content type" : "内容类型"}<SelectMenu ariaLabel={en ? "Content type" : "内容类型"} value={type === "experimentRecord" ? "experimentRecord:" + (payload?.provider ?? "wandb") : type} onChange={resetType} options={options} /></label></div>
+    {type === "experimentRecord" && <>{onUpload && fileInput(en ? "Upload run records" : "上传运行记录")}<div className="experiment-run-toolbar"><button type="button" className="button" disabled={saving || !files.length && !representations.length} onClick={() => void readRecords()}>{saving ? en ? "Reading…" : "读取中…" : en ? "Read records" : "读取记录"}</button><button type="button" className="button" onClick={() => setPickRuns(true)}>{en ? "Select existing runs" : "选择已有运行"}</button></div>{payload?.runs?.length > 0 && <div className="research-table-wrap"><table className="research-table"><thead><tr><th>{en ? "Run" : "运行"}</th><th>{en ? "Status" : "状态"}</th><th>{en ? "Files" : "文件"}</th><th>{en ? "Actions" : "操作"}</th></tr></thead><tbody>{payload.runs.map((run: any) => <tr key={run.sourceId}><td>{run.label}{experimentId && <RecordRunAssignment experimentId={experimentId} runId={run.runId} en={en} onChange={runId => field("runs", payload.runs.map((item: any) => { if (item.sourceId !== run.sourceId) return item; const next = { ...item }; if (runId) next.runId = runId; else delete next.runId; return next; }))} />}</td><td>{runStatusLabel(run.status, en)}</td><td>{run.assetIds.length}</td><td><button type="button" className="button" onClick={() => field("runs", payload.runs.filter((item: any) => item.sourceId !== run.sourceId))}>{en ? "Remove" : "移除"}</button></td></tr>)}</tbody></table></div>}{pickRuns && <ProviderRunPicker provider={payload?.provider ?? "wandb"} en={en} onClose={() => setPickRuns(false)} onSelect={runs => { field("runs", [...new Map([...(payload?.runs ?? []), ...runs].map(run => [run.sourceId, run])).values()]); setPickRuns(false); }} />}</>}
     {type === "richText" && <>{textField("body", "文字 / Markdown", "Text / Markdown", true)}<SelectMenu ariaLabel={en ? "Text format" : "文字格式"} value={payload?.format ?? "markdown"} onChange={value => field("format", value)} options={["markdown", "plain", "html"].map(value => ({ value, label: value }))} /></>}
     {type === "metric" && <MetricFields items={payload?.items ?? []} en={en} onChange={items => field("items", items)} />}
     {type === "table" && <><label>{en ? "Paste a table (tab-separated; first row is the header)" : "粘贴表格（Tab 分隔；第一行为表头）"}<textarea rows={5} value={tableText} onChange={event => setTableText(event.target.value)} /></label>{textField("caption", "表格说明", "Table caption")}{onUpload && fileInput(en ? "Or import TeX / XLSX / CSV" : "或导入 TeX / XLSX / CSV 表格")}</>}

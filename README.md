@@ -41,7 +41,16 @@ Agent 任务的执行时限由各自原生运行时管理，Topolumia 不额外�
 
 「工具与环境」支持本机及 SSH 远程 Python、Conda、venv 的检测与包清单。Agent 可通过 MCP 的 `get_environment` 获取所选环境梗概，再使用自身工具探索和执行。远程检测支持 Linux、WSL 和 macOS；使用已有 SSH 别名需要服务机器安装 OpenSSH。登录凭据默认仅用于本次连接，Windows 可选加密保存。
 
-科研拓扑支持多类科研对象、自由内容块和可收起的嵌套节点组。文献节点提供书目信息及图表、文件等阅读成果；其他类型目前主要采用通用核心。实验详情可展示关联运行的指标、曲线和外部链接。「研究记录」追溯科研对象变更、Agent 提议和审批，并保存组会、阅读、复盘及周期活动纪要。
+科研拓扑包含文献、实验和研究笔记三类节点，以及可收起的嵌套节点组。研究笔记打开即可写正文，支持自由标签和多个内容块。实验节点管理多次 run；配置文件、表格行和日志可关联到具体 run。实验记录内容块支持导入 W&B、TensorBoard 原生文件及 JSON/JSONL，按指标交互展示多 run 曲线；跨实验比较为临时查看，分析可另存为研究笔记。「研究记录」追溯科研变更、Agent 提议和审批，并保存活动纪要。
+
+读取原生 `.wandb` 或 TensorBoard event 文件时，需要单独准备读取器 Python 环境；导出的 JSON/JSONL 无需 Python。该环境与训练环境独立，不要求修改训练程序：
+
+```powershell
+python -m venv .venv-records
+.venv-records/Scripts/python.exe -m pip install -r requirements/experiment-record-readers.txt
+```
+
+macOS/Linux 将上述解释器路径换为 `.venv-records/bin/python`。将 `config/topolumia.config.json` 中的 `experimentRecords.pythonCommand` 设为该解释器路径，重启后端。读取范围与限制见 [实验记录模块](docs/technical/modules/experiments-and-sources/README.md)。
 
 ## 开发
 

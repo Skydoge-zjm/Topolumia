@@ -55,7 +55,7 @@ const contractCuratorDriver = {
               op: "addNode",
               node: {
                 id: "observation-from-test",
-                kind: "observation",
+                kind: "note",
                 code: "T-O1",
                 position: { x: 960, y: 980 },
                 label: { zh: "测试观察", en: "Test observation" },

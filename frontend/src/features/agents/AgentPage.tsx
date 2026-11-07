@@ -392,6 +392,10 @@ export function AgentPage() {
           "research-blocks",
           "research-block",
           "object-relations",
+          "experiment-runs",
+          "research-experiments",
+          "experiment-record-plot",
+          "temporary-experiment-compare",
           "candidate-preview",
         ].map((name) =>
           client.invalidateQueries({ queryKey: [name, project] }),

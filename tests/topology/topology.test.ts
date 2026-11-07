@@ -21,7 +21,8 @@ test("formal topology is an irregular scientific graph with aggregate experiment
   const g1 = topology.nodes.find((item) => item.id === "experiment:g1");
   assert.equal(g1.data.runSummary.failed, 1);
   assert.equal(g1.data.runSummary.unstable, 1);
-  assert.ok(topology.nodes.some((item) => item.kind === "gap"));
+  assert.ok(topology.nodes.every(item => ["paper", "experiment", "note"].includes(item.kind)));
+  assert.ok(topology.nodes.some(item => item.kind === "note" && item.id === "gap:seed-variance"));
   assert.ok(topology.edges.some((item) => item.type === "alternative"));
   const xPositions = topology.nodes.map((item) => item.position.x);
   assert.ok(new Set(xPositions).size > 14, "nodes must not collapse into regular columns");
@@ -91,7 +92,7 @@ test("source refresh preserves accepted scientific objects and drops old runtime
       op: "addNode",
       node: {
         id: "candidate:persisted:decision",
-        kind: "decision",
+        kind: "note",
         code: "B-KEEP",
         position: { x: 1000, y: 1000 },
         label: { zh: "保留决策", en: "Persist decision" },

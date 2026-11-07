@@ -2,12 +2,14 @@ import * as z from "zod/v4";
 import { contentBlockInput, representationSchema, sourceRef } from "../content-blocks.js";
 import { objectRefSchema, endpointVersionsSchema } from "../object-schemas.js";
 import { groupCoreSchema, groupMembersSchema, membershipPatchSchema, primaryRelationsSchema } from "../groups.js";
+import { experimentPatchSchema } from "../experiment-records.js";
 const id = z.string().min(1).max(240), revision = z.number().int().positive();
 const refs = z.array(sourceRef).max(80).optional();
 const fromAsset = z.strictObject({ assetId: id, format: z.enum(["markdown", "plain"]) });
 const blockFields = contentBlockInput.omit({ review: true }).extend({ review: z.enum(["unreviewed", "needs_review"]).optional() });
 export const blockPatchSchema = z.strictObject({ ...Object.fromEntries(Object.entries(blockFields.shape).map(([key, schema]) => [key, (typeof schema.removeDefault === "function" ? schema.removeDefault() : schema).optional().nullable()])), payloadFromAsset: fromAsset.optional() });
 export const operationSchemas = {
+  editExperiment: z.strictObject({ op: z.literal("editExperiment"), owner: objectRefSchema, expectedExperimentRevision: revision, patch: experimentPatchSchema }),
   addNode: z.strictObject({ op: z.literal("addNode"), clientRef: id, kind: z.string().max(80), core: z.record(z.string(), z.unknown()), sourceRefs: refs }),
   addGroup: z.strictObject({ op: z.literal("addGroup"), clientRef: id, core: groupCoreSchema, members: groupMembersSchema.default([]), parentId: id.nullable().default(null), expectedParentRevision: revision.optional(), sourceRefs: refs }),
   updateCore: z.strictObject({ op: z.literal("updateCore"), owner: objectRefSchema, expectedCoreRevision: revision, patch: z.record(z.string(), z.unknown()), sourceRefs: refs }),

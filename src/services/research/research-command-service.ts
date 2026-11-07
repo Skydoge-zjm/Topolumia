@@ -9,13 +9,15 @@ import { ResearchProposalService } from "./changes/proposal-service.js";
 import { summarizeCandidate } from "./changes/candidate-summary.js";
 import { AgentResearchQueries } from "./queries/context.js";
 import { ResearchAssetService } from "./assets/asset-service.js";
+import { ExperimentRecordService } from "./experiments/record-service.js";
 import { requirePermission, hasPermission, principal, fail } from "../../domain/research/access.js";
 export { requirePermission, hasPermission };
 export class ResearchCommandService {
-  constructor({state,topologyService,projectId,projectName,sourceReader=null,sourceText=null,sourceAllowed=null,db,assetRoot}={}) {
+  constructor({state,topologyService,projectId,projectName,sourceReader=null,sourceText=null,sourceAllowed=null,db,assetRoot,recordOptions={}}={}) {
     Object.assign(this,{state,topologyService,projectId,projectName,sourceReader,sourceText,sourceAllowed});
     this.store=new ResearchRepository(db,projectId);this.nodes=new NodeObjectService(this);this.groups=new GroupObjectService(this);this.objects=new ResearchObjectService(this);this.changes=new ResearchChangeService(this);this.proposals=new ResearchProposalService(this);this.queries=new AgentResearchQueries(this);
     this.assets=new ResearchAssetService(this,assetRoot??path.resolve("runtime","research-assets",projectId));
+    this.records=new ExperimentRecordService(this,recordOptions);
   }
   formalTopology(){const graph=this.topologyService.clearCandidate(this.state.topology??this.topologyService.build(this.state.snapshot));return this.topologyService.withObjects(graph,graph.nodes,graph.edges,this.groups.list().map(group=>this.groups.project(group)));}
   check(actor,permission){requirePermission(actor,permission);if(actor.projectId&&actor.projectId!==this.projectId)fail("PROJECT_SCOPE_MISMATCH","Project scope mismatch.",403);}

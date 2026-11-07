@@ -12,10 +12,24 @@ const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: 
 const list = (value) => value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
 const xmlEscape = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
-function makeTable(headers, rows, sourceFormat, sheetName = undefined) {
+function makeTable(headers, rows, sourceFormat, sheetName = undefined, range = null) {
   const columns = headers.map((label, index) => ({ key: "c" + (index + 1), label: String(label || ("Column " + (index + 1))).trim() }));
-  const boundedRows = rows.slice(0, MAX_PREVIEW_ROWS).map((row) => Object.fromEntries(columns.map((column, index) => [column.key, row[index] ?? ""])));
   if (!columns.length) throw new AppError("TABLE_PARSE_EMPTY", "文件中没有可预览的表格列。", { status: 422 });
+  if (range) {
+    const offset = range.offset ?? 0, limit = range.limit ?? 20, availableRows = rows.length + 1;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset >= availableRows || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new AppError("RANGE_INVALID", "Select 1–100 rows at a valid offset.", { status: 422 });
+    const selected = range.columnKeys ? columns.filter(column => range.columnKeys.includes(column.key)) : columns;
+    if (range.columnKeys?.some(key => !selected.some(column => column.key === key))) throw new AppError("RANGE_INVALID", "Unknown column key.", { status: 422 });
+    const count = Math.min(limit, availableRows - offset);
+    if (selected.length > 60 || selected.length * count > 2000) throw new AppError("RANGE_INVALID", "Select at most 60 columns and 2000 cells.", { status: 422 });
+    const indices = selected.map(column => columns.indexOf(column));
+    const cells = Array.from({ length: count }, (_, index) => {
+      const row = offset + index === 0 ? headers : rows[offset + index - 1];
+      return indices.map(column => ({ value: row[column] ?? null }));
+    });
+    return { schemaVersion: "research-table-preview.v1", columns: selected, rows: [], grid: { cells }, sourceFormat, rangeOffset: offset, availableRows, totalRows: rows.length, truncated: false };
+  }
+  const boundedRows = rows.slice(0, MAX_PREVIEW_ROWS).map((row) => Object.fromEntries(columns.map((column, index) => [column.key, row[index] ?? ""])));
   return { schemaVersion: "research-table-preview.v1", columns, rows: boundedRows, sourceFormat, ...(sheetName ? { sheetName } : {}), truncated: rows.length > MAX_PREVIEW_ROWS, totalRows: rows.length };
 }
 
@@ -165,10 +179,10 @@ export async function parseXlsxTable(buffer, { sheetName, range = null } = {}) {
   return table;
 }
 
-export async function importTablePreview(buffer, filename, mediaType = "") {
+export async function importTablePreview(buffer, filename, mediaType = "", options: any = {}) {
   const extension = String(filename ?? "").toLowerCase().split(".").pop();
   if (extension === "tex" || /x-tex|latex/i.test(mediaType)) return parseTexTable(buffer);
-  if (extension === "xlsx" || /spreadsheetml/i.test(mediaType)) return parseXlsxTable(buffer);
+  if (extension === "xlsx" || /spreadsheetml/i.test(mediaType)) return parseXlsxTable(buffer, options);
   if (extension === "csv") {
     const source = Buffer.from(buffer).toString("utf8");
     const rows = [];
@@ -183,7 +197,7 @@ export async function importTablePreview(buffer, filename, mediaType = "") {
       }
       cells.push(cell); rows.push(cells);
     }
-    return makeTable(rows[0] ?? [], rows.slice(1), "csv");
+    return makeTable(rows[0] ?? [], rows.slice(1), "csv", undefined, options.range);
   }
   return null;
 }

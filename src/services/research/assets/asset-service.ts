@@ -16,7 +16,7 @@ export class ResearchAssetService {
     for (const job of this.store.all("jobs")) if (["queued","running"].includes(job.status)) this.enqueue({...job,status:"queued"});
     await this.collect();
   }
-  public(asset) { const {storageKey,previewKey,compiled,owner,sessionId,...publicData}=asset; return {...publicData,compiled:compiled ? {state:compiled.state,pdf:compiled.pdf ? true : null,image:compiled.image ? true : null,error:compiled.error} : null}; }
+  public(asset) { const {storageKey,previewKey,compiled,owner,sessionId,recordManifests,tableSheetFacts,...publicData}=asset; return {...publicData,...(tableSheetFacts?{indexedSheetCount:Object.keys(tableSheetFacts).length}:{}),...(recordManifests ? {recordSummary:Object.fromEntries(Object.entries(recordManifests).map(([provider,manifest]:[string,any])=>[provider,{runCount:manifest.sourceIds.length}]))} : {}),compiled:compiled ? {state:compiled.state,pdf:compiled.pdf ? true : null,image:compiled.image ? true : null,error:compiled.error} : null}; }
   assert(id,actor) {
     this.commands.check(actor,"research.view"); const a=this.store.get("assets",id);
     if (!a) fail("ASSET_NOT_FOUND","Asset unavailable.",404);
@@ -77,8 +77,17 @@ export class ResearchAssetService {
   async preview(id,actor) { const a=this.assert(id,actor); return {asset:this.public(a),preview:a.previewKey?JSON.parse(await readFile(path.join(this.root,a.previewKey),"utf8")):null,error:a.diagnostic??null}; }
   async values(id,actor,selection={}) {
     const a=this.assert(id,actor);
-    if(/\.xlsx$/i.test(a.originalName)) return parseXlsxTable(await readFile(this.file(a)),{sheetName:selection.sheet,range:{offset:selection.rowOffset??0,limit:selection.rowLimit??20,columnKeys:selection.columnKeys}});
-    const p=await this.preview(id,actor);if(!p.preview) fail(a.processing==="queued"?"AVAILABILITY_PENDING":"NOT_INDEXED","No table index is available.");return p.preview;
+    let table;
+    if(/\.xlsx$/i.test(a.originalName)) table=await parseXlsxTable(await readFile(this.file(a)),{sheetName:selection.sheet,range:{offset:selection.rowOffset??0,limit:selection.rowLimit??20,columnKeys:selection.columnKeys}});
+    else if(/\.csv$/i.test(a.originalName)) {
+      if(selection.sheet)fail("RANGE_INVALID","CSV files have no named worksheets.",422);
+      table=await importTablePreview(await readFile(this.file(a)),a.originalName,a.mediaType,{range:{offset:selection.rowOffset??0,limit:selection.rowLimit??20,columnKeys:selection.columnKeys}});
+    }
+    else { let preview;try {preview=(await this.preview(id,actor)).preview;} catch(error){if(error.code!=="ENOENT")throw error;}table=preview??await importTablePreview(await readFile(this.file(a)),a.originalName,a.mediaType); }
+    if(!table)fail("NOT_INDEXED","No table index is available.");
+    const sheet=table.sheetName??"",rowCount=table.availableRows??(table.totalRows!==undefined?table.totalRows+1:table.grid?.cells?.length??(table.rows?.length??0)+1),current=this.store.get("assets",id);
+    if(current&&(current.tableSheetFacts?.[sheet]?.checksum!==a.checksum||current.tableSheetFacts?.[sheet]?.rowCount!==rowCount||selection.sheet===undefined&&table.sheetName&&!current.defaultSheet))this.store.put("assets",id,{...current,...(selection.sheet===undefined&&table.sheetName&&!current.defaultSheet?{defaultSheet:table.sheetName}:{}),tableSheetFacts:{...current.tableSheetFacts,[sheet]:{checksum:a.checksum,rowCount}}});
+    return table;
   }
   pin(ids,state) { for(const id of ids) {const a=this.store.get("assets",id);if(a && !(state==="pinned" && ["attached","retained"].includes(a.bindingState)))this.store.put("assets",id,{...a,bindingState:state});} }
   async content(id,variant,actor) {

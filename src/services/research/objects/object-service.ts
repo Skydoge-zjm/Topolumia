@@ -10,11 +10,13 @@ export class ResearchObjectService {
   from(view, owner) { if (!objectRefSchema.safeParse(owner).success) fail("OBJECT_REF_INVALID", "Supply a node/group object reference."); return view[owner.kind === "group" ? "groups" : "nodes"].find(item => item.id === owner.id && !item.deleted) ?? fail("RESEARCH_OBJECT_NOT_FOUND", "Research object not found.", 404); }
   blocks(owner, archived = false) { this.get(owner); return this.store.all("blocks").filter(block => sameObject(block.owner, owner) && (archived || block.lifecycle !== "archived")).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)); }
   block(owner, id) { this.get(owner); const block = this.store.get("blocks", id); if (!block || !sameObject(block.owner, owner) || block.lifecycle === "archived") fail("CONTENT_BLOCK_NOT_FOUND", "Content block not found.", 404); return block; }
+  blockVersion(owner, id, revision) { this.get(owner); if (!Number.isInteger(revision) || revision < 1) fail("INPUT_INVALID", "Invalid material revision.", 422); const block = this.store.get("versions", id + ":" + revision); if (!block || block.id !== id || !sameObject(block.owner, owner)) fail("CONTENT_BLOCK_NOT_FOUND", "Material version not found.", 404); return block; }
   sources(values = [], actor) { return values.map(source => { const { clientRef, delivery: _delivery, ...rest } = source; return { ...rest, id: source.id ?? "source:" + randomUUID(), delivery: actor.isAgent ? "agentReported" : "humanRecorded", ...(clientRef ? { clientRef } : {}) }; }); }
   validateBlock(input, actor) {
     const parsed = contentBlockInput.safeParse(input);
     if (!parsed.success) fail("CONTENT_BLOCK_INVALID", "Invalid block.", 422, parsed.error.issues.slice(0, 6));
     const value = parsed.data;
+    if (value.role === "body" && value.type !== "richText") fail("CONTENT_BLOCK_INVALID", "A note body must be rich text.");
     if (actor.isAgent && ["confirmed", "rejected"].includes(value.review)) fail("REVIEW_REQUIRES_USER", "Only humans confirm scientific content.", 403);
     if (value.payload !== undefined) { const checked = validateContentBlockPayload(value.type, value.payload); if (!checked.success) fail("CONTENT_BLOCK_PAYLOAD_INVALID", "Invalid content payload.", 422, checked.issues); value.payload = checked.data; }
     const representationOnly = ["table", "image", "document", "spreadsheet", "link", "file"].includes(value.type);
@@ -50,8 +52,10 @@ export class ResearchObjectService {
   }
   detail(owner) {
     const object = this.get(owner), graph = this.c.formalTopology();
+    const allBlocks = this.blocks(owner, true), activeBlocks = allBlocks.filter(block => block.lifecycle !== "archived");
     const relations = this.relations(owner).map(edge => { const ref = sameObject(edge.from, owner) ? edge.to : edge.from; const other = this.get(ref); return { ...edge, other: { object: ref, label: other.core.nodeName, kind: ref.kind === "node" ? other.kind : "group", revision: other.revision } }; });
-    const common = { schemaVersion: "research-object-detail.v1", owner, core: object.core, sourceRefs: object.sourceRefs, contentBlocks: this.blocks(owner).map(block => ({ ...block, excerpt: extractContentBlockText(block.type, block.payload).slice(0, 100) })), relations, nodeRevision: object.revision, revision: object.revision, coreRevision: object.coreRevision, blockCollectionRevision: object.blockCollectionRevision, relationRevision: object.relationRevision, stateVersion: graph.stateVersion };
-    return owner.kind === "node" ? { ...common, node: this.c.nodes.project(object, graph) } : { ...common, group: object };
+    const common = { schemaVersion: "research-object-detail.v1", owner, core: object.core, sourceRefs: object.sourceRefs, contentBlocks: activeBlocks.map(block => ({ ...block, excerpt: extractContentBlockText(block.type, block.payload).slice(0, 100) })), relations, nodeRevision: object.revision, revision: object.revision, coreRevision: object.coreRevision, blockCollectionRevision: object.blockCollectionRevision, relationRevision: object.relationRevision, stateVersion: graph.stateVersion };
+    const bodyBlockId = activeBlocks.find(block => block.role === "body")?.id ?? (allBlocks.some(block => block.role === "body") ? null : activeBlocks.find(block => block.type === "richText")?.id ?? null);
+    return owner.kind === "node" ? { ...common, node: this.c.nodes.project(object, graph), ...(object.kind === "note" ? { bodyBlockId } : {}), ...(object.kind === "experiment" ? { experiment: { revision: object.experimentRevision ?? 1, runs: object.runs ?? [], materialLinks: object.materialLinks ?? [] } } : {}) } : { ...common, group: object };
   }
 }

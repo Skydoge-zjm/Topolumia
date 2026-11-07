@@ -21,7 +21,7 @@ function TopologyWorkspace(){
   const en=useUiStore(state=>state.locale)==="en",permissions=useResearchPermissions(),navigate=useNavigate(),client=useQueryClient(),[params,setParams]=useSearchParams();
   const query=useQuery({queryKey:["topology",projectId()],queryFn:()=>api<{nodes:ResearchNode[];edges:ResearchRelation[];groups:Group[]}>("/api/topology")});
   const storageScope=permissions.actorId+":"+projectId(),key="topolumia-group-expanded:"+storageScope;
-  const[expanded,setExpanded]=useState<string[]>([]),[search,setSearch]=useState(""),[querySearch,setQuerySearch]=useState(""),[editor,setEditor]=useState(false),[newKind,setNewKind]=useState("question"),[selecting,setSelecting]=useState(false),[selected,setSelected]=useState<string[]>([]);
+  const[expanded,setExpanded]=useState<string[]>([]),[search,setSearch]=useState(""),[querySearch,setQuerySearch]=useState(""),[editor,setEditor]=useState(false),[newKind,setNewKind]=useState("note"),[selecting,setSelecting]=useState(false),[selected,setSelected]=useState<string[]>([]);
   useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(key)??"[]");setExpanded(Array.isArray(saved)?saved:[]);}catch{setExpanded([]);}},[key]);
   useEffect(()=>{const timer=setTimeout(()=>setQuerySearch(search),250);return()=>clearTimeout(timer);},[search]);
   const focus=params.get("group")??"",{nodes,edges,groups}=query.data??EMPTY_TOPOLOGY;

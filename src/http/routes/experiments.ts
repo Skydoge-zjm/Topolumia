@@ -12,66 +12,19 @@ export async function handleExperimentsRoutes(context) {
     pathname,
     registry,
     trainingSimulation,
-    researchExperiments,
     state,
     curatorTriggerCoordinator,
     sourceRefresh,
   } = context;
 
   if (pathname === "/api/research-experiments" && request.method === "GET") {
-    sendJson(response, 200, researchExperiments.list(state.snapshot));
+    sendJson(response, 200, context.requestRuntime.researchCommands.records.list(context.requestActor));
     return true;
   }
-  if (
-    pathname === "/api/research-experiments/agent-context" &&
-    request.method === "POST"
-  ) {
-    const body = await readJson(request);
-    const experimentIds = Array.isArray(body?.experimentIds)
-      ? body.experimentIds
-      : (body?.nodeIds ?? []).map((id) =>
-          String(id).replace(/^experiment:/, ""),
-        );
-    sendJson(
-      response,
-      200,
-      await researchExperiments.agentContext(experimentIds, {
-        snapshot: state.snapshot,
-        metricKeys: body?.metrics ?? body?.metricKeys ?? [],
-        maxPoints: body?.maxPoints ?? 240,
-        includeDetails: body?.includeDetails ?? false,
-        includeCharts: body?.includeCharts ?? false,
-        accepts: body?.accepts ?? ["text"],
-      }),
-    );
-    return true;
-  }
-  const researchExperimentDetailMatch = pathname.match(
-    /^\/api\/research-experiments\/([^/]+)$/,
-  );
+  const researchExperimentDetailMatch = pathname.match(/^\/api\/research-experiments\/([^/]+)$/);
   if (researchExperimentDetailMatch && request.method === "GET") {
-    let experimentId;
-    try {
-      experimentId = decodeURIComponent(researchExperimentDetailMatch[1]);
-    } catch {
-      throw new AppError(
-        "RESEARCH_EXPERIMENT_ID_INVALID",
-        "科研实验 ID 格式无效。",
-        { status: 422 },
-      );
-    }
-    const metrics = url.searchParams.get("metrics")
-      ? url.searchParams.get("metrics").split(",").filter(Boolean)
-      : [];
-    sendJson(
-      response,
-      200,
-      await researchExperiments.detail(experimentId, {
-        snapshot: state.snapshot,
-        metricKeys: metrics,
-        maxPoints: url.searchParams.get("maxPoints") || 240,
-      }),
-    );
+    const nodeId = decodeURIComponent(researchExperimentDetailMatch[1]);
+    sendJson(response, 200, context.requestRuntime.researchCommands.records.overview(nodeId, context.requestActor));
     return true;
   }
   if (pathname === "/api/experiment-adapters" && request.method === "GET") {

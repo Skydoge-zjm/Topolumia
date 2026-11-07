@@ -6,6 +6,7 @@ export async function executeResearchTool(runtime,name,input,actor,sshEnvironmen
   let value;try{value=researchTools[name].validate(input);}catch(e){if(e.issues)fail("INPUT_INVALID","Tool input does not match schema.",422,inputIssues(researchTools[name].schema,input,e.issues));throw e;}
   const c=runtime.researchCommands,q=c.queries,params={...value,actor};
   switch(name){
+    case"read_experiment":return c.records.read(value,actor);
     case"get_context":return q.brief(params);
     case"get_environment":return q.finish(q.envelope("environment",await readResearchEnvironmentContext({runtime,actor,sshEnvironments,locale:value.locale??"zh"}),{...params,maxChars:4000}));
     case"search":return q.search(params);
@@ -18,6 +19,8 @@ export async function executeResearchTool(runtime,name,input,actor,sshEnvironmen
     case"get_schema":return q.schema(params);
     case"read_candidates":return q.candidates(params);
     case"create_candidate":case"edit_candidate":{
+      c.check(actor,"research.proposeChange");
+      if(!actor.isAgent)for(const change of value.nodeChanges??[])if(change.experimentPatch)await c.records.prepareMaterialSelections(change.experimentPatch,actor);
       const p=name==="create_candidate"?c.proposals.create(value,actor):c.proposals.edit(value,actor);
       return q.candidateReceipt(p, actor);
     }

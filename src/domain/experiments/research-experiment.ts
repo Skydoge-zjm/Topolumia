@@ -1,16 +1,10 @@
-import { AppError } from "../../lib/errors.js";
-
 export const RESEARCH_EXPERIMENT_SCHEMA = "research-experiment.v1";
 export const RESEARCH_EXPERIMENT_INDEX_SCHEMA = "research-experiment-index.v1";
-export const RESEARCH_EXPERIMENT_DETAIL_SCHEMA = "research-experiment-detail.v1";
-export const RESEARCH_EXPERIMENT_CONTEXT_SCHEMA = "research-experiment-agent-context.v1";
 
 const bilingual = (zh, en) => ({ zh, en });
 
-/**
- * The catalog is authored research intent, not a tracker mirror. Tracker runs
- * join it only through an explicit group identifier; their raw state remains
- * owned by the provider adapters.
+/** Synthetic catalog used by the explicit topology fixture only.
+ * User experiments and run identities are owned by the research repository.
  */
 export const RESEARCH_EXPERIMENT_CATALOG = Object.freeze([
   {
@@ -332,15 +326,6 @@ function statusSentence(summary, locale) {
   return pieces.join(" · ");
 }
 
-function definitionFor(value) {
-  const id = String(value ?? "").trim().toLowerCase();
-  const definition = RESEARCH_EXPERIMENT_CATALOG.find((item) => item.id === id || item.code.toLowerCase() === id);
-  if (!definition) {
-    throw new AppError("RESEARCH_EXPERIMENT_NOT_FOUND", "没有找到该科研实验。", { status: 404, detail: { experimentId: value } });
-  }
-  return definition;
-}
-
 function buildExperiment(definition, runs = []) {
   const external = runs
     .filter((run) => experimentGroupForRun(run) === definition.code)
@@ -392,16 +377,6 @@ export function aggregateResearchExperiments(snapshot = null) {
   };
 }
 
-export function researchExperimentRecord(experimentId, snapshot = null) {
-  const definition = definitionFor(experimentId);
-  const runs = snapshotRuns(snapshot);
-  return buildExperiment(definition, runs);
-}
-
-export function providerAttemptRefs(record) {
-  return record.attempts.filter((attempt) => attempt.source === "provider" && attempt.ref).map((attempt) => attempt.ref);
-}
-
 export function researchExperimentNodeData(summary) {
   return {
     experimentId: summary.id,
@@ -414,14 +389,4 @@ export function researchExperimentNodeData(summary) {
     attemptSourceCount: summary.attemptSourceCount,
     detailRef: summary.detailRef,
   };
-}
-
-export function compactResearchExperiment(summary) {
-  const {
-    sourceRefs: _sourceRefs,
-    controls: _controls,
-    limitations: _limitations,
-    ...compact
-  } = summary;
-  return clone(compact);
 }

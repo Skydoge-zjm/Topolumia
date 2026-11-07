@@ -10,6 +10,7 @@ import { handleResearchCommandsRoutes } from "./http/routes/research/commands.js
 import { handleTopologyRoutes } from "./http/routes/topology.js";
 import { handleNotebookRoutes } from "./http/routes/research/notebook.js";
 import { handleResearchNodeRoutes } from "./http/routes/research/nodes.js";
+import { handleExperimentRecordRoutes } from "./http/routes/research/experiment-records.js";
 import { handleResearchGroupRoutes } from "./http/routes/research/groups.js";
 import { handleResearchObjectRoutes } from "./http/routes/research/objects.js";
 import { handlePlatformSettingsRoutes } from "./http/routes/platform/settings.js";
@@ -40,6 +41,7 @@ const routeHandlers = [
   handleAgentsConfigurationRoutes,
   handleEnvironmentsRoutes,
   handleResearchCommandsRoutes,
+  handleExperimentRecordRoutes,
   handleResearchNodeRoutes,
   handleResearchGroupRoutes,
   handleResearchObjectRoutes,
@@ -66,6 +68,9 @@ export async function createMvpApplication(options = {}) {
           )
         : config.collaboration.databaseFile),
   );
+  if (options.port === 0 && !options.userSettingsFile && !options.config?.userSettings?.file) {
+    config.userSettings.file = path.join(path.dirname(config.collaboration.databaseFile), path.basename(config.collaboration.databaseFile) + ".runtime", "settings.json");
+  }
   if (!config.collaboration.allowDevIdentity) {
     config.project = {
       ...config.project,
@@ -188,7 +193,6 @@ export async function createMvpApplication(options = {}) {
           config,
           registry,
           trainingSimulation,
-          researchExperiments,
           topologyCurator,
           researchCommands,
           state,
@@ -237,7 +241,6 @@ export async function createMvpApplication(options = {}) {
             config,
             registry,
             trainingSimulation,
-            researchExperiments,
             topologyCurator,
             researchCommands,
             state,
@@ -301,7 +304,7 @@ export async function createMvpApplication(options = {}) {
       runtime.curatorTriggerCoordinator.stop();
       void runtime.agentSessionGateway.closeAll().catch(() => {});
     }
-    void Promise.allSettled([...runtimes.values()].map(runtime => runtime.researchCommands.assets.close())).then(() => collaboration.close());
+    void Promise.allSettled([...runtimes.values()].map(async runtime => { await runtime.researchCommands.records.close(); await runtime.researchCommands.assets.close(); })).then(() => collaboration.close());
   });
 
   return {

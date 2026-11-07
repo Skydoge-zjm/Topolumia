@@ -66,46 +66,34 @@ test("source refresh API reports an explicit outcome and publishes freshness sta
   assert.ok(current.payload.sourceRefresh.nextScheduledAt);
 });
 
-test("research experiment API aggregates attempts while the formal topology stays scientific", async () => {
+test("research experiment API uses saved node/run identities and never invents tracker attempts", async () => {
   await request("/api/sync", { method: "POST", body: "{}" });
-
   const topology = await request("/api/topology");
-  assert.equal(topology.response.status, 200);
   const forbiddenKinds = new Set(["run", "config", "artifact", "gitCommit", "workspaceChange", "delegation", "agentSession", "executionPreview"]);
-  assert.equal(topology.payload.nodes.some((node) => forbiddenKinds.has(node.kind)), false);
-  assert.deepEqual(
-    topology.payload.nodes.filter((node) => node.kind === "experiment").map((node) => node.id),
-    ["experiment:g0", "experiment:g1", "experiment:g2", "experiment:g3"],
-  );
-
+  assert.equal(topology.payload.nodes.some(node => forbiddenKinds.has(node.kind)), false);
+  assert.ok(topology.payload.nodes.every(node => ["paper", "experiment", "note"].includes(node.kind)));
+  const nodeId = "experiment:g1";
+  const recorded = await request("/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment", {
+    method: "PATCH", body: JSON.stringify({ expectedExperimentRevision: 1, patch: { addRuns: [{ label: "OOM attempt", status: "failed" }, { label: "Retry", status: "succeeded" }] } }),
+  });
+  assert.equal(recorded.response.status, 200, JSON.stringify(recorded.payload));
   const index = await request("/api/research-experiments");
   assert.equal(index.response.status, 200);
-  assert.equal(index.payload.schemaVersion, "research-experiment-index.v1");
-  assert.equal(index.payload.items.length, 4);
-
-  const detail = await request("/api/research-experiments/g1?maxPoints=40");
+  const entry = index.payload.items.find(item => item.id === nodeId);
+  assert.deepEqual(entry.runs.map(run => run.label), ["OOM attempt", "Retry"]);
+  const detail = await request("/api/research-experiments/" + encodeURIComponent(nodeId));
   assert.equal(detail.response.status, 200);
-  assert.equal(detail.payload.experiment.id, "g1");
-  assert.ok(detail.payload.attempts.some((attempt) => attempt.attemptRole === "failed"));
-  assert.ok(detail.payload.attempts.some((attempt) => attempt.attemptRole === "unstable"));
-  assert.ok(detail.payload.attempts.some((attempt) => attempt.attemptRole === "completed"));
-
-  const compactContext = await request("/api/research-experiments/agent-context", {
-    method: "POST",
-    body: JSON.stringify({ experimentIds: ["g1"] }),
-  });
-  assert.equal(compactContext.response.status, 200);
-  assert.equal(compactContext.payload.experiments.length, 1);
-  assert.equal(compactContext.payload.runs.length, 0);
-  assert.equal(compactContext.payload.capabilities.attemptDetails, false);
-
-  const expandedContext = await request("/api/research-experiments/agent-context", {
-    method: "POST",
-    body: JSON.stringify({ experimentIds: ["g1"], includeDetails: true, includeCharts: true, maxPoints: 40, accepts: ["text", "image/svg+xml"] }),
-  });
-  assert.equal(expandedContext.response.status, 200);
-  assert.ok(expandedContext.payload.runs.length >= 1);
-  assert.ok(expandedContext.payload.series.length >= 1);
+  assert.equal(detail.payload.nodeId, nodeId);
+  assert.deepEqual(detail.payload.runs.map(run => run.status), ["failed", "succeeded"]);
+  assert.equal((await request("/api/research-experiments/g1")).response.status, 404);
+  const read = await request("/api/research/experiments/read", { method: "POST", body: JSON.stringify({ mode: "runs", nodeId }) });
+  assert.equal(read.response.status, 200);
+  assert.equal(read.payload.kind, "experiment");
+  assert.equal(read.payload.data.items.length, 2);
+  const compare = await request("/api/research/experiments/read", { method: "POST", body: JSON.stringify({ mode: "compare", selections: detail.payload.runs.map(run => ({ nodeId, runId: run.id })) }) });
+  assert.equal(compare.response.status, 200);
+  assert.equal(compare.payload.data.temporary, true);
+  assert.equal(compare.payload.data.items.length, 0);
 });
 
 test("Docker preview rejects an absent execution contract with a typed error", async () => {

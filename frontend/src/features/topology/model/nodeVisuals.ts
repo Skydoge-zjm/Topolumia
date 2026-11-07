@@ -1,53 +1,36 @@
 import {
-  BadgeCheck, BookMarked, CircleAlert, Eye, FileText, FlaskConical, GitBranch, GitFork,
-  HelpCircle, Lightbulb, ListChecks, Scale,
+  BookMarked, FileText, FlaskConical,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 /**
- * Node kinds are grouped into five research families. The family drives one accent hue,
- * so the canvas reads as "what kind of move is this object in the argument" instead of
- * thirteen competing colours. The icon keeps each kind individually recognisable.
+ * Each object type uses its own icon and a stable accent family.
  */
-export type NodeFamily = "inquiry" | "evidence" | "reasoning" | "empirical" | "direction";
+export type NodeFamily = "evidence" | "reasoning" | "empirical";
 
 type Visual = { family: NodeFamily; icon: LucideIcon };
 
 const visuals: Record<string, Visual> = {
-  question: { family: "inquiry", icon: HelpCircle },
-  assumption: { family: "inquiry", icon: Scale },
-  hypothesis: { family: "inquiry", icon: Lightbulb },
-  alternativeHypothesis: { family: "inquiry", icon: GitFork },
   paper: { family: "evidence", icon: FileText },
-  readingNote: { family: "evidence", icon: BookMarked },
-  observation: { family: "empirical", icon: Eye },
   experiment: { family: "empirical", icon: FlaskConical },
-  inference: { family: "reasoning", icon: GitBranch },
-  claim: { family: "reasoning", icon: BadgeCheck },
-  decision: { family: "direction", icon: ListChecks },
-  gap: { family: "direction", icon: CircleAlert },
-  nextAction: { family: "direction", icon: GitBranch },
+  note: { family: "reasoning", icon: BookMarked },
 };
 
 /** Ordered for adjacent use (stacked bars, legends); validated for colour-vision deficiency. */
-export const FAMILY_ORDER: NodeFamily[] = ["inquiry", "evidence", "empirical", "reasoning", "direction"];
+export const FAMILY_ORDER: NodeFamily[] = ["evidence", "empirical", "reasoning"];
 
 const FAMILY_COLORS: Record<NodeFamily, string> = {
-  inquiry: "#0a7d55",
   evidence: "#a16207",
   empirical: "#2563eb",
   reasoning: "#a21caf",
-  direction: "#c2410c",
 };
 
 export const familyColor = (family: string) => FAMILY_COLORS[family as NodeFamily] ?? "#31594c";
 
 export const familyLabels: Record<NodeFamily, [string, string]> = {
-  inquiry: ["问题与假说", "Questions & hypotheses"],
-  evidence: ["文献与笔记", "Literature & notes"],
-  empirical: ["实验与观察", "Experiments & observations"],
-  reasoning: ["推论与结论", "Inferences & claims"],
-  direction: ["决策与行动", "Decisions & actions"],
+  evidence: ["文献", "Literature"],
+  empirical: ["实验", "Experiments"],
+  reasoning: ["研究笔记", "Research notes"],
 };
 
 export function nodeVisual(kind: string): Visual {

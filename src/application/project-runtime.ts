@@ -17,7 +17,6 @@ import { AgentProfileRegistry } from "../services/agents/agent-profile-registry.
 import { AgentSessionGateway } from "../services/agents/agent-session-gateway.js";
 import { SourceRefreshCoordinator } from "../services/platform/source-refresh-coordinator.js";
 import { TrainingSimulationService } from "../services/experiments/training-simulator.js";
-import { ResearchExperimentService } from "../services/experiments/research-experiment-service.js";
 import { TopologyLayoutService } from "../services/topology/topology-layout-service.js";
 import {
   UserSettingsStore,
@@ -157,9 +156,6 @@ export async function createProjectRuntimeRegistry({
     const trainingSimulation = new TrainingSimulationService({
       gateway: registry.experiments,
     });
-    const researchExperiments = new ResearchExperimentService({
-      gateway: registry.experiments,
-    });
     const topologyCurator = new TopologyCuratorService({
       config: projectConfig.curator,
       driver: options.topologyCuratorDriver,
@@ -190,8 +186,13 @@ export async function createProjectRuntimeRegistry({
       sourceReader: (source) => registry.filesystem.readIndexedText(source),
       sourceText: (source) => registry.filesystem.indexedText(source),
       sourceAllowed: (source) => !source.ref?.startsWith("file:") || registry.filesystem.isResearchPath(source.locator),
+      recordOptions: {
+        gateway: registry.experiments,
+        pythonCommand: () => projectConfig.experimentRecords.pythonCommand,
+      },
     });
     dispose.push(() => researchCommands.assets.close());
+    dispose.push(() => researchCommands.records.close());
     await researchCommands.assets.initialize();
     const agentMedia = new AgentAttachmentStore(projectConfig.agentSessions.historyFile);
     dispose.push(() => agentMedia.close());
@@ -238,7 +239,6 @@ export async function createProjectRuntimeRegistry({
       agentProfileRegistry,
       registry,
       trainingSimulation,
-      researchExperiments,
       topologyCurator,
       topologyService,
       researchCommands,

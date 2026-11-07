@@ -39,6 +39,8 @@ npm run docs:check
 | 原生事件或恢复 | 对应 provider 测试，加 [统一 Trace](../../tests/agents/protocol/native-trace-alignment.test.ts) 或 [前端合并](../../frontend/src/features/agents/conversation/model/agentSession.spec.ts) |
 | 历史保存、图片 | [历史存储](../../tests/agents/sessions/history-store.test.ts)、可靠性中的检查点与媒体场景 |
 | 表格解析、文件处理 | [导入器](../../tests/research/table-importers.test.ts)，涉及显示再跑 [真实文件浏览器用例](../../frontend/e2e/research-table-import.spec.ts) |
+| 笔记与实验 run、材料关联 | [实验记录](../../tests/research/experiment-records.test.ts)、[Schema 预算](../../tests/research/interface/schema-output.test.ts)、[笔记与多 run 浏览器流程](../../frontend/e2e/experiment-records.spec.ts) |
+| 多 run 曲线交互 | [ExperimentPlots.spec.tsx](../../frontend/src/features/experiments/ExperimentPlots.spec.tsx)，涉及布局再检查上述浏览器流程的桌面和手机截图 |
 | 环境梗概 | [research-environment-context](../../tests/environments/research-environment-context.test.ts)，不默认探测所有真实环境 |
 | 发布筛选 | `npm run test:release`；需要真实导出再运行 `npm run release:source` |
 
@@ -49,6 +51,15 @@ npm run docs:check
 真实模型、SSH、TeX 编译、Python 与实验 provider 测试有外部条件，按需运行并记录跳过或不可用。真实模型任务的质量要检查候选正文、图表证据和失败重试，不能仅看 HTTP 200 或候选数量。
 
 实验集成单独使用 package.json 中 setup:experiment-test-env 与 test:experiment-integration；其依赖及真实端点不是普通回归测试前提。
+
+归档原生文件的集成测试使用 [官方写入器生成的离线合成记录](../../scripts/testing/generate-native-records.py)，不访问 W&B 账号或训练服务。先在专用 Python 环境安装 `requirements/experiment-record-readers.txt`，然后执行：
+
+```powershell
+$env:TOPOLUMIA_RECORD_TEST_PYTHON = (Resolve-Path .venv-records/Scripts/python.exe).Path
+npm run test:experiment-records-integration
+```
+
+[原生记录集成](../../tests/research/experiment-records.integration.ts) 覆盖失败且无指标的 run、W&B 分片记录、TensorBoard 标量、原件保留以及丢失派生索引后的重建。此项需要可用的读取器依赖，不计入无需 Python 的普通后端回归。
 
 ## GitHub Actions
 

@@ -28,6 +28,8 @@
 
 改表格数据需要保留未修改值类型、列身份、caption 等信息；原文件表示不随编辑隐式消失，见 [编辑机制](editing.md)。
 
+实验的文件行关联使用原文件中的行坐标，包含表头。XLSX 与 CSV 的范围读取直接解析归档原件，不受预览行数截断影响；TeX 限于当前可解析的表格范围。关联保存工作表及块版本，不能在当前块编辑后改为指向新数据。
+
 ## 验证
 
 [table-importers.test.ts](../../../../tests/research/table-importers.test.ts) 覆盖导入、合并和样式；[styled-table-fixture.ts](../../../../fixtures/research/styled-table-fixture.ts) 提供实际文件样例；[research-table-import.spec.ts](../../../../frontend/e2e/research-table-import.spec.ts) 检查上传后的浏览器呈现。

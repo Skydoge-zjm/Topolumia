@@ -12,7 +12,7 @@ test("editing research material preserves provenance and new relations share nod
     const admin = app.collaboration.bootstrapAdmin({ username: "edit-browser", password });
     const actor = app.collaboration.actorForUser(admin.id, app.config.project.id);
     const paper = app.researchNodes.createNode("paper", { nodeName: "SR3", paperTitle: "Image Super-Resolution via Iterative Refinement" }, actor);
-    const question = app.researchNodes.createNode("question", { nodeName: "感知质量与失真" }, actor);
+    const question = app.researchNodes.createNode("note", { nodeName: "感知质量与失真" }, actor);
     const original=app.researchCommands.changes.direct([{op:"addBlock",owner:{kind:"node",id:paper.node.id},clientRef:"block",title:"原始指标",type:"metric",payload:{items:[{name:"FID",value:5.2,condition:"Same compute budget",note:"Three seeds",sourceRefIds:["source:table2"]}]},sourceRefs:[{id:"source:table2",kind:"table",value:"Table 2",locator:{page:"6"}}]}],actor).blocks.find(block=>block.title==="原始指标");
     await page.request.post(app.url + "/api/auth/login", { data: { username: "edit-browser", password } });
     await page.goto(app.url + "/#/topology/nodes/" + encodeURIComponent(paper.node.id));

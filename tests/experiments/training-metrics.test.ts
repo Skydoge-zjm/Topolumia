@@ -3,10 +3,16 @@ import assert from "node:assert/strict";
 import {
   downsamplePoints,
   normalizeSeries,
+  normalizeMetricHistory,
 } from "../../src/domain/experiments/experiment-domain.js";
 import { MetricIngestionStore } from "../../src/services/experiments/metric-ingestion-store.js";
 import { ExperimentTrackingGateway } from "../../src/services/experiments/experiment-tracking-gateway.js";
 import { TrainingSimulationService, createTrainingSimulation } from "../../src/services/experiments/training-simulator.js";
+
+test("provider history preserves W&B steps and never invents zero values for missing metrics", () => {
+  const history = normalizeMetricHistory([{ _step: 10, loss: null }, { _step: 20, loss: 0 }, { _step: 30, loss: "" }, { _step: 40, loss: false }, { _step: 50, loss: "0.5" }]);
+  assert.deepEqual(history.loss.map(point => [point.x, point.y]), [[20, 0], [50, .5]]);
+});
 
 test("extrema-aware reduction keeps a bounded curve and visible spikes", () => {
   const points = Array.from({ length: 50_000 }, (_, step) => ({ x: step, y: Math.sin(step / 80) }));

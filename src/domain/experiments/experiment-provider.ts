@@ -7,13 +7,15 @@ export const CAPABILITY_STATUS = Object.freeze({
 });
 
 const VALID_STATUSES = new Set(Object.values(CAPABILITY_STATUS));
+type CapabilityStatus = typeof CAPABILITY_STATUS[keyof typeof CAPABILITY_STATUS];
+type CapabilityDetail = { status: CapabilityStatus; reason?: string; formats?: string[]; [field: string]: unknown };
 
 /**
  * Converts the legacy boolean capability profile into a richer, explainable
  * capability map while keeping boolean flags available to old consumers.
  */
 export function normalizeCapabilityProfile(profile = {}, explicitDetails = null) {
-  const value = profile && typeof profile === "object" ? profile : {};
+  const value: Record<string, any> = profile && typeof profile === "object" ? profile : {};
   const declaredDetails = explicitDetails && typeof explicitDetails === "object"
     ? explicitDetails
     : (value.details && typeof value.details === "object" ? value.details : {});
@@ -21,8 +23,8 @@ export function normalizeCapabilityProfile(profile = {}, explicitDetails = null)
     ...Object.keys(value).filter((key) => key !== "details"),
     ...Object.keys(declaredDetails),
   ]);
-  const flags = {};
-  const details = {};
+  const flags: Record<string, boolean> = {};
+  const details: Record<string, CapabilityDetail> = {};
   for (const key of keys) {
     const raw = declaredDetails[key] ?? value[key];
     const detail = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
@@ -50,14 +52,14 @@ export function capabilityProfileWithDetails(profile = {}, explicitDetails = nul
 export function mergeCapabilityProfiles(profiles = []) {
   const normalized = profiles.map((profile) => normalizeCapabilityProfile(profile?.capabilityProfile ?? profile, profile?.capabilityDetails ?? profile?.capabilities));
   const keys = new Set(normalized.flatMap((item) => Object.keys(item.details)));
-  const details = {};
+  const details: Record<string, CapabilityDetail> = {};
   for (const key of keys) {
-    const entries = normalized.map((item) => item.details[key] ?? {
+    const entries: CapabilityDetail[] = normalized.map((item) => item.details[key] ?? {
       status: CAPABILITY_STATUS.UNAVAILABLE,
       reason: "capability not declared by provider",
     });
     const statuses = entries.map((entry) => entry.status);
-    let status = CAPABILITY_STATUS.UNAVAILABLE;
+    let status: CapabilityStatus = CAPABILITY_STATUS.UNAVAILABLE;
     if (statuses.length && statuses.every((item) => item === CAPABILITY_STATUS.SUPPORTED)) status = CAPABILITY_STATUS.SUPPORTED;
     else if (statuses.some((item) => item === CAPABILITY_STATUS.SUPPORTED || item === CAPABILITY_STATUS.PARTIAL)) status = CAPABILITY_STATUS.PARTIAL;
     const reasons = [...new Set(entries.map((entry) => entry.reason).filter(Boolean))];

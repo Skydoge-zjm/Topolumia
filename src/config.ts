@@ -117,6 +117,7 @@ export async function loadConfig(overrides = {}) {
       maxDepth: 4,
       maxRuns: 300,
     },
+    experimentRecords: { pythonCommand: "python" },
     docker: {
       command: "docker",
       executionEnabled: false,
@@ -244,6 +245,8 @@ export async function loadConfig(overrides = {}) {
 
   config.server.host = String(config.server.host || "127.0.0.1");
   config.server.port = Number(config.server.port || 5510);
+  config.experimentRecords.pythonCommand = String(config.experimentRecords.pythonCommand || "python");
+  if (!path.isAbsolute(config.experimentRecords.pythonCommand) && /[\\/]/.test(config.experimentRecords.pythonCommand)) config.experimentRecords.pythonCommand = path.resolve(mvpRoot, config.experimentRecords.pythonCommand);
   config.mlflow.baseUrl = process.env.MLFLOW_TRACKING_URI || config.mlflow.baseUrl;
   config.wandb.baseUrl = process.env.WANDB_API_URL || config.wandb.baseUrl;
   config.tensorboard.logdir = process.env.TENSORBOARD_LOGDIR || config.tensorboard.logdir;

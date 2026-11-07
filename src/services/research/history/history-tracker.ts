@@ -13,7 +13,8 @@ export class ResearchHistoryTracker {
     const meta = args[2];
     const actor = meta?.actorDetails ?? meta?.actor ?? requestActor;
     const actualActor = actor && typeof actor === "object" ? actor : requestActor;
-    const changes = method === "commitResearch" ? graphChanges(before.topology, state.topology).map(change => change.subject.type === "group" ? { ...change, before: change.before ? this.resolveResearchObject?.("group", change.subject.id, change.before.revision) ?? change.before : null, after: change.after ? this.resolveResearchObject?.("group", change.subject.id, change.after.revision) ?? change.after : null } : change) : [];
+    const snapshot = (type, object) => object ? { ...object, ...this.resolveResearchObject?.(type, object.id, object.revision ?? object.data?.researchRevision) } : null;
+    const changes = method === "commitResearch" ? graphChanges(before.topology, state.topology).map(change => ["group", "node"].includes(change.subject.type) ? { ...change, before: snapshot(change.subject.type, change.before), after: snapshot(change.subject.type, change.after) } : change) : [];
     const previous = proposals(before), current = proposals(state);
     let handledChanges = false, effectEvent = null;
     for (const [id, patch] of current) {

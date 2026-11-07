@@ -10,6 +10,7 @@
 | 科研历程 | 同库项目化历史；[ResearchHistoryStore](../../../src/services/research/history/history-store.ts) |
 | Agent 会话 | 每项目 agent-sessions/history.sqlite；[AgentHistoryStore](../../../src/services/agents/agent-history-store.ts) |
 | 科研文件字节及派生预览 | 项目数据目录 research-assets；[资产服务](../../../src/services/research/assets/asset-service.ts) |
+| 实验 run 与材料对应 | 实验节点对象和对象版本；过程记录块只引用 run 与资产，数值索引位于资产 derived 目录，可从归档原件重建 |
 | 会话图片与原生 imageView 快照 | history.sqlite 同级 attachments；[会话媒体](../../../src/services/agents/agent-attachment-service.ts) |
 | 项目设置、原生 Agent 配置 | settings.json、agent-config；[项目装配](../../../src/application/project-runtime.ts) 决定路径 |
 

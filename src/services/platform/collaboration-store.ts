@@ -475,7 +475,7 @@ export class CollaborationStore extends EventEmitter {
     this.requirePermission(actor, "agent.createSession", { projectId });
     const token = `rw_agent_${randomBytes(32).toString("hex")}`;
     this.agentCredentials.set(hashToken(token), { userId: actor.user.id, projectId, researchSessionId, runtimeInstanceId,
-      permissions: ["project.view", "research.view", ...(!readOnly ? ["research.proposeChange"] : [])], expiresAt: Date.now() + 8 * 60 * 60 * 1000 });
+      permissions: ["project.view", "research.view", "experiment.view", ...(!readOnly ? ["research.proposeChange"] : [])], expiresAt: Date.now() + 8 * 60 * 60 * 1000 });
     return token;
   }
 

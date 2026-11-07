@@ -55,7 +55,7 @@ test("research records never import runtime events and preserve historical node 
   const { app, request } = await fixture(t);
   app.state.recordEvent({ type: "agentMessage", actor: "agent", nodeIds: [], sourceRefs: [], payload: { text: "DO_NOT_IMPORT_AGENT_REPLY" } }, { skipValidation: true });
   assert.equal((await request("GET", "/api/research-records")).data.total, 0);
-  const anchor = (await request("POST", "/api/research-nodes", { kind: "question", core: { nodeName: "Meeting anchor" } })).data.node, version = app.state.topology.stateVersion;
+  const anchor = (await request("POST", "/api/research-nodes", { kind: "note", core: { nodeName: "Meeting anchor" } })).data.node, version = app.state.topology.stateVersion;
   const input = { type: "meeting", title: "October lab meeting", occurredAt: "2026-10-01T06:00:00Z", body: "Discussed replication limits", nodeIds: [anchor.id], participants: ["A", "B"], decisions: ["Run more seeds"], actions: [{ text: "Run 3 seeds", assignee: "A", dueDate: "2026-11-10", status: "open" }], status: "confirmed" };
   const created = await request("POST", "/api/research-records", input);
   assert.equal(created.status, 201, JSON.stringify(created.data));
@@ -95,18 +95,29 @@ test("series schedule independent idempotent occurrences and records enforce rea
 
   assert.equal((await request("GET", "/api/research-records", undefined, app.config.project.id, agent)).status, 403);
 });
-test("experiment node details use real gateway results, retain partial failures, and have no invented outputs", async t => {
+test("experiment records explicitly register runs, retain partial provider failures and never invent final outputs", async t => {
   const { app, request } = await fixture(t);
-  app.registry.experiments.detail = async ref => {
+  app.registry.experiments.series = async ref => {
     if (ref.includes("missing")) throw new Error("Provider unavailable");
-    return { run: { ref, provider: "wandb", metrics: { loss: 0.25 }, series: [{ key: "loss", points: [{ x: 1, y: .5 }, { x: 2, y: .25 }] }] }, source: { provider: "wandb", mode: "live" } };
+    return { series: [{ key: "loss", xKey: "step", points: [{ x: 1, y: .5 }, { x: 2, y: .25 }] }], observedAt: "2026-11-06T12:00:00Z" };
   };
-  const created = (await request("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: "My replication" }, sourceRefs: [{ kind: "range", value: "wandb:run:lab/project/valid" }, { kind: "range", value: "wandb:run:lab/project/missing" }] })).data;
-  await request("POST", `/api/research-objects/node/${encodeURIComponent(created.node.id)}/content-blocks`, { type: "metric", title: "Metrics", payload: { items: [{ name: "PSNR", value: 30.2 }] } });
-  const result = (await request("GET", `/api/research-nodes/${encodeURIComponent(created.node.id)}/results`)).data;
-  assert.equal(result.details.length, 1); assert.equal(result.warnings.length, 1);
-  assert.equal(result.authoredMetrics[0].value, 30.2); assert.equal(result.details[0].run.metrics.loss, .25);
+  const created = (await request("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: "My replication" }, sourceRefs: [{ kind: "range", value: "wandb:run:lab/project/valid" }] })).data;
+  const base = `/api/research-nodes/${encodeURIComponent(created.node.id)}`;
+  assert.deepEqual((await request("GET", base + "/experiment")).data.runs, []);
+  const metric = (await request("POST", `/api/research-objects/node/${encodeURIComponent(created.node.id)}/content-blocks`, { type: "metric", title: "Metrics", payload: { items: [{ name: "PSNR", value: 30.2 }] } })).data.contentBlock;
+  const read = await request("POST", "/api/research/blocks/read", { owner: { kind: "node", id: created.node.id }, blockId: metric.id, view: "values" });
+  assert.equal(read.status, 200); assert.equal(read.data.data.items[0].value, 30.2);
+  const attached = await request("POST", `/api/research-objects/node/${encodeURIComponent(created.node.id)}/content-blocks`, { type: "experimentRecord", title: "Training", payload: { provider: "wandb", runs: [
+    { sourceId: "lab/project/valid", label: "Available", ref: "wandb:run:lab/project/valid" },
+    { sourceId: "lab/project/missing", label: "Unavailable", ref: "wandb:run:lab/project/missing" },
+  ] } });
+  assert.equal(attached.status, 201, JSON.stringify(attached.data));
+  const registry = (await request("GET", base + "/experiment")).data;
+  const result = await request("POST", "/api/research/experiments/plot", { selections: registry.runs.map(run => ({ nodeId: created.node.id, runId: run.id })) });
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.runs.length, 2); assert.equal(result.data.series.length, 1); assert.equal(result.data.warnings.length, 1);
+  assert.equal(result.data.series[0].points.at(-1).y, .25);
   const empty = (await request("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: "No results yet" } })).data;
-  const detail = (await request("GET", `/api/research-nodes/${encodeURIComponent(empty.node.id)}/results`)).data;
-  assert.deepEqual(detail.details, []); assert.deepEqual(detail.authoredMetrics, []);
+  assert.deepEqual(empty.contentBlocks, []);
+  assert.deepEqual((await request("GET", `/api/research-nodes/${encodeURIComponent(empty.node.id)}/experiment`)).data.runs, []);
 });

@@ -6,12 +6,15 @@ import { renderMarkdown } from "@/shared/lib/markdown";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { ExternalLink, FileCode2, FileText, Table2 } from "lucide-react";
 import { AssetTablePreview } from "./AssetTablePreview";
+import { ExperimentRecordBlock } from "./ExperimentRecordBlock";
+import { AssetTextPreview } from "./AssetTextPreview";
 
 export type ContentBlock = {
   id: string;
   owner?: ResearchObjectRef;
   title: string;
   type: string;
+  role?: "body";
   order: number;
   payload: any;
   assetIds?: string[];
@@ -25,7 +28,7 @@ export type ContentBlock = {
 
 export function ContentBlockRenderer({ block, en, owner, assetUrl, candidateId }: { block: ContentBlock; en: boolean; owner: ResearchObjectRef; assetUrl?: (id: string) => string; candidateId?: string }) {
   const reps=block.representations ?? [];
-  const hasInline=Boolean(block.payload && (["richText","metric","link","quote","code","chart"].includes(block.type) || block.type==="table" && block.payload.columns?.length));
+  const hasInline=Boolean(block.payload && (["richText","metric","link","quote","code","chart","experimentRecord"].includes(block.type) || block.type==="table" && block.payload.columns?.length));
   const defaultView=block.primaryRepresentationId || (hasInline ? "inline" : reps[0]?.id);
   const [selected,setSelected]=useState<string | undefined>();
   const current=selected && (selected === "inline" || reps.some(r=>r.id===selected)) ? selected : defaultView;
@@ -41,10 +44,12 @@ function AssetRepresentation({block,representation,owner,en,candidateId}:{block:
   if(a?.mediaType?.startsWith("image/"))return <figure className="content-block-image"><a href={href} target="_blank" rel="noopener noreferrer" aria-label={en?"Open original image":"查看原图"} title={en?"Open original image":"查看原图"}><img src={href} alt={block.payload?.alt || block.title} loading="lazy"/></a><figcaption>{block.payload?.caption || representation.label}</figcaption></figure>;
   if(/\.(tex|xlsx|csv)$/i.test(a?.originalName ?? ""))return <div><AssetTablePreview candidateId={candidateId} owner={owner} assetId={id} en={en} blockId={block.id} blockRevision={block.revision} representationId={representation.id} originalName={a.originalName}/>{block.type==="table" && block.payload?.caption && <p className="research-hint">{block.payload.caption}</p>}</div>;
   if(a?.mediaType==="application/pdf")return <div><iframe title={block.title} src={href} style={{width:"100%",height:560,border:0}}/><a href={href}>{en?"Download PDF":"下载 PDF"}</a></div>;
+  if(/\.(md|txt|json|jsonl|yaml|yml|toml|ini|cfg|py|sh|ps1|log|out)$/i.test(a?.originalName ?? ""))return <div><AssetTextPreview assetId={id} checksum={a.checksum} en={en}/><a className="content-block-file" href={href}><FileText size={16}/>{a.originalName}</a></div>;
   return <a className="content-block-file" href={href}><FileText size={16}/>{a?.originalName || representation.label || (en?"Download file":"下载文件")}</a>;
 }
 function InlineContent({block,en,owner,candidateId}: {block:ContentBlock;en:boolean;owner: ResearchObjectRef;assetUrl?: (id:string)=>string;candidateId?:string}){
   const p=block.payload ?? {};
+  if(block.type==="experimentRecord")return <ExperimentRecordBlock block={block} owner={owner} en={en} candidateId={candidateId} />;
   if(block.type==="richText")return p.format==="plain" ? <div className="research-pre-wrap">{p.body || "—"}</div> : <div className="agent-markdown" dangerouslySetInnerHTML={{__html:renderMarkdown(p.body || "", { en })}}/>;
   if(block.type==="metric")return <div className="research-table-scroll"><table><thead><tr><th>{en?"Metric":"指标"}</th><th>{en?"Value":"数值"}</th><th>{en?"Condition":"条件"}</th></tr></thead><tbody>{(p.items ?? []).map((item:any,index:number)=><tr key={index}><td>{item.name}</td><td>{String(item.value)} {item.unit}</td><td>{[item.split,item.condition].filter(Boolean).join(" · ")}</td></tr>)}</tbody></table></div>;
   if(block.type==="table" && p.columns)return <div><AssetTablePreview candidateId={candidateId} owner={owner} en={en} blockId={block.id} blockRevision={block.revision} table={{schemaVersion:"research-table-preview.v1",columns:p.columns,rows:p.rows,sourceFormat:p.sourceFormat ?? "manual",totalRows:p.rows.length,truncated:false,grid:p.grid}}/>{p.caption && <p className="research-hint">{p.caption}</p>}</div>;

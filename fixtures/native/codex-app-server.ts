@@ -88,7 +88,7 @@ reader.on("line", async (line) => {
         };
         const primary = await tool("create_candidate", { reason: `论文阅读结果 ${turnNumber}`, nodes: [{ kind: "paper", core: { nodeName: `Reviewed paper ${turnNumber}`, paperTitle: "Source-grounded research review" }, blocks: [{ title: "方法与证据", type: "richText", payload: { format: "markdown", body: "The method and evidence are preserved for review." } }] }] }, "create");
         await tool("edit_candidate", { candidateId: primary.candidateId, expectedRevision: primary.revision, nodeChanges: [{ nodeId: primary.nodes[0].nodeId, addBlocks: [{ title: "局限", type: "richText", payload: { format: "markdown", body: "These findings require independent validation." } }] }] }, "edit");
-        if (turnNumber === 1) await tool("create_candidate", { reason: "后续研究问题", nodes: [{ kind: "question", core: { nodeName: "How robust is this result?" } }] }, "question");
+        if (turnNumber === 1) await tool("create_candidate", { reason: "后续研究问题", nodes: [{ kind: "note", core: { nodeName: "How robust is this result?" } }] }, "question");
         send({ method: "item/completed", params: { threadId, turnId, item: { id: `review-progress-${turnNumber}`, type: "agentMessage", phase: "commentary", text: "候选已提出，正在完成结果说明。" } } });
         await new Promise(resolve => setTimeout(resolve, 1500));
         send({ method: "item/completed", params: { threadId, turnId, item: { id: `review-answer-${turnNumber}`, type: "agentMessage", phase: "final_answer", text: `本轮 ${turnNumber} 的科研候选已准备好，请审阅。` } } });

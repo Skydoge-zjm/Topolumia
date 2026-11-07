@@ -41,6 +41,13 @@ export class ResearchProposalService {
       const owner = change.owner, target = ownerRef(owner), added = created(owner), identity = objectKey(owner);
       if (changed.has(identity)) fail("INPUT_INVALID", "Combine changes for the same object."); changed.add(identity);
       if (!added) this.c.objects.get(owner);
+      if (change.experimentPatch) {
+        const previous = operations.find(op => op.op === "editExperiment" && sameObject(op.owner, target));
+        const priorRecordWork = candidate && operations.some(op => sameObject(op.owner, target) && (op.op === "addBlock" && op.type === "experimentRecord" || op.op === "updateBlock" && op.patch?.payload?.runs));
+        const expected = previous?.expectedExperimentRevision ?? (added ? 1 : priorRecordWork ? this.c.objects.get(owner).experimentRevision ?? 1 : change.expectedExperimentRevision);
+        this.requireVersion(expected, "expectedExperimentRevision", owner.id);
+        operations.push({ op: "editExperiment", owner: target, expectedExperimentRevision: expected, patch: change.experimentPatch });
+      }
       if (change.corePatch !== undefined || change.sourceRefs !== undefined) {
         if (added) { if (change.corePatch) added.core = merge(added.core, change.corePatch); if (change.sourceRefs) added.sourceRefs = change.sourceRefs; }
         else {

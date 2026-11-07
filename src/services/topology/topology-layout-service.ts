@@ -8,53 +8,12 @@ export const TOPOLOGY_LAYOUT_HEIGHT = 1260;
 const DEFAULT_NODE_SIZE = Object.freeze({ width: 58, height: 58 });
 const NODE_SIZES = Object.freeze({
   paper: { width: 104, height: 60 },
-  readingNote: { width: 104, height: 60 },
-  question: { width: 132, height: 78 },
-  assumption: { width: 122, height: 64 },
-  hypothesis: { width: 122, height: 64 },
-  alternativeHypothesis: { width: 122, height: 64 },
   experiment: { width: 142, height: 64 },
-  observation: { width: 58, height: 58 },
-  gap: { width: 68, height: 68 },
-  inference: { width: 92, height: 68 },
-  claim: { width: 92, height: 68 },
-  decision: { width: 92, height: 68 },
+  note: { width: 122, height: 68 },
 });
 
-const SEMANTIC_RANK = Object.freeze({
-  paper: 0,
-  readingNote: 1,
-  question: 2,
-  assumption: 3,
-  hypothesis: 3,
-  alternativeHypothesis: 3,
-  experiment: 4,
-  observation: 5,
-  gap: 5,
-  inference: 6,
-  claim: 7,
-  decision: 7,
-});
-
-// The force projection is intentionally semantic rather than purely physical.
-// A question, experiment, gap, or provisional claim gets more personal space
-// than a source note, while the weak rank target keeps the research direction
-// readable. These weights only affect the display projection; they never alter
-// the formal topology.
-export const FORCE_REPULSION_WEIGHT = Object.freeze({
-  paper: 0.78,
-  readingNote: 0.74,
-  question: 1.42,
-  assumption: 0.92,
-  hypothesis: 1.16,
-  alternativeHypothesis: 1.28,
-  experiment: 1.38,
-  observation: 0.94,
-  gap: 1.34,
-  inference: 1.18,
-  claim: 1.32,
-  decision: 1.12,
-});
+// Display weights distinguish object types; argument roles come from edges.
+export const FORCE_REPULSION_WEIGHT = Object.freeze({ paper: 0.78, experiment: 1.38, note: 1.1 });
 
 const FORCE_RANK_Y = Object.freeze([126, 236, 350, 474, 646, 826, 972, 1082, 1172]);
 
@@ -81,9 +40,20 @@ function nodeSize(kind) {
   return NODE_SIZES[kind] ?? DEFAULT_NODE_SIZE;
 }
 
-function rankOf(node) {
-  if (node.object?.id === "experiment:g3") return 8;
-  return SEMANTIC_RANK[node.kind] ?? 4;
+function rankOf(node) { return node.displayRank ?? 0; }
+
+function rankFromRelations(topology) {
+  const incoming = new Map(topology.nodes.map(node => [node.id, []]));
+  for (const edge of topology.edges) if (ELK_ROUTED_RELATION_TYPES.has(edge.type) && incoming.has(edge.to) && incoming.has(edge.from)) incoming.get(edge.to).push(edge.from);
+  const ranks = new Map(), visiting = new Set();
+  const depth = id => {
+    if (ranks.has(id)) return ranks.get(id);
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    const rank = Math.min(FORCE_RANK_Y.length - 1, Math.max(0, ...incoming.get(id).map(parent => depth(parent) + 1)));
+    visiting.delete(id); ranks.set(id, rank); return rank;
+  };
+  for (const node of [...topology.nodes].sort((a, b) => a.id.localeCompare(b.id))) node.displayRank = depth(node.id);
 }
 
 function forceWeight(node) {
@@ -256,7 +226,7 @@ function forceDistance(nodeA, nodeB) {
   const a = nodeSize(nodeA.kind);
   const b = nodeSize(nodeB.kind);
   const weight = (forceWeight(nodeA) + forceWeight(nodeB)) / 2;
-  const wideKinds = new Set(["experiment", "hypothesis", "alternativeHypothesis", "assumption", "claim", "inference"]);
+  const wideKinds = new Set(["experiment", "note"]);
   const labelExtent = (node) => {
     const values = [node.label?.zh, node.label?.en, node.summary?.zh, node.summary?.en]
       .filter(Boolean)
@@ -452,6 +422,8 @@ export class TopologyLayoutService {
     const displayKey = object => objectKey(object);
     const originalId = new Map(layoutObjects.map(item => [displayKey(item.object), item.object]));
     topology = { ...topology, nodes: layoutObjects.map(item => ({ ...item.node, id: displayKey(item.object), object: item.object })), edges: (topology.edges ?? []).map(edge => ({ ...edge, from: displayKey(edge.from), to: displayKey(edge.to) })) };
+
+    rankFromRelations(topology);
 
     const engine = options.engine === "force" || options.engine === "semantic-force"
       ? "force"

@@ -22,7 +22,9 @@
 
 内容块的 payload 表达可编辑内容，representations 表达原文件或补充表示，sourceRefs 表达证据定位；三者不能互相覆盖替代。默认主表示影响展示，不代表可以删除其他表示。
 
-chart 已有合同但当前渲染器明确显示未实现；复杂数据可先使用表格或链接，不能把占位当作完成。
+`experimentRecord` 仅用于实验节点，保存提供商、run 来源与原始资产引用；由 [实验记录模块](../experiments-and-sources/README.md) 读取并渲染多 run 标量曲线。它与通用 `chart` 分别定义；后者仍是明确显示未实现的占位。
+
+研究笔记的默认正文采用 `role: body` 的 `richText` 块，由 [NoteBodyWorkspace](../../../../frontend/src/features/topology/details/NoteBodyWorkspace.tsx) 提供直接写作入口。正文与附加块共用版本和顺序；归档主正文不会把附加文字静默提升为正文。
 
 ## 节点与组共同归属
 

@@ -21,6 +21,7 @@ function metricIsLowerBetter(key) {
 }
 
 function numberOrNull(value) {
+  if (value === null || value === undefined || typeof value === "boolean" || typeof value === "string" && !value.trim()) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -49,17 +50,17 @@ export function redactSensitiveFields(value, depth = 0) {
   ]));
 }
 
-export function normalizeMetricHistory(value) {
-  const result = {};
+export function normalizeMetricHistory(value): Record<string, { x: number; y: number; timestamp?: any }[]> {
+  const result: Record<string, { x: number; y: number; timestamp?: any }[]> = {};
   if (!value) return result;
   if (Array.isArray(value)) {
     for (const item of value) {
       if (!item) continue;
       if (item.key === undefined) {
-        const x = numberOrNull(item.step ?? item.epoch ?? item.x) ?? 0;
+        const x = numberOrNull(item._step ?? item.step ?? item.epoch ?? item.x) ?? 0;
         for (const [key, raw] of Object.entries(item)) {
           if (["step", "epoch", "x", "timestamp", "time", "_timestamp", "_step"].includes(key)) continue;
-          const y = numberOrNull(raw?.value ?? raw);
+          const y = numberOrNull((raw as { value?: unknown })?.value ?? raw);
           if (y === null) continue;
           result[key] ??= [];
           result[key].push({ x, y, timestamp: item.timestamp ?? item.time ?? item._timestamp ?? null });
@@ -73,7 +74,7 @@ export function normalizeMetricHistory(value) {
         const y = numberOrNull(point.value ?? point.y);
         if (y === null) continue;
         result[key].push({
-          x: numberOrNull(point.step ?? point.epoch ?? point.x) ?? result[key].length,
+          x: numberOrNull(point._step ?? point.step ?? point.epoch ?? point.x) ?? result[key].length,
           y,
           timestamp: point.timestamp ?? point.time ?? null,
         });
@@ -86,7 +87,7 @@ export function normalizeMetricHistory(value) {
         const y = numberOrNull(point?.value ?? point?.y ?? point);
         if (y === null) return [];
         return [{
-          x: numberOrNull(point?.step ?? point?.epoch ?? point?.x) ?? index,
+          x: numberOrNull(point?._step ?? point?.step ?? point?.epoch ?? point?.x) ?? index,
           y,
           timestamp: point?.timestamp ?? point?.time ?? null,
         }];
@@ -245,7 +246,7 @@ export function normalizeRun(run, {
   mode = "fixture",
   capabilityProfile = {},
   observedAt = new Date().toISOString(),
-} = {}) {
+}: { provider?: string; sourceStatus?: string; mode?: string; capabilityProfile?: Record<string, unknown>; observedAt?: string } = {}) {
   const value = asObject(run);
   const capabilities = capabilityProfileWithDetails(
     { ...capabilityProfile, ...(value.capabilityProfile ?? {}) },

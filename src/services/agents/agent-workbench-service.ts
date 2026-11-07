@@ -31,7 +31,7 @@ export function saveAgentMessage(session, commands, actor, eventIds) {
   const label = markdown.split("\n").find(line => line.trim())?.replace(/^#+\s*/, "").slice(0, 90) ?? "科研笔记";
   const candidate = commands.createCandidate({ actor: { ...actor, sessionId: session.researchSessionId },
     reason: `保存会话「${session.title}」的研究回复`, idempotencyKey: `agent-note:${fingerprint}`,
-    nodes: [{kind:"observation",core:{nodeName:label,summary:markdown.slice(0,1800)},blocks:[{title:"研究记录",type:"richText",payload:{format:"markdown",body:markdown}}]}] });
+    nodes: [{kind:"note",core:{nodeName:label},blocks:[{title:"正文",type:"richText",role:"body",payload:{format:"markdown",body:markdown}}]}] });
   const linked = { ...candidate, sourceTurnId: first.turnId };
   commands.store.put("candidates", candidate.id, linked);
   return linked;
