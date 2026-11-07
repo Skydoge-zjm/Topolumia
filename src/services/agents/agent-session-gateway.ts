@@ -717,10 +717,11 @@ export class AgentSessionGateway {
 
   async #close(session) {
     const sessionId = session.id;
+    const startup = this.startups.get(sessionId);
     if (session.activeTurnId) session.adapter?.cancel();
-    if (this.startups.has(sessionId)) {
+    if (startup) {
       await session.adapter?.close().catch(() => {});
-      await this.startups.get(sessionId).catch(() => {});
+      await startup.catch(() => {});
     }
     if (session.nativeSessionId && session.capabilities?.session?.sync) await this.sync(sessionId, { reason: "session-closed" }).catch(() => {});
     await session.adapter?.close().catch(() => {});
