@@ -48,18 +48,31 @@ export function ExperimentPlots({
   candidateId?: string;
 }) {
   const groups = useMemo(() => seriesByMetric(plot.series), [plot.series]);
-  const grouped = new Map<string, { runId: string; label: string; message: string }[]>();
+  const grouped = new Map<
+    string,
+    { runId: string; label: string; message: string }[]
+  >();
   for (const warning of plot.warnings ?? []) {
-    const run = plot.runs.find((item) => item.nodeId === warning.nodeId && item.runId === warning.runId);
+    const run = plot.runs.find(
+      (item) => item.nodeId === warning.nodeId && item.runId === warning.runId,
+    );
     const key = run?.nodeName ?? warning.nodeId;
-    grouped.set(key, [...(grouped.get(key) ?? []), { runId: warning.runId, label: run?.runLabel ?? warning.runId, message: warning.message }]);
+    grouped.set(key, [
+      ...(grouped.get(key) ?? []),
+      {
+        runId: warning.runId,
+        label: run?.runLabel ?? warning.runId,
+        message: warning.message,
+      },
+    ]);
   }
   return (
     <div className="experiment-plots" translate="no">
       {grouped.size > 0 && (
         <details className="experiment-plot-warning" role="alert">
           <summary>
-            {en ? "Some records could not be read" : "部分记录未能读取"} ({grouped.size})
+            {en ? "Some records could not be read" : "部分记录未能读取"} (
+            {grouped.size})
           </summary>
           <ul>
             {[...grouped].map(([nodeName, items]) => (
@@ -88,21 +101,34 @@ export function ExperimentPlots({
           candidateId={candidateId}
         />
       ))}
-      {!groups.length && <p className="research-empty">{en ? "No metric curves available." : "暂无指标曲线。"}</p>}
+      {!groups.length && (
+        <p className="research-empty">
+          {en ? "No metric curves available." : "暂无指标曲线。"}
+        </p>
+      )}
     </div>
   );
 }
 
 /** Never start wider than the host: an unmeasured chart must not stretch its grid column. */
 function chartWidth(host: HTMLElement) {
-  return Math.max(220, Math.min(host.clientWidth || 320, host.parentElement?.clientWidth || 320));
+  return Math.max(
+    220,
+    Math.min(host.clientWidth || 320, host.parentElement?.clientWidth || 320),
+  );
 }
 
 function canvasUsable() {
-  if (typeof window === "undefined" || typeof window.HTMLCanvasElement === "undefined") return false;
-  if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent)) return false;
+  if (
+    typeof window === "undefined" ||
+    typeof document === "undefined" ||
+    typeof window.HTMLCanvasElement === "undefined"
+  )
+    return false;
+  if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent))
+    return false;
   try {
-    return Boolean(window.HTMLCanvasElement.prototype.getContext("2d"));
+    return Boolean(document.createElement("canvas").getContext("2d"));
   } catch {
     return false;
   }
@@ -128,11 +154,26 @@ function MetricChart({
   const chart = useRef<uPlot | null>(null);
   const [hidden, setHidden] = useState<string[]>([]);
   const canvas = canvasUsable();
-  const multiNode = useMemo(() => new Set(lines.map((line) => line.nodeId)).size > 1, [lines]);
-  const label = useMemo(() => (line: RecordLine) => lineLabel(line, multiNode), [multiNode]);
-  const legendEntries = useMemo(() => [...new Map(lines.map((line) => [seriesKey(line), line])).values()], [lines]);
-  const visible = useMemo(() => lines.filter((line) => !hidden.includes(seriesKey(line))), [lines, hidden]);
-  const xKeys = useMemo(() => [...new Set(lines.map((line) => line.xKey))], [lines]);
+  const multiNode = useMemo(
+    () => new Set(lines.map((line) => line.nodeId)).size > 1,
+    [lines],
+  );
+  const label = useMemo(
+    () => (line: RecordLine) => lineLabel(line, multiNode),
+    [multiNode],
+  );
+  const legendEntries = useMemo(
+    () => [...new Map(lines.map((line) => [seriesKey(line), line])).values()],
+    [lines],
+  );
+  const visible = useMemo(
+    () => lines.filter((line) => !hidden.includes(seriesKey(line))),
+    [lines, hidden],
+  );
+  const xKeys = useMemo(
+    () => [...new Set(lines.map((line) => line.xKey))],
+    [lines],
+  );
   const xAxisLabel = xKeys.join(" / ");
   const data = useMemo(() => buildData(visible), [visible]);
 
@@ -142,7 +183,10 @@ function MetricChart({
     const options: uPlot.Options = {
       width: chartWidth(host),
       height: 260,
-      cursor: { drag: { x: true, y: false, setScale: true }, focus: { prox: 24 } },
+      cursor: {
+        drag: { x: true, y: false, setScale: true },
+        focus: { prox: 24 },
+      },
       legend: { show: false },
       scales: { x: { time: false } },
       axes: [
@@ -173,7 +217,11 @@ function MetricChart({
             stroke: CHART_COLORS[style],
             width: 1.8,
             dash: DASH_PATTERNS[style % DASH_PATTERNS.length],
-            points: { show: line.points.length === 1, size: 6, fill: CHART_COLORS[style] },
+            points: {
+              show: line.points.length === 1,
+              size: 6,
+              fill: CHART_COLORS[style],
+            },
           };
         }),
       ],
@@ -189,10 +237,15 @@ function MetricChart({
               xValue = self.data[0][index];
             const values = visible
               .slice(0, 6)
-              .map((line, position) => `${label(line)}: ${formatValue(nearestValue(self.data[position + 1] as (number | null)[], index))}`);
+              .map(
+                (line, position) =>
+                  `${label(line)}: ${formatValue(nearestValue(self.data[position + 1] as (number | null)[], index))}`,
+              );
             live.current.textContent =
               values.join(" · ") +
-              (visible.length > 6 ? ` · ${en ? `+${visible.length - 6} more` : `另 ${visible.length - 6} 条`}` : "") +
+              (visible.length > 6
+                ? ` · ${en ? `+${visible.length - 6} more` : `另 ${visible.length - 6} 条`}`
+                : "") +
               ` @ ${format(xValue ?? 0)}`;
           },
         ],
@@ -203,7 +256,9 @@ function MetricChart({
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
-        : new ResizeObserver(() => instance.setSize({ width: chartWidth(host), height: 260 }));
+        : new ResizeObserver(() =>
+            instance.setSize({ width: chartWidth(host), height: 260 }),
+          );
     observer?.observe(host);
     return () => {
       observer?.disconnect();
@@ -232,22 +287,45 @@ function MetricChart({
   };
 
   return (
-    <figure className="experiment-metric-chart" aria-label={metric} data-series-count={visible.length}>
+    <figure
+      className="experiment-metric-chart"
+      aria-label={metric}
+      data-series-count={visible.length}
+    >
       <figcaption>
         <strong>{metric}</strong>
         <div className="experiment-chart-actions">
-          <button className="research-icon-button" aria-label={en ? "Zoom in" : "放大曲线"} onClick={() => zoom(0.5)} disabled={!canvas}>
+          <button
+            className="research-icon-button"
+            aria-label={en ? "Zoom in" : "放大曲线"}
+            onClick={() => zoom(0.5)}
+            disabled={!canvas}
+          >
             <ZoomIn size={16} />
           </button>
-          <button className="research-icon-button" aria-label={en ? "Zoom out" : "缩小曲线"} onClick={() => zoom(2)} disabled={!canvas}>
+          <button
+            className="research-icon-button"
+            aria-label={en ? "Zoom out" : "缩小曲线"}
+            onClick={() => zoom(2)}
+            disabled={!canvas}
+          >
             <ZoomOut size={16} />
           </button>
-          <button className="research-icon-button" aria-label={en ? "Reset zoom" : "重置缩放"} onClick={reset} disabled={!canvas}>
+          <button
+            className="research-icon-button"
+            aria-label={en ? "Reset zoom" : "重置缩放"}
+            onClick={reset}
+            disabled={!canvas}
+          >
             <RotateCcw size={16} />
           </button>
         </div>
       </figcaption>
-      <div className="experiment-chart-legends" role="group" aria-label={en ? "Series" : "曲线系列"}>
+      <div
+        className="experiment-chart-legends"
+        role="group"
+        aria-label={en ? "Series" : "曲线系列"}
+      >
         {legendEntries.map((line) => {
           const key = seriesKey(line),
             style = runColor(line.nodeId, line.runId);
@@ -258,19 +336,30 @@ function MetricChart({
               aria-pressed={!hidden.includes(key)}
               className="experiment-chart-legend"
               onClick={() =>
-                setHidden((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
+                setHidden((current) =>
+                  current.includes(key)
+                    ? current.filter((item) => item !== key)
+                    : [...current, key],
+                )
               }
             >
               <svg width="24" height="12" aria-hidden="true">
                 <path
                   d="M0 6 H24"
                   stroke={CHART_COLORS[style]}
-                  strokeDasharray={DASH_PATTERNS[style % DASH_PATTERNS.length].join(" ") || undefined}
+                  strokeDasharray={
+                    DASH_PATTERNS[style % DASH_PATTERNS.length].join(" ") ||
+                    undefined
+                  }
                   strokeWidth="2"
                 />
               </svg>
               {label(line)}
-              {line.xKey !== xKeys[0] && <span className="experiment-chart-legend-axis">· {line.xKey}</span>}
+              {line.xKey !== xKeys[0] && (
+                <span className="experiment-chart-legend-axis">
+                  · {line.xKey}
+                </span>
+              )}
             </button>
           );
         })}
@@ -288,21 +377,43 @@ function MetricChart({
       <span ref={live} className="visually-hidden" aria-live="polite" />
       <div className="experiment-chart-metadata">
         <span>{xKeys.join(" / ")}</span>
-        {lines.some((line) => line.sampled) && <span className="research-badge">{en ? "Sampled display" : "曲线展示已采样"}</span>}
+        {lines.some((line) => line.sampled) && (
+          <span className="research-badge">
+            {en ? "Sampled display" : "曲线展示已采样"}
+          </span>
+        )}
       </div>
-      <RawValues lines={lines} en={en} blockId={blockId} blockRevision={blockRevision} candidateId={candidateId} />
+      <RawValues
+        lines={lines}
+        en={en}
+        blockId={blockId}
+        blockRevision={blockRevision}
+        candidateId={candidateId}
+      />
     </figure>
   );
 }
 
-function FallbackTable({ lines, xs, en }: { lines: RecordLine[]; xs: (number | null)[]; en: boolean }) {
+function FallbackTable({
+  lines,
+  xs,
+  en,
+}: {
+  lines: RecordLine[];
+  xs: (number | null)[];
+  en: boolean;
+}) {
   const columns = lines.map((line) => {
     const points = new Map(line.points.map((point) => [point.x, point.y]));
-    return xs.map((x) => (x === null ? null : points.get(x) ?? null));
+    return xs.map((x) => (x === null ? null : (points.get(x) ?? null)));
   });
   return (
     <div className="experiment-chart-fallback">
-      <p role="status">{en ? "Charts need a canvas; showing the first data points." : "当前环境无画布，显示前若干数据点。"}</p>
+      <p role="status">
+        {en
+          ? "Charts need a canvas; showing the first data points."
+          : "当前环境无画布，显示前若干数据点。"}
+      </p>
       <div className="research-table-wrap">
         <table className="research-table">
           <thead>
@@ -320,7 +431,9 @@ function FallbackTable({ lines, xs, en }: { lines: RecordLine[]; xs: (number | n
               <tr key={String(x)}>
                 <td>{format(x ?? 0)}</td>
                 {columns.map((column, position) => (
-                  <td key={position}>{column[index] === null ? "—" : format(column[index]!)}</td>
+                  <td key={position}>
+                    {column[index] === null ? "—" : format(column[index]!)}
+                  </td>
                 ))}
               </tr>
             ))}
@@ -350,7 +463,18 @@ function RawValues({
   const index = Math.min(Number(selected), Math.max(0, lines.length - 1));
   const line = lines[index] ?? lines[0];
   const query = useQuery({
-    queryKey: ["experiment-values", projectId(), line.nodeId, line.runId, line.key, blockId, blockRevision, candidateId, offset, line.sources],
+    queryKey: [
+      "experiment-values",
+      projectId(),
+      line.nodeId,
+      line.runId,
+      line.key,
+      blockId,
+      blockRevision,
+      candidateId,
+      offset,
+      line.sources,
+    ],
     enabled: open,
     queryFn: () =>
       api<any>("/api/research/experiments/read", {
@@ -373,11 +497,19 @@ function RawValues({
   const data = query.data?.data;
   const copy = () => {
     if (!data) return;
-    const text = [data.xKey + "\t" + data.metric, ...data.points.map((point: { x: number; y: number }) => `${point.x}\t${point.y}`)].join("\n");
+    const text = [
+      data.xKey + "\t" + data.metric,
+      ...data.points.map(
+        (point: { x: number; y: number }) => `${point.x}\t${point.y}`,
+      ),
+    ].join("\n");
     void navigator.clipboard?.writeText(text);
   };
   return (
-    <details className="experiment-raw-values" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details
+      className="experiment-raw-values"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>{en ? "Data points" : "数据点"}</summary>
       {open && (
         <>
@@ -388,9 +520,14 @@ function RawValues({
               setSelected(value);
               setOffset(0);
             }}
-            options={lines.map((item, position) => ({ value: String(position), label: item.nodeName + " · " + item.runLabel }))}
+            options={lines.map((item, position) => ({
+              value: String(position),
+              label: item.nodeName + " · " + item.runLabel,
+            }))}
           />
-          {query.isPending && <p role="status">{en ? "Loading…" : "读取中…"}</p>}
+          {query.isPending && (
+            <p role="status">{en ? "Loading…" : "读取中…"}</p>
+          )}
           {query.error && <p role="alert">{query.error.message}</p>}
           {data && (
             <>
@@ -403,26 +540,41 @@ function RawValues({
                     </tr>
                   </thead>
                   <tbody>
-                    {data.points.map((point: { x: number; y: number }, pointIndex: number) => (
-                      <tr key={offset + pointIndex}>
-                        <td>{point.x}</td>
-                        <td>{point.y}</td>
-                      </tr>
-                    ))}
+                    {data.points.map(
+                      (point: { x: number; y: number }, pointIndex: number) => (
+                        <tr key={offset + pointIndex}>
+                          <td>{point.x}</td>
+                          <td>{point.y}</td>
+                        </tr>
+                      ),
+                    )}
                   </tbody>
                 </table>
               </div>
               <div className="research-pagination">
-                <button className="button" disabled={!offset || query.isFetching} onClick={() => setOffset(Math.max(0, offset - 40))}>
+                <button
+                  className="button"
+                  disabled={!offset || query.isFetching}
+                  onClick={() => setOffset(Math.max(0, offset - 40))}
+                >
                   {en ? "Previous" : "上一页"}
                 </button>
                 <span>
-                  {data.offset + 1}–{data.offset + data.points.length} / {data.pointCount}
+                  {data.offset + 1}–{data.offset + data.points.length} /{" "}
+                  {data.pointCount}
                 </span>
-                <button className="button" disabled={data.nextOffset === null || query.isFetching} onClick={() => setOffset(data.nextOffset)}>
+                <button
+                  className="button"
+                  disabled={data.nextOffset === null || query.isFetching}
+                  onClick={() => setOffset(data.nextOffset)}
+                >
                   {en ? "Next" : "下一页"}
                 </button>
-                <button className="button" disabled={!navigator.clipboard} onClick={copy}>
+                <button
+                  className="button"
+                  disabled={!navigator.clipboard}
+                  onClick={copy}
+                >
                   {en ? "Copy" : "复制"}
                 </button>
               </div>

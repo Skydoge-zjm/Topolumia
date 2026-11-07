@@ -86,6 +86,7 @@ test("groups collapse to a group node, expand, and open editable scientific deta
   await expect(page.getByRole("cell", { name: "31.2", exact: true })).toBeVisible();
   const curve = page.getByRole("figure", { name: "loss", exact: true });
   await expect(curve).toBeVisible();
+  await expect(curve.locator(".uplot")).toBeVisible();
   await expect(page.getByRole("link", { name: /W&B experiment dashboard/ })).toHaveAttribute("href", "https://wandb.ai/lab/study/runs/one");
   await curve.getByText("数据点", { exact: true }).click();
   await expect(curve.getByRole("cell", { name: "0.25", exact: true })).toBeVisible();

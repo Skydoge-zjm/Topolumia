@@ -18,13 +18,28 @@ export async function handleExperimentsRoutes(context) {
   } = context;
 
   if (pathname === "/api/research-experiments" && request.method === "GET") {
-    sendJson(response, 200, context.requestRuntime.researchCommands.records.list(context.requestActor));
+    sendJson(
+      response,
+      200,
+      context.requestRuntime.researchCommands.records.list(
+        context.requestActor,
+      ),
+    );
     return true;
   }
-  const researchExperimentDetailMatch = pathname.match(/^\/api\/research-experiments\/([^/]+)$/);
+  const researchExperimentDetailMatch = pathname.match(
+    /^\/api\/research-experiments\/([^/]+)$/,
+  );
   if (researchExperimentDetailMatch && request.method === "GET") {
     const nodeId = decodeURIComponent(researchExperimentDetailMatch[1]);
-    sendJson(response, 200, context.requestRuntime.researchCommands.records.overview(nodeId, context.requestActor));
+    sendJson(
+      response,
+      200,
+      context.requestRuntime.researchCommands.records.overview(
+        nodeId,
+        context.requestActor,
+      ),
+    );
     return true;
   }
   if (pathname === "/api/experiment-adapters" && request.method === "GET") {
@@ -158,6 +173,7 @@ export async function handleExperimentsRoutes(context) {
       experiment: url.searchParams.get("experiment") || null,
       group: url.searchParams.get("group") || null,
       status: url.searchParams.get("status") || null,
+      cursor: url.searchParams.get("cursor") || null,
       limit: Math.min(
         300,
         Math.max(1, Number(url.searchParams.get("limit") || 100)),
