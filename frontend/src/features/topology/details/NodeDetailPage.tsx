@@ -39,7 +39,7 @@ function NodeDetail() {
   const summary = String(data.core.summary ?? "").trim() || text(data.node.summary, en);
   const saveCore = async (core: Record<string, any>) => { await api("/api/research-nodes/" + encodeURIComponent(id) + "/core", { method: "PATCH", body: JSON.stringify({ patch: core, expectedCoreRevision: data.coreRevision }) }); setEditingCore(false); refresh(); };
   if (editingCore) return <section translate="no" className="research-workspace research-detail"><button className="research-back button" onClick={() => setEditingCore(false)}>← {en ? "Research node" : "科研节点"}</button><header className="research-page-heading"><h1>{en ? "Edit core information" : "编辑核心信息"}</h1></header><NodeCoreEditor kind={kind} initial={data.core} en={en} onSave={saveCore} onCancel={() => setEditingCore(false)} /></section>;
-  return <section translate="no" className="research-workspace research-detail"><Link className="research-back" to="/topology">← {en ? "Research topology" : "科研拓扑"}</Link>
+  return <section translate="no" className={"research-workspace research-detail is-" + kind}><Link className="research-back" to="/topology">← {en ? "Research topology" : "科研拓扑"}</Link>
     {query.error && <p role="alert">{query.error.message}<button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button></p>}
     <header className="research-page-heading"><div className="research-detail-title"><h1>{title}</h1>
       {paper && <PaperCitation core={data.core} en={en} />}

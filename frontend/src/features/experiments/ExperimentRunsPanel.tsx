@@ -12,6 +12,7 @@ import {
 import { ExperimentCompareDialog } from "./ExperimentCompareDialog";
 import { AssetTableRowFields, AssetTableRowView } from "./AssetTableRows";
 import { RunStatusDot } from "./RunStatusDot";
+import { CHART_COLORS, DASH_PATTERNS, runColor } from "./chartModel";
 import type {
   ExperimentRun,
   ExperimentMaterialLink,
@@ -150,27 +151,46 @@ export function ExperimentRunsPanel({
           const links = data.materialLinks.filter((link) => link.runId === run.id);
           const providers = [...new Set(run.sources.map((source) => providerLabel(source.provider)))];
           const isSelected = selected.includes(run.id);
+          const runStyle = runColor(nodeId, run.id);
           return (
             <li key={run.id} className={"experiment-run-item" + (isSelected ? " is-selected" : "")}>
-              <input
-                type="checkbox"
-                aria-label={(en ? "Select " : "选择 ") + run.label}
-                checked={isSelected}
-                onChange={() => toggle(run.id)}
-              />
-              <div className="experiment-run-identity">
+              <label className="experiment-run-toggle">
+                <input
+                  type="checkbox"
+                  aria-label={(en ? "Select " : "选择 ") + run.label}
+                  checked={isSelected}
+                  onChange={() => toggle(run.id)}
+                />
+                <svg className="experiment-run-swatch" width="18" height="10" aria-hidden="true">
+                  <path
+                    d="M1 5 H17"
+                    stroke={CHART_COLORS[runStyle]}
+                    strokeDasharray={DASH_PATTERNS[runStyle % DASH_PATTERNS.length].join(" ") || undefined}
+                    strokeWidth="2.4"
+                  />
+                </svg>
                 <strong>{run.label}</strong>
+              </label>
+              <span className="experiment-run-facts">
                 <RunStatusDot status={run.status} en={en} />
-                <small>
-                  {providers.length ? providers.join(" · ") : en ? "Recorded by hand" : "手工记录"}
+                <span className="experiment-run-source">
+                  {providers.length ? providers.join(" · ") : en ? "Hand-recorded" : "手工记录"}
                   {run.sources[0] && ` · ${shortSource(run.sources[0].sourceId)}`}
-                </small>
-                {run.note && <p>{run.note}</p>}
-              </div>
-              <div className="experiment-run-actions">
-                <button className="button" onClick={() => setLinkRun(run.id)}>
+                </span>
+                <span className="experiment-run-counts">
+                  {en ? "Materials" : "材料"} {links.length}
+                  {run.records.length > 0 && ` · ${en ? "records" : "记录"} ${run.records.length}`}
+                </span>
+              </span>
+              {run.note && <p className="experiment-run-note">{run.note}</p>}
+              <span className="experiment-run-actions">
+                <button
+                  className="research-icon-button"
+                  aria-label={en ? "Link material" : "关联材料"}
+                  title={en ? "Link material" : "关联材料"}
+                  onClick={() => setLinkRun(run.id)}
+                >
                   <Link2 size={15} />
-                  {en ? "Link material" : "关联材料"}
                 </button>
                 {canEdit && (
                   <button
@@ -190,13 +210,7 @@ export function ExperimentRunsPanel({
                     <Trash2 size={15} />
                   </button>
                 )}
-              </div>
-              <div className="experiment-run-material">
-                <span>
-                  {en ? "Materials" : "材料"} {links.length}
-                  {run.records.length > 0 && ` · ${en ? "records" : "记录"} ${run.records.length}`}
-                </span>
-              </div>
+              </span>
             </li>
           );
         })}
@@ -228,53 +242,43 @@ export function ExperimentRunsPanel({
       {data.materialLinks.length > 0 && (
         <section className="experiment-material-section" aria-labelledby="experiment-material-heading">
           <h2 id="experiment-material-heading">{en ? "Material associations" : "材料关联"}</h2>
-          <div className="research-table-wrap">
-            <table className="research-table">
-              <thead>
-                <tr>
-                  {(en ? ["Run", "Material", "Item", "Version", "Actions"] : ["运行", "材料", "具体项", "版本", "操作"]).map((label) => (
-                    <th key={label}>{label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.materialLinks.map((link) => (
-                  <tr key={link.id}>
-                    <td>{data.runs.find((run) => run.id === link.runId)?.label}</td>
-                    <td>
-                      <button className="button" onClick={() => setViewMaterial(link)}>
-                        {link.title}
-                      </button>
-                      {link.archived && <span className="research-badge">{en ? "Archived" : "已归档"}</span>}
-                    </td>
-                    <td>
-                      {link.selection.kind === "row" || link.selection.kind === "assetRow"
-                        ? (en ? "Row " : "第 ") + (link.selection.rowIndex + 1) + (en ? "" : " 行")
-                        : link.selection.kind === "asset"
-                          ? (link.item?.label ?? (en ? "File" : "文件"))
-                          : en
-                            ? "Block"
-                            : "内容块"}
-                    </td>
-                    <td>v{link.blockRevision}</td>
-                    <td>
-                      {canEdit && (
-                        <button
-                          className="research-icon-button"
-                          aria-label={(en ? "Unlink " : "解除关联 ") + link.title}
-                          onClick={() => {
-                            void save({ removeLinkIds: [link.id] }).catch((cause) => setError(cause.message));
-                          }}
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="experiment-material-list">
+            {data.materialLinks.map((link) => (
+              <li key={link.id} className="experiment-material-link">
+                <div className="experiment-material-link-title">
+                  <button className="button" onClick={() => setViewMaterial(link)}>
+                    {link.title}
+                  </button>
+                  <span className="experiment-material-link-meta">
+                    {data.runs.find((run) => run.id === link.runId)?.label}
+                    <span aria-hidden="true">·</span>
+                    {link.selection.kind === "row" || link.selection.kind === "assetRow"
+                      ? (en ? "Row " : "第 ") + (link.selection.rowIndex + 1) + (en ? "" : " 行")
+                      : link.selection.kind === "asset"
+                        ? (link.item?.label ?? (en ? "File" : "文件"))
+                        : en
+                          ? "Block"
+                          : "内容块"}
+                    <span aria-hidden="true">·</span>v{link.blockRevision}
+                  </span>
+                </div>
+                <span className="experiment-material-link-actions">
+                  {link.archived && <span className="research-badge">{en ? "Archived" : "已归档"}</span>}
+                  {canEdit && (
+                    <button
+                      className="research-icon-button"
+                      aria-label={(en ? "Unlink " : "解除关联 ") + link.title}
+                      onClick={() => {
+                        void save({ removeLinkIds: [link.id] }).catch((cause) => setError(cause.message));
+                      }}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
       {editor && (

@@ -72,18 +72,18 @@ export function ExperimentRecordBlock({
       )}
       {query.data && (
         <>
-          <div className="experiment-run-toolbar">
-            <span className="research-badge">
+          <div className="experiment-record-head">
+            <span className="experiment-record-meta">
               {block.payload.provider === "wandb"
                 ? "W&B"
                 : block.payload.provider === "tensorboard"
                   ? "TensorBoard"
                   : "MLflow"}
-            </span>
-            <span>
+              <span aria-hidden="true">·</span>
               {query.data.runs.length} {en ? "runs" : "次运行"}
             </span>
             <SelectMenu
+              className="experiment-record-metric"
               ariaLabel={en ? "Curve metric" : "曲线指标"}
               value={metric}
               onChange={setMetric}

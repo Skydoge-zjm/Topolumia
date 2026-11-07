@@ -1,34 +1,67 @@
 .experiment-plots {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 28px 32px;
 }
 .experiment-plot-warning {
   grid-column: 1 / -1;
 }
+/* One legend for every metric: repeating the same run list above each chart
+   tripled the reading before the curves themselves. */
+.experiment-plot-legend {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
+  align-items: center;
+  margin-bottom: -8px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--color-line-soft);
+}
 .experiment-metric-chart {
   min-width: 0;
   margin: 0;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line, #dce5df);
+  padding: 0;
 }
 .experiment-metric-chart > figcaption {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 14px;
+  margin-bottom: 6px;
   overflow-wrap: anywhere;
+}
+.experiment-chart-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.experiment-chart-title strong {
+  color: var(--color-ink);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.experiment-chart-title span {
+  color: var(--color-muted);
+  font-size: 12px;
 }
 .experiment-chart-actions {
   display: flex;
   flex-shrink: 0;
+  gap: 2px;
 }
-.experiment-chart-legends {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  padding: 8px 0;
+.experiment-chart-actions .research-icon-button {
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  color: var(--color-muted);
+}
+.experiment-chart-actions .research-icon-button svg {
+  width: 15px;
+  height: 15px;
 }
 .experiment-chart-legend {
   display: inline-flex;
@@ -110,18 +143,32 @@
 }
 .experiment-chart-metadata {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px 12px;
+  min-height: 26px;
+  margin-top: 2px;
+  color: var(--color-muted);
   font-size: 12px;
-  color: #52645a;
+}
+.experiment-chart-metadata .research-badge {
+  padding: 1px 7px;
+  border-color: transparent;
+  background: var(--color-warn-soft);
+  color: var(--color-warn);
 }
 .experiment-raw-values {
-  margin-top: 8px;
   font-size: 12px;
 }
 .experiment-raw-values > summary {
   width: fit-content;
+  padding: 3px 0;
+  color: var(--color-muted);
   cursor: pointer;
+}
+.experiment-raw-values > summary:hover {
+  color: var(--color-mint);
 }
 .experiment-raw-values > .select-menu {
   margin: 10px 0;
@@ -181,25 +228,28 @@
 /* --- workbench layout: run rail beside experiment material --- */
 .experiment-workbench {
   display: grid;
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(272px, 320px) minmax(0, 1fr);
+  gap: 32px;
   align-items: start;
   margin-top: 8px;
 }
 .experiment-rail {
   position: sticky;
-  top: 12px;
+  top: 16px;
   min-width: 0;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border-radius: 10px;
   background: var(--color-panel);
 }
 .experiment-rail-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  gap: 14px;
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
 }
 .experiment-rail-body > * {
   min-width: 0;
@@ -227,70 +277,195 @@
   list-style: none;
 }
 .experiment-run-item {
+  position: relative;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    "check identity actions"
-    ". materials materials";
-  gap: 4px 8px;
-  align-items: start;
-  padding: 10px 8px;
+    "toggle actions"
+    "facts facts"
+    "note note";
+  gap: 6px 8px;
+  padding: 10px 10px 12px;
   border-radius: var(--radius-sm);
 }
-.experiment-run-item + .experiment-run-item {
-  border-top: 1px solid var(--color-line-soft);
-}
-.experiment-run-item.is-selected {
+.experiment-run-item:hover {
   background: var(--color-mint-pale);
 }
-.experiment-run-item > input[type="checkbox"] {
-  grid-area: check;
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
+.experiment-run-item.is-selected {
+  background: var(--color-mint-soft);
+  box-shadow: inset 2px 0 var(--color-mint);
 }
-.experiment-run-identity {
-  grid-area: identity;
-  display: grid;
-  gap: 2px;
+.experiment-run-toggle {
+  grid-area: toggle;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  cursor: pointer;
 }
-.experiment-run-identity strong {
-  overflow-wrap: anywhere;
+.experiment-run-toggle input[type="checkbox"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-mint);
+}
+.experiment-run-swatch {
+  flex: none;
+  color: var(--color-muted);
+}
+.experiment-run-toggle strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink);
   font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.experiment-run-identity small,
-.experiment-run-identity p {
+.experiment-run-facts {
+  grid-area: facts;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  align-items: center;
+  padding-left: 24px;
   color: var(--color-muted);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
-.experiment-run-identity p {
-  margin: 2px 0 0;
+.experiment-run-source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.experiment-run-counts {
+  font-variant-numeric: tabular-nums;
+}
+.experiment-run-note {
+  grid-area: note;
+  display: -webkit-box;
+  margin: 0;
+  padding-left: 24px;
+  overflow: hidden;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 .experiment-run-actions {
   grid-area: actions;
   display: flex;
+  gap: 2px;
+}
+.experiment-run-actions .research-icon-button {
+  min-width: 26px;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+}
+.experiment-run-actions .research-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+.experiment-record-head {
+  display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
 }
-.experiment-run-actions .button {
-  min-height: 32px;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-.experiment-run-material {
-  grid-area: materials;
+.experiment-record-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
   color: var(--color-muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.experiment-record-head .experiment-record-metric {
+  flex: 0 1 220px;
+  min-width: 150px;
+}
+.experiment-record-head .experiment-record-metric .select-menu-trigger {
+  min-height: 32px;
+  font-size: 13px;
 }
 .experiment-material-section {
-  margin-top: 16px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-line-soft);
 }
 .experiment-material-section h2 {
   margin: 0 0 8px;
-  font-size: 16px;
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.experiment-material-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.experiment-material-link {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.experiment-material-link:last-child {
+  border-bottom: 0;
+}
+.experiment-material-link-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.experiment-material-link-title .button {
+  min-height: 0;
+  justify-content: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 550;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.experiment-material-link-title .button:hover {
+  background: transparent;
+  color: var(--color-mint);
+}
+.experiment-material-link-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.experiment-material-link-actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+}
+.experiment-material-link-actions .research-icon-button {
+  min-width: 26px;
+  width: 26px;
+  height: 26px;
 }
 .experiment-filter-note {
   display: flex;
@@ -456,4 +631,93 @@
   border-radius: var(--radius-sm);
   background: var(--color-mint-pale);
   font-size: 12px;
+}
+
+/* --- experiment detail page ---
+   The experiment page is read as a notebook: a strong title, one sentence of
+   intent, then the data. Chrome recedes so the curves and run labels lead. */
+.research-detail.is-experiment {
+  max-width: 1440px;
+}
+.research-detail.is-experiment .research-page-heading {
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.research-detail.is-experiment .research-detail-title h1 {
+  max-width: 22ch;
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+}
+.research-detail.is-experiment .research-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding-top: 2px;
+}
+.research-detail.is-experiment .research-actions > .research-badge {
+  border-color: transparent;
+  background: var(--color-mint-soft);
+  color: var(--color-green2);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.research-detail.is-experiment .research-core-summary {
+  margin-bottom: 20px;
+  padding: 0 0 0 14px;
+  border: 0;
+  border-left: 3px solid var(--color-mint);
+  border-radius: 0;
+  background: transparent;
+}
+.research-detail.is-experiment .research-core-summary p {
+  max-width: 78ch;
+  color: var(--color-ink-soft);
+  font-size: 15px;
+  line-height: 1.7;
+}
+.research-detail.is-experiment .research-tabs {
+  gap: 2px;
+  margin-bottom: 18px;
+}
+.research-detail.is-experiment .research-tabs button {
+  padding: 10px 14px;
+  border-bottom-width: 2px;
+  font-size: 14px;
+}
+.research-detail.is-experiment .research-inline-facts {
+  gap: 6px;
+  margin: -4px 0 16px;
+}
+.research-detail.is-experiment .research-inline-facts .research-badge {
+  padding: 2px 9px;
+  border-color: transparent;
+  background: var(--color-mint-pale);
+  color: var(--color-ink-soft);
+}
+/* Record cards inside the experiment read as one continuous sheet. */
+.research-detail.is-experiment .content-block-card {
+  padding: 20px 22px;
+  border-color: var(--color-line);
+  border-radius: 10px;
+  background: var(--color-panel);
+}
+.research-detail.is-experiment .content-block-card > header {
+  margin-bottom: 16px;
+}
+.research-detail.is-experiment .content-block-title h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+/* A representation switch is a control, not a headline: keep it at its own width. */
+.research-detail.is-experiment .content-block-card > div > [translate="no"] > .select-menu,
+.research-detail.is-experiment .content-block-card [translate="no"] > .select-menu {
+  width: min(260px, 100%);
+  margin-bottom: 14px;
+}
+.research-detail.is-experiment .content-block-card .select-menu-trigger {
+  min-height: 32px;
+  font-size: 13px;
 }

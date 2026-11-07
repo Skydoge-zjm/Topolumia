@@ -16,6 +16,7 @@ import {
   lineLabel,
   nearestValue,
   runColor,
+  runKey,
   seriesByMetric,
   seriesKey,
   tickFormat,
@@ -48,6 +49,17 @@ export function ExperimentPlots({
   candidateId?: string;
 }) {
   const groups = useMemo(() => seriesByMetric(plot.series), [plot.series]);
+  // One toggle per run, acting on every metric at once: repeating the same three
+  // series above each chart only buried the curves.
+  const multiNode = useMemo(
+    () => new Set(plot.series.map((line) => line.nodeId)).size > 1,
+    [plot.series],
+  );
+  const legendEntries = useMemo(
+    () => [...new Map(plot.series.map((line) => [runKey(line), line])).values()],
+    [plot.series],
+  );
+  const [hidden, setHidden] = useState<string[]>([]);
   const grouped = new Map<
     string,
     { runId: string; label: string; message: string }[]
@@ -90,12 +102,54 @@ export function ExperimentPlots({
           </ul>
         </details>
       )}
+      {legendEntries.length > 1 && (
+        <div
+          className="experiment-plot-legend"
+          role="group"
+          aria-label={en ? "Runs shown in every chart" : "所有图表显示的运行"}
+        >
+          {legendEntries.map((line) => {
+            const key = runKey(line),
+              style = runColor(line.nodeId, line.runId),
+              shown = !hidden.includes(key);
+            return (
+              <button
+                type="button"
+                key={key}
+                aria-pressed={shown}
+                className="experiment-chart-legend"
+                onClick={() =>
+                  setHidden((current) =>
+                    current.includes(key)
+                      ? current.filter((item) => item !== key)
+                      : [...current, key],
+                  )
+                }
+              >
+                <svg width="24" height="12" aria-hidden="true">
+                  <path
+                    d="M0 6 H24"
+                    stroke={CHART_COLORS[style]}
+                    strokeDasharray={
+                      DASH_PATTERNS[style % DASH_PATTERNS.length].join(" ") ||
+                      undefined
+                    }
+                    strokeWidth="2"
+                  />
+                </svg>
+                {lineLabel(line, multiNode)}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {groups.map(([metric, metricLines]) => (
         <MetricChart
           key={metric}
           metric={metric}
           lines={metricLines}
           en={en}
+          hidden={hidden}
           blockId={blockId}
           blockRevision={blockRevision}
           candidateId={candidateId}
@@ -138,6 +192,7 @@ function MetricChart({
   metric,
   lines,
   en,
+  hidden,
   blockId,
   blockRevision,
   candidateId,
@@ -145,6 +200,7 @@ function MetricChart({
   metric: string;
   lines: RecordLine[];
   en: boolean;
+  hidden: string[];
   blockId?: string;
   blockRevision?: number;
   candidateId?: string;
@@ -152,7 +208,6 @@ function MetricChart({
   const container = useRef<HTMLDivElement>(null);
   const live = useRef<HTMLSpanElement>(null);
   const chart = useRef<uPlot | null>(null);
-  const [hidden, setHidden] = useState<string[]>([]);
   const canvas = canvasUsable();
   const multiNode = useMemo(
     () => new Set(lines.map((line) => line.nodeId)).size > 1,
@@ -162,12 +217,8 @@ function MetricChart({
     () => (line: RecordLine) => lineLabel(line, multiNode),
     [multiNode],
   );
-  const legendEntries = useMemo(
-    () => [...new Map(lines.map((line) => [seriesKey(line), line])).values()],
-    [lines],
-  );
   const visible = useMemo(
-    () => lines.filter((line) => !hidden.includes(seriesKey(line))),
+    () => lines.filter((line) => !hidden.includes(runKey(line))),
     [lines, hidden],
   );
   const xKeys = useMemo(
@@ -293,7 +344,10 @@ function MetricChart({
       data-series-count={visible.length}
     >
       <figcaption>
-        <strong>{metric}</strong>
+        <div className="experiment-chart-title">
+          <strong>{metric}</strong>
+          <span>{xKeys.join(" / ")}</span>
+        </div>
         <div className="experiment-chart-actions">
           <button
             className="research-icon-button"
@@ -322,74 +376,30 @@ function MetricChart({
         </div>
       </figcaption>
       <div
-        className="experiment-chart-legends"
-        role="group"
-        aria-label={en ? "Series" : "曲线系列"}
-      >
-        {legendEntries.map((line) => {
-          const key = seriesKey(line),
-            style = runColor(line.nodeId, line.runId);
-          return (
-            <button
-              type="button"
-              key={key}
-              aria-pressed={!hidden.includes(key)}
-              className="experiment-chart-legend"
-              onClick={() =>
-                setHidden((current) =>
-                  current.includes(key)
-                    ? current.filter((item) => item !== key)
-                    : [...current, key],
-                )
-              }
-            >
-              <svg width="24" height="12" aria-hidden="true">
-                <path
-                  d="M0 6 H24"
-                  stroke={CHART_COLORS[style]}
-                  strokeDasharray={
-                    DASH_PATTERNS[style % DASH_PATTERNS.length].join(" ") ||
-                    undefined
-                  }
-                  strokeWidth="2"
-                />
-              </svg>
-              {label(line)}
-              {line.xKey !== xKeys[0] && (
-                <span className="experiment-chart-legend-axis">
-                  · {line.xKey}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <div
         ref={container}
         className="experiment-chart-surface"
         role="img"
         tabIndex={0}
-        aria-label={`${metric} · ${legendEntries.length} ${en ? "runs" : "次运行"}`}
+        aria-label={`${metric} · ${visible.length} ${en ? "runs" : "次运行"}`}
         onDoubleClick={reset}
       >
         {!canvas && <FallbackTable lines={visible} xs={data[0]} en={en} />}
       </div>
       <span ref={live} className="visually-hidden" aria-live="polite" />
       <div className="experiment-chart-metadata">
-        <span>{xKeys.join(" / ")}</span>
+        <RawValues
+          lines={lines}
+          en={en}
+          blockId={blockId}
+          blockRevision={blockRevision}
+          candidateId={candidateId}
+        />
         {lines.some((line) => line.sampled) && (
           <span className="research-badge">
             {en ? "Sampled display" : "曲线展示已采样"}
           </span>
         )}
       </div>
-      <RawValues
-        lines={lines}
-        en={en}
-        blockId={blockId}
-        blockRevision={blockRevision}
-        candidateId={candidateId}
-      />
     </figure>
   );
 }

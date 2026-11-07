@@ -382,6 +382,10 @@ test("notes, multi-run records, versioned material links and temporary compariso
     expect(c.nodes.nodes().length).toBe(nodeCount);
     expect(c.store.all("blocks").length).toBe(blockCount);
     expect(c.store.all("candidates").length).toBe(0);
+    await page.screenshot({
+      path: "runtime/self-review/experiment-record-desktop.png",
+      fullPage: true,
+    });
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByRole("figure")).toHaveCount(4);
         expect(

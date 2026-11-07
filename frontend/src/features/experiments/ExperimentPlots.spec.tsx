@@ -51,7 +51,7 @@ const show = () =>
     </QueryClientProvider>,
   );
 
-it("shows one chart per exact metric with all three runs and independent legends", () => {
+it("shows one chart per exact metric and toggles a run across all of them at once", () => {
   show();
   expect(screen.getAllByRole("figure")).toHaveLength(4);
   const loss = within(screen.getByRole("figure", { name: "train/loss" }));
@@ -60,25 +60,21 @@ it("shows one chart per exact metric with all three runs and independent legends
     "data-series-count",
     "3",
   );
-  expect(loss.getByRole("button", { name: "Run 2" })).toHaveAttribute(
+  const legend = within(
+    screen.getByRole("group", { name: "Runs shown in every chart" }),
+  );
+  expect(legend.getAllByRole("button")).toHaveLength(3);
+  expect(legend.getByRole("button", { name: "Run 2" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  fireEvent.click(loss.getByRole("button", { name: "Run 2" }));
-  expect(loss.getByRole("button", { name: "Run 2" })).toHaveAttribute(
+  fireEvent.click(legend.getByRole("button", { name: "Run 2" }));
+  expect(legend.getByRole("button", { name: "Run 2" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
-  expect(screen.getByRole("figure", { name: "train/loss" })).toHaveAttribute(
-    "data-series-count",
-    "2",
-  );
-  expect(
-    within(screen.getByRole("figure", { name: "eval/psnr" })).getByRole(
-      "button",
-      { name: "Run 2" },
-    ),
-  ).toHaveAttribute("aria-pressed", "true");
+  for (const figure of screen.getAllByRole("figure"))
+    expect(figure).toHaveAttribute("data-series-count", "2");
 });
 
 it("keeps colours bound to the run identity, not to its position", () => {
