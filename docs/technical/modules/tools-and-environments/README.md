@@ -33,8 +33,18 @@ get_environment 读取选择与缓存，不启动发现、导入包或执行新�
 
 ## 边界与验证
 
-科研环境切换不切换 Topolumia 的 Node.js，不自动重启全部 Agent 或调度远程训练。训练资源管理和远程执行编排尚未交付。
+科研环境切换不切换 Topolumia 的 Node.js，不自动重启全部 Agent 或调度远程训练。训练资源管理和远程训练执行编排尚未交付。
+
+## 托管实验采集
+
+[环境页](../../../../frontend/src/features/environments/RecordCollectorsPanel.tsx)按主机提供部署并启用、状态、目录、暂停与恢复。主机选择、SSH 登录与项目目录作为部署上下文；实验记录适配器在独立读取环境安装，由平台控制部署、后台启停、检测和恢复。进程能力按主机和登录用户复用，项目采集范围与授权独立保存；浏览环境不改变正在采集的项目。默认在项目目录增量发现原生文件，允许记住附加目录。
+
+状态分别表示部署阶段、进程活性、传输及最近数据，不能沿用旧检查冒充在线。关闭页面不影响后台；断连保留游标与队列，恢复重用稳定身份。仅项目管理者可部署、配置和启停；研究者按科研权限选择运行。项目来源及块选择的查询机制见[实验模块](../experiments-and-sources/README.md)。实现由[托管采集管理器](../../../../src/services/environments/managed-record-collectors.ts)、[受控 Python 部署器](../../../../scripts/runtime/manage-record-collector.py)及[HTTP 入口](../../../../src/http/routes/managed-records.ts)协调。
 
 [research-environment-context.test.ts](../../../../tests/environments/research-environment-context.test.ts) 验证小梗概、缓存与边界；[environment-catalog.test.ts](../../../../tests/environments/environment-catalog.test.ts)、[research-environment-service.test.ts](../../../../tests/environments/research-environment-service.test.ts) 验证选择与探测；[ssh-connections.test.ts](../../../../tests/environments/ssh-connections.test.ts)、[ssh-environment.test.ts](../../../../tests/environments/ssh-environment.test.ts) 验证连接与远程操作。
 
 真实 SSH / GPU 检测只在相关变更需要时运行。普通前端修改不要求重复登录、扫描全部环境。
+
+读取器按主机用户和工具共享独立 venv，项目来源分别持有目录、授权、进程实例和队列。本机通过受控子进程部署，远程使用已认证 SSH 的执行及回环反向转发；重连重建通道，队列以稳定来源身份绑定而不绑定临时端口。后台定时检测进程与状态文件，私有实例控制请求完成停止；工作台离线时保留后台与待发数据。
+
+部署需要可用的 Python 3.10+ 和包下载源，支持所选解释器环境的 pip 配置。依赖准备、安装、启动、错误和接收时间分别反馈；可重试部署，不改写训练依赖。单目录恢复不影响其他采集目录，重复或互相包含的采集范围被拒绝。相关验证见[采集器回归](../../../../scripts/testing/test-experiment-collector.py)、[记录接收回归](../../../../tests/research/record-ingestion.test.ts)及环境页测试。

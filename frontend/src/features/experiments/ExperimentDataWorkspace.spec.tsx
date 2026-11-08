@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ExperimentDataWorkspace } from "./ExperimentDataWorkspace";
 
@@ -172,4 +173,64 @@ it("paginates exact points and handles a failed run without metrics", async () =
   fireEvent.click(screen.getByRole("option", { name: "Run 2" }));
   await screen.findByText("No scalar metrics for this run.");
   expect(screen.queryByRole("table")).toBeNull();
+});
+
+it("returns to live data after leaving a fixed snapshot instead of reusing a cached snapshot", async () => {
+  const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.startsWith("/api/research-nodes/"))
+      return Response.json({ runs: [{ id: "run:live", label: "Live run", status: "running" }] });
+    const input = JSON.parse(String(options?.body));
+    if (input.mode === "runs")
+      return Response.json({ data: { items: [{ id: input.snapshotId ? "run:snapshot" : "run:live", label: input.snapshotId ? "Snapshot run" : "Live run", status: "running" }] }, page: { nextCursor: null } });
+    if (input.mode === "metrics")
+      return Response.json({ data: { items: [{ key: "loss", xKey: "step", pointCount: 1, readHint: { expectedContentVersion: input.snapshotId ? "snapshot-v1" : "live-v2" } }] }, page: { nextCursor: null } });
+    return Response.json({ columns: [{ metric: "loss", xKey: "step", pointCount: 1, points: [{ x: 0, y: input.snapshotId ? 1 : 2 }], nextOffset: null }] });
+  });
+  vi.stubGlobal("fetch", fetch);
+  function Harness() {
+    const [snapshotId, setSnapshotId] = useState<string | undefined>("snapshot:old");
+    return <ExperimentDataWorkspace nodeId="experiment" blockId="block" snapshotId={snapshotId} onLatest={() => setSnapshotId(undefined)} en />;
+  }
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><Harness /></QueryClientProvider>);
+
+  expect(await screen.findByRole("cell", { name: "1" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Read latest data" }));
+  expect(await screen.findByRole("cell", { name: "2" })).toBeVisible();
+  expect(fetch.mock.calls.some(([url]) => url.includes("/record-blocks/") && url.endsWith("/snapshots"))).toBe(false);
+  const tableRequests = fetch.mock.calls.filter(([url, options]) => url.endsWith("/table") && options?.body).map(([, options]) => JSON.parse(String(options?.body)));
+  expect(tableRequests.some(request => request.snapshotId === "snapshot:old")).toBe(true);
+  expect(tableRequests.at(-1)?.snapshotId).toBeUndefined();
+});
+
+it("keeps two live record blocks isolated in the latest data view", async () => {
+  const blockRuns = {
+    "block:a": [{ id: "run:a", label: "Block A run", status: "running" }],
+    "block:b": [{ id: "run:b", label: "Block B run", status: "running" }],
+  };
+  const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.startsWith("/api/research-nodes/")) {
+      const blockId = new URL("http://test.local" + url).searchParams.get("blockId")!;
+      return Response.json({ runs: blockRuns[blockId as keyof typeof blockRuns] });
+    }
+    const input = JSON.parse(String(options?.body));
+    if (input.mode === "metrics") return Response.json({ data: { items: [{ key: "loss", xKey: "step", pointCount: 1 }] }, page: { nextCursor: null } });
+    return Response.json({ columns: [{ metric: "loss", xKey: "step", pointCount: 1, points: [{ x: 0, y: input.runId === "run:a" ? 1 : 2 }], nextOffset: null }] });
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+    <ExperimentDataWorkspace nodeId="experiment" blockId="block:a" en />
+    <ExperimentDataWorkspace nodeId="experiment" blockId="block:b" en />
+  </QueryClientProvider>);
+
+  await waitFor(() => expect(screen.getAllByRole("region", { name: "Experiment data" })).toHaveLength(2));
+  const regions = screen.getAllByRole("region", { name: "Experiment data" });
+  await within(regions[0]).findByRole("button", { name: "Data run" });
+  await within(regions[1]).findByRole("button", { name: "Data run" });
+  expect(within(regions[0]).getByRole("button", { name: "Data run" })).toHaveTextContent("Block A run");
+  expect(within(regions[1]).getByRole("button", { name: "Data run" })).toHaveTextContent("Block B run");
+  const overviewUrls = fetch.mock.calls.map(([url]) => url).filter((url) => url.includes("/experiment?blockId="));
+  expect(overviewUrls).toEqual(expect.arrayContaining([
+    "/api/research-nodes/experiment/experiment?blockId=block%3Aa",
+    "/api/research-nodes/experiment/experiment?blockId=block%3Ab",
+  ]));
 });

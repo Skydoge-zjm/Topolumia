@@ -41,7 +41,7 @@ export async function inspectRecordAssets(
     cursor = response.page.nextCursor;
   } while (cursor);
   for (const run of previousRuns)
-    if (run.ref && !runs.some((item) => item.sourceId === run.sourceId))
+    if ((run.ref || run.projectSource) && !runs.some((item) => item.sourceId === run.sourceId))
       runs.push(run);
   return { provider, runs };
 }

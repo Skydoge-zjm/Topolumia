@@ -5,6 +5,7 @@ import { objectBase } from "@/features/research/model";
 import type { ResearchObjectRef } from "@/features/research/model";
 import { useUnsavedChanges } from "@/features/research/useResearch";
 import { ContentBlockRenderer } from "./ContentBlockRenderer";
+import { ContentBlockProvenance } from "./ContentBlockProvenance";
 import type { ContentBlock } from "./ContentBlockRenderer";
 
 const DEFAULT_BODY_TITLE = "正文";
@@ -111,6 +112,7 @@ export function NoteBodyWorkspace({
           )}
         </div>
       </header>
+      <ContentBlockProvenance sourceRefs={block?.sourceRefs} en={en} />
       {editing ? (
         <form
           className="research-form"

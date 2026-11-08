@@ -7,6 +7,7 @@ export async function handleExperimentRecordRoutes({
   pathname,
   requestRuntime: runtime,
   requestActor: actor,
+  url,
 }) {
   const c = runtime.researchCommands;
   if (
@@ -35,7 +36,7 @@ export async function handleExperimentRecordRoutes({
   if (!match) return false;
   const nodeId = decodeURIComponent(match[1]);
   if (request.method === "GET") {
-    sendJson(response, 200, c.records.overview(nodeId, actor));
+    sendJson(response, 200, c.records.overview(nodeId, actor, undefined, url?.searchParams.get("blockId") ?? undefined));
     return true;
   }
   if (request.method === "PATCH") {
@@ -44,12 +45,13 @@ export async function handleExperimentRecordRoutes({
     const operation = c.changes.validate(operationSchemas.editExperiment, {
       op: "editExperiment",
       owner: { kind: "node", id: nodeId },
+      blockId: body.blockId,
       expectedExperimentRevision: body.expectedExperimentRevision,
       patch: body.patch,
     });
     await c.records.prepareMaterialSelections(operation.patch, actor);
     c.changes.direct([operation], actor, "edit experiment records");
-    sendJson(response, 200, c.records.overview(nodeId, actor));
+    sendJson(response, 200, c.records.overview(nodeId, actor, undefined, body.blockId));
     return true;
   }
   return false;

@@ -1,3 +1,5 @@
+import * as z from "zod/v4";
+import { recordBatchSchema } from "../../../domain/research/record-ingestion.js";
 import { sendJson } from "../../../lib/http.js";
 
 import {
@@ -12,6 +14,7 @@ import {
 export async function handlePlatformSchemasRoutes(context) {
   const { request, response, pathname } = context;
 
+  if (pathname === "/api/schemas/record-ingestion" && request.method === "GET") { sendJson(response, 200, z.toJSONSchema(recordBatchSchema)); return true; }
   if (pathname === "/api/schemas/research-event" && request.method === "GET") {
     sendJson(response, 200, researchEventSchema);
     return true;

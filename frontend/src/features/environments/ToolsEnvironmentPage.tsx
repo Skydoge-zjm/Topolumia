@@ -1,3 +1,4 @@
+import { useSearchParams } from "react-router-dom";
 import type { ToolItem, ToolsEnvironment } from "./types/tools";
 export type { ToolItem, ToolsEnvironment } from "./types/tools";
 import { errorMessage } from "./toolDefinitions";
@@ -25,6 +26,7 @@ import base from "@/shared/layout/SetupPage.module.css";
 import styles from "./ToolsTable.module.css";
 import { EnvironmentTree } from "@/features/environments/catalog/tree/EnvironmentTree";
 import { SshEnvironmentSelector } from "@/features/environments/ssh/SshEnvironmentSelector";
+import { RecordCollectorsPanel } from "./RecordCollectorsPanel";
 import {
   environmentHeaders,
   sshOverviewKey,
@@ -34,8 +36,9 @@ import {
 export function ToolsEnvironmentPage() {
   const en = useUiStore((state) => state.locale === "en");
   const currentProject = projectId();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [view, setView] = useState({ project: currentProject, id: "" });
+  const [view, setView] = useState({ project: currentProject, id: searchParams.get("hostId") ?? "" });
   const sshId = view.project === currentProject ? view.id : "";
   const key = ["tools-environment", currentProject, sshId || "local"];
   const headers = environmentHeaders(currentProject, sshId);
@@ -288,6 +291,7 @@ export function ToolsEnvironmentPage() {
       )}
       {inventory.data && (
         <>
+          <RecordCollectorsPanel en={en} sshId={sshId} canManage={canManage} online={Boolean(online)} />
           <EnvironmentTree
             key={`${currentProject}:${actor}:${sshId}`}
             project={currentProject}

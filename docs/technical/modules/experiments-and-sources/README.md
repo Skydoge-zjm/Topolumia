@@ -1,63 +1,95 @@
 # 实验记录与来源
 
-业务边界见 [科研模型](../../../product/business/research-model.md)，验收见 [工作区需求](../../../product/requirements/research-workspace.md)。实验节点记录可复现的结果单位，可含失败、重试和复现的多个 run。平台读取、归档和呈现已有材料，不增加训练 SDK 或启动器。
+实验节点表达可复现的结果单位，只保存结果表格、图片或指标也是完整用法。可选的 experimentRecord 内容块承载过程工作台。业务见[科研模型](../../../product/business/research-model.md#实验与-run)，操作与验收见[工作区需求](../../../product/requirements/research-workspace.md#实验记录块归属)。平台读取已有记录，不启动训练或替代训练 SDK。
 
-## 实验对象与共同写入
+## 内容块归属
 
-[experiment-records.ts](../../../../src/domain/research/experiment-records.ts) 定义统一 run、材料关联和过程记录 payload。实验节点持有 run 清单、materialLinks 和 experimentRevision；`experimentRecord` 块引用这些 run，保存提供商、来源身份与原始资产 ID，不内嵌曲线数组。
+[experiment-records.ts](../../../../src/domain/research/experiment-records.ts) 定义块内 run 和材料关联。每个记录块拥有独立集合，集合身份等于块身份；独立表保存小型元数据，累计事件、点和附件独立持久化。普通实验节点不再持有 runs/materialLinks/experimentRevision，也不挂载全局运行栏或原始数据页。静态导入保留各块执行身份；托管项目来源由块显式选择引用，不复制累计数据。
 
-[experiment-mutations](../../../../src/services/research/changes/experiment-mutations.ts) 通过 `editExperiment` 接入共同模拟、提交、对象版本、历史和候选。人工入口携带观察版本；Agent 通过 nodeChanges.experimentPatch 提议并由人审阅，不直接修改正式实验。
+[共同变更](../../../../src/services/research/changes/experiment-mutations.ts) 的 editExperiment 必须携带目标 blockId 和集合观察版本。人工修改沿用统一事务、历史与冲突反馈；Agent 使用 nodeChanges.recordBlockId/experimentPatch 提议，不能直接修改科研对象。块中导入记录、手动运行元数据和材料引用都进入固定的块版本；连续接收的观察使用独立数据水位。
 
-run 标签不要求唯一，来源身份用于重复导入的识别；用户也可在导入时选择已有 run，不同来源可以归到同一次执行。绘图选择按实验和 run 身份去重，来源仍在对应记录块范围内合并。没有来源 ID 的文件按资产身份区分，不能仅因指标字节相同而合并独立执行。失败且尚无指标的有效 run 仍保留，不补造零值。
+[对象仓库](../../../../src/services/research/objects/repository.ts) 对已有节点级记录做一次事务交接，先保留原节点和内容块的完整备份，再将执行和关联归入各记录块。历史对象快照与原始资产保留；后续只读写新合同，没有长期双写。多个旧块曾共用一个 run 时保留其历史引用，精确读取须指定 blockId。
 
-## 原始记录与索引
+## 原始导入与解码
 
-[ExperimentRecordImporter](../../../../src/services/research/experiments/record-importer.ts) 读取上传的 `.wandb`、TensorBoard event 和 JSON/JSONL 标量记录。原件沿用 [资产生命周期](../content-blocks/file-lifecycle.md) 归档；派生数值索引按资产校验值保存，并可从原件重建。原件改变或索引失配会报告错误，不能用当前项目文件替代归档。
+[ExperimentRecordImporter](../../../../src/services/research/experiments/record-importer.ts) 支持归档的 .wandb、TensorBoard event 和 JSON/JSONL。上传字节沿用[资产生命周期](../content-blocks/file-lifecycle.md)，不可变原件和派生索引分开；原件改变或缺失报告错误。配置、命令、YAML、日志、最终表格继续使用普通内容块。
 
-每个项目惰性创建一个 [后台解析线程](../../../../src/services/research/experiments/record-worker.ts)，串行处理文件解析、数值索引、采样及表格范围读取，避免大 JSON 解析和原生读取器输出阻塞 HTTP 主线程。[RecordReader](../../../../src/services/research/experiments/record-reader.ts) 在该线程内保存完整数值；主线程只接收指标目录、请求的准确点范围或绘图采样。并发读取同一资产共用索引任务。数值索引缓存按序列化体积限制为 64 MiB；主线程目录缓存最多 256 项、8 MiB，这些是缓存计费额度，并非进程堆内存上限。超过额度的文件仍可读取，仅不保留该缓存。
+每项目惰性创建一个[后台解析线程](../../../../src/services/research/experiments/record-worker.ts)，处理静态解析、采样和表格范围。主线程只接收小目录或请求范围。同资产任务合并；后台数值缓存按序列化体积计费 64 MiB，主线程目录缓存最多 256 项、8 MiB。超过缓存额度仍可读取，不代表整个进程堆内存受此上限约束。静态派生目录为 experiment-record-v2，避免复用旧提取语义的缓存。
 
-正式实验读取直接查询节点及其 owner 的内容块，owner 查询有项目内索引；一次比较共用节点视图和资产目录，不为每个 run 构建全项目快照。候选比较仍读取候选快照，并在一次请求内共用。每次读取都重新检查权限和原件可用性，命中缓存不能绕过授权；来源、块版本与内容版本参与结果和冲突检查。关闭项目时先完成资产处理，再排空解析线程，释放原生子进程和缓存。
+[Python 静态读取器](../../../../scripts/runtime/experiment-record-parser.py) 与采集器复用[原生适配器](../../../../scripts/runtime/topolumia_collector/adapters.py)。W&B 容器读取保留[上游 MIT 声明](../../../../scripts/runtime/wandb_record_reader.py)；TensorBoard 使用原生 Event protobuf 和官方 CRC 实现读取 TFRecord 完整边界。静态读取器由 experimentRecords.pythonCommand 指定，依赖见[读取器依赖](../../../../requirements/experiment-record-readers.txt)。JSON 导入不要求 Python。
 
-[Python 读取器](../../../../scripts/runtime/experiment-record-parser.py) 使用 W&B protobuf 与 TensorBoard EventAccumulator。W&B 容器读取采用保留上游 MIT 声明的 [只读封装](../../../../scripts/runtime/wandb_record_reader.py)。读取器由 `experimentRecords.pythonCommand` 指定，默认 python，与项目训练解释器独立；可选依赖见 [experiment-record-readers.txt](../../../../requirements/experiment-record-readers.txt)。JSON/JSONL 读取不依赖 Python。
+静态导入同时写入与持续接收共用语义的 `experiment-record-events.v1` 事件索引；W&B/TensorBoard 的配置、摘要、媒体、分布、文件、生命周期和未知扩展可通过同一个 `read_experiment events` 查询。事件正文过大时返回预览和精确范围 readHint，原生附件仍独立下载；旧索引首次访问富事件时会在后台解析器中补建该事件索引。
 
-当前范围是有限数值标量及其 step / epoch / 时间来源；不统一解析第三方图片、直方图、音频或自定义面板。上传是快照，不持续监视用户项目中的增长文件。配置、代码、命令和终端日志用普通内容块归档，最终指标继续用 metric、table、XLSX、TeX/PDF 等内容能力表达。
+### 当前格式范围与已知缺口
+
+W&B 按 _type 子树排除图片宽高、表格行数等元数据，自定义 metric/通配定义及 step_sync 决定横轴。commit 与磁盘 flush 不等价，采集只能呈现已落盘记录。TensorBoard 保留全部观察及 session/restart 记录，不自动 purge，不按 step 去重或排序。重复和回退坐标均保留。
+
+持续合同使用带 dtype 的数值保存 int64/uint64、float32/64、NaN/Inf。准确范围返回原类型，画布仅绘制可表示的有限数值；大整数的画布位置采用近似值，准确表格保留十进制字符串。静态原生索引同时保存显示数值与原始带类型值，原件仍可下载。
+
+持续来源的配置/摘要更新与删除、表格版本/分段、分布、媒体引用、生命周期及未知插件均保留。界面提供配置/摘要、有限表格和分布预览，以及原文件下载；HTML、Plotly、图结构、embedding、Artifact 等高级插件的原生数据不等于原生交互渲染。单个容器不包含全部附件；缺依赖、超额度和不支持预览必须明确显示。云服务协议、框架 autolog、DDP/shared 和跨版本支持不由本轮样本推定。
 
 ## 材料与运行对应
 
-[ExperimentRecordService](../../../../src/services/research/experiments/record-service.ts) 按块版本和具体材料项保存关联：整块、文件、内联数据行、上传表格的工作表与物理行。内联 rowIndex 从数据首行计数，不含表头；assetRow 从原文件首行计数，包含表头。前端均以从 1 开始的行号操作，并显示所选数据。
+[ExperimentRecordService](../../../../src/services/research/experiments/record-service.ts) 按记录块/集合、run、材料块版本及具体选择保存关联。整块、文件、内联行和上传表格物理行都可选择；后续编辑不改写旧关联。内联 rowIndex 从数据首行计数，不含表头；assetRow 从原文件首行计数，包含表头。
 
-文件行关联以归档文件校验值、工作表与实际行数校验；人工提交前读取实际范围，Agent 则必须先通过 read_assets values 取得该范围的证据。候选可以增量关联自己已提议的 run 和材料。读取回执仅覆盖实际交付的 run、关联或表格范围，不能用目录摘要授权未读对象的修改。
+人工关联文件行前读取实际范围；Agent 必须取得对应工作表和行的读取回执。分页回执只覆盖实际交付的 run、关联及材料范围。自己提议的新记录和材料可以在同一候选中增量关联。持续来源的 run 可关联普通配置/日志块；人工标签、状态和备注修订仍经共同变更，不能借采集凭据写入。
 
-后续块编辑不改变已关联版本；详情、候选和历史通过同一只读呈现查看当时文件或行。材料之间的对应是实验内部关系，科研对象之间的逻辑仍由拓扑有向边表达。
+## 持续接收
 
-## 查看、比较与 Agent 读取
+默认部署为用户电脑或自有服务器运行 Topolumia 后端与存储，训练机运行原生 SDK、本地文件与采集器。两者可同机；远程需 HTTPS 或 SSH 隧道。W&B offline 和 TensorBoard 均无需第三方账号。
 
-[实验路由](../../../../src/http/routes/research/experiment-records.ts) 提供运行维护、只读数据与绘图接口。`read_experiment` 经共同 MCP / CLI / HTTP 合同提供 runs、materials、metrics、series、inspect 与 compare。通常先读取 run 目录，再读取指标目录，最后按范围读取准确数据点；材料返回可调用的 read_blocks / read_assets 提示。精确合同以 [tools.ts](../../../../src/domain/research/interfaces/tools.ts) 为准。
+```mermaid
+flowchart LR
+  SDK[原有 SDK] --> Files[原生日志与附件]
+  Files --> Adapter[来源适配器]
+  Adapter --> Queue[共用持久队列]
+  Queue --> API[项目来源接收端]
+  API --> Store[事件与索引事务]
+  Store --> View[前端与 Agent]
+```
 
-[ExperimentWorkbench](../../../../frontend/src/features/experiments/ExperimentWorkbench.tsx) 把实验详情组织为常驻的运行栏与研究材料：运行栏固定在页面滚动容器内，材料关联就地展开，不再需要先切换到另一个标签页记住内容块标题。过程记录卡片与普通材料复用同一内容块编辑、删除、排序及版本冲突处理；删除需要确认，编辑仍携带观察到的版本。运行栏支持重命名、改状态与删除；删除前说明指向该 run 的材料关联数，记录块仍在引用时拒绝删除并指出需先处理的内容块。
+### 合同与权限
 
-[ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 基于 uPlot 画布按指标绘制多 run 交互曲线，支持统一 run 图例、框选缩放、跨图表同步十字线和悬浮数值。每条曲线保留独立横坐标，避免 run 数乘以横坐标并集的空矩阵；重复点保留，步长重置时断开路径。指针位置按动画帧合并，预建索引后二分定位数据点。接近视口时创建画布，离开后释放并保存横轴缩放；悬浮窗最多显示 12 个 run 并提示剩余数量，曲线本身仍全部绘制。
+[record-ingestion.ts](../../../../src/domain/research/record-ingestion.ts) 是 v1 接收合同的权威；GET /api/schemas/record-ingestion 提供 JSON Schema，块接收端 capabilities 提供大小、编码和呈现能力。单批最多 128 个事件，采集器默认 128 个，避免大批事务阻塞交互。稳定事件身份由 streamId、writerId、generation 和 seq 组成，独立于横坐标；来源携带适配器/SDK 版本。相同事件重试幂等返回，同身份异内容整批冲突并回滚，序号缺口拒绝并返回期望位置，旧批重试不回退确认点。
 
-曲线只使用稳定的 run 颜色区分，同一 run 在内容块与对比窗口中保持一致。绘图受总点数预算控制，采样明确标注；精确原始点通过实验详情的“实验数据”页读取，图表页不展开原始数据。部分来源不可用时合并为一个可展开警告并保留其他可用曲线，权限错误仍拒绝读取。画布不可用时显示实验数据页入口。
+环境托管部署维护项目来源授权，逐次检查授予者当前权限。采集凭据仅允许指定来源的能力查询、批次和附件提交，不能改变科研归属或修改对象。细节见[权限架构](../../architecture/authorization.md#实验采集授权)。
 
-[ExperimentDataWorkspace](../../../../frontend/src/features/experiments/ExperimentDataWorkspace.tsx) 按运行呈现多指标数据表，读取全部指标目录，默认选前 12 列，最多同时显示 24 列并显示已选数量。系列身份由指标 key 和横轴 xKey 共同决定；同名不同横轴各占一列，列名显示横轴。每页通过 `/api/research/experiments/table` 的 metrics 选择数组一次读取所选各列最多 100 个原始点，每项携带 key、xKey 及目录的 expectedContentVersion。Agent 的 `read_experiment series` 使用目录 readHint 中的 metric、xKey 与版本读取独立的小预算精确范围；仅给名称而匹配多种横轴时返回歧义错误。前端在当前页按横坐标对齐，未出现在本页的值显示横线，不补零或插值，重复横坐标保留多条记录。行按实际视口高度虚拟化，冻结表头及横坐标列；TSV 复制包含当前页全部行，数值保留来源精度。页面及比较请求携带取消信号，切换范围时停止前端接收失效结果。
+### 持久接收与查询
 
-[ExperimentCompareDialog](../../../../frontend/src/features/experiments/ExperimentCompareDialog.tsx) 从拓扑图选中的多个实验进入，按实验身份载入各实验的全部 run，超过 24 次运行也不截断。`nodeIds` 指定完整实验范围，显式 `selections` 保留按 run 读取的合同；两种输入互斥。服务限制同时读取的来源数量并控制绘图点预算，保留失败和无指标的 run，只叠加完全同名的指标。实验节点内部不再提供重复的运行比较入口，比较窗口可调整实验范围、切换指标或通过图例隐藏运行。人和 Agent 的比较均为临时读取，不创建比较对象、内容块或候选；分析另建研究笔记，Agent 写入沿用审批。
+[RecordIngestionService](../../../../src/services/research/experiments/record-ingestion.ts) 在 SQLite FULL 事务内同时写入可重放事件、来源、run 目录及标量范围索引，提交后 ACK。事件正文保留原始来源封装；rebuild 可从事件重建目录/点/附件引用。没有独立文件日志与数据库之间的确认窗口。持久与可查询水位分别返回，首版在同一事务内相等；附件齐全独立反馈。详见[存储与快照](../../architecture/data-and-storage.md#实验连续记录存储)。
 
-## 服务来源与刷新
+点按观察序号建立索引，准确页最多 100 点/指标，不扫描之前的累计前缀；每 128 点维护一个增量极值摘要，采样读取小型摘要及快照尾部，受每图和总体点数预算约束。附件按 SHA-256 独立流式写入、校验、同步落盘并登记，单附件上限 64 MiB；文件提交前后仍检查授权。重试不复制原件，附件慢不阻断标量确认。
 
-[AdapterRegistry](../../../../src/services/platform/adapter-registry.ts) 装配 Git、文件系统、MLflow、W&B、TensorBoard 与执行适配器。[ExperimentTrackingGateway](../../../../src/services/experiments/experiment-tracking-gateway.ts) 管服务运行列表、指标、系列、缓存与读取限额。实验记录块可选择已接入的服务 run；服务值随来源变化，也可能已被提供商采样，不视为归档原文件中的完整历史。
+固定快照保存数据水位、科研块/材料版本、run 目录及附件清单。后续追加、改标签、归档记录块或删除节点都不改变快照中的读取依据；项目权限仍检查。停止采集或撤销凭据不授权删除已收数据。
 
-TensorBoard、W&B 安装版本是环境事实，追踪源是连接，实际 run 是执行身份；环境选择不会自动让追踪服务读取远端任意日志。`/api/research-experiments` 只列正式保存的实验和 run；合成样例只用于明确的来源夹具，不作为节点结果兜底。
+### 托管采集
 
-[SourceRefreshCoordinator](../../../../src/services/platform/source-refresh-coordinator.ts) 管新鲜度、后台检查和合并请求。活跃研究操作或 Agent 工作可推迟刷新，来源刷新不能覆盖已保存的科研对象。文件来源排除应用数据、transfer 与 Skill 快照；资产通过领域接口读取，不扫描 runtime 发现材料。状态哈希排除纯时间戳噪声。
+“工具与环境”按主机展示 W&B/TensorBoard 适配器，复用 SSH 登录和远端项目目录；平台部署独立 Python 读取环境、管理后台进程、私有凭据和传输。项目范围默认使用项目目录，附加路径按项目和主机持久化。普通操作不下载脚本、不要求用户维护终端或填写服务地址。接入入口统一在环境页，实验块选择项目记录或导入文件。
+
+[项目记录目录](../../../../src/services/research/experiments/project-records.ts)按项目及过滤条件执行 SQL 分页，只反序列化请求页；显式运行读取走主键，浏览目录不解析全部科研材料或累计点。项目来源与记录块分离：来源持有原生运行及累计事件，块保存显式运行选择和可选专属目录规则；新 run 默认未归属。同一来源可由多个块明确引用，存储不复制。查询按块选择过滤运行、事件和附件，快照固定来源水位及选择，目录改动与后续追加不改变已固定范围。
+
+[Python 采集器](../../../../scripts/runtime/topolumia_collector/cli.py) 与[共用队列](../../../../scripts/runtime/topolumia_collector/spool.py) 保留原生游标、解释上下文、稳定序号及附件事务；ACK 后推进确认点，默认积压额度 128 MiB，额度不足暂停读取。适配器仅负责原生解码，身份、归档、队列和重试由公共运行时承担；覆盖/截断建立新 generation，半条记录等待，完整坏校验报告错误。原生文件按 4 MiB 完整前缀分段归档，媒体依赖独立处理。
+
+具体部署入口、进程生命周期和环境权限见[工具与环境模块](../tools-and-environments/README.md)。
+
+## 界面与 Agent
+
+[ExperimentWorkbench](../../../../frontend/src/features/experiments/ExperimentWorkbench.tsx) 挂载在记录块中，提供曲线、事件与附件、运行与材料、数据表以及展开视图；共享块编辑、排序、归档、草稿与冲突机制。空块直接选择项目训练记录或导入文件，添加运行和固定版本直接可用；部署、授权和进程状态统一在工具与环境管理。历史来源不推断为“在线”，来源会话与水位保留在高级诊断。“固定当前版本”保留分析依据并打开数据表，已有版本按创建时间展示。
+
+[ExperimentPlots](../../../../frontend/src/features/experiments/ExperimentPlots.tsx) 使用 uPlot 独立横轴序列和稳定 run 颜色，支持同步十字线/数值、图例、框选与按钮缩放。数据追加用 setData 更新同一实例，保留已锁定的视口和图例；离屏画布释放并保存范围。版本轮询只读小水位，每 2 秒一次，离屏/后台降低更新；暂停与回到最新不改变采集。原始准确数据在块的独立标签中读取，不在图表下展开。
+
+[ExperimentDataWorkspace](../../../../frontend/src/features/experiments/ExperimentDataWorkspace.tsx) 默认显示前 12 项，最多 24 项，每页一次请求获取各列 100 点；目录/点版本分别校验。key 与 xKey 共同确定系列。表头/横坐标冻结，数据行虚拟化，复制包含当前页全部行和原始精度；重复坐标保留，不补零或插值。
+
+拓扑与节点入口解析所选实验中的实际记录块，临时比较全部 run，超过 24 次也不截断；只叠加完全同名指标，来源和块身份保留。无过程记录的实验返回空范围，不造 run。分析保存在研究笔记，不保存比较对象。
+
+`read_experiment` 经共同 MCP/CLI/HTTP 提供 available/runs/materials/metrics/series/inspect/compare/snapshot/events。available 按主机、工具、名称和未归属状态分页发现项目记录，返回 projectSource 供候选绑定；具体数据先定位块，再读目录及准确范围；大事件目录有明确预览限制，按 eventWatermark 和文本范围读取原文。记录附件通过 transfer_asset 的 recordAttachment 目标下载，遵守同一会话交接目录规则。分析前固定快照，把 experimentSnapshot sourceRef 写入候选笔记。精确参数以 [tools.ts](../../../../src/domain/research/interfaces/tools.ts) 为准。
 
 ## 验证
 
-- [experiment-records.test.ts](../../../../tests/research/experiment-records.test.ts)：统一 run、候选与观察范围、材料历史、上传表格行和临时比较。
-- [experiment-records.integration.ts](../../../../tests/research/experiment-records.integration.ts)：真实离线写入器生成的 W&B / TensorBoard 原生文件、失败 run、原件保留与索引重建。
-- [experiment-records.spec.ts](../../../../frontend/e2e/experiment-records.spec.ts)：笔记、多 run 曲线、配置文件及表格关联、跨实验比较和窄屏布局。
-- [experiment-performance.spec.ts](../../../../frontend/e2e/experiment-performance.spec.ts)：隔离的 80 run、12 指标、38.4 万点；检查离屏画布释放、缩放恢复、有限悬浮 DOM、批量读取与虚拟表格的整页复制。
-- [experiment-tracking.test.ts](../../../../tests/experiments/experiment-tracking.test.ts)、[training-metrics.test.ts](../../../../tests/experiments/training-metrics.test.ts)、[source-refresh.test.ts](../../../../tests/adapters/source-refresh.test.ts)：既有来源和缓存边界。
+- [记录回归](../../../../tests/research/experiment-records.test.ts)：独立集合、候选与观察范围、材料历史和跨实验比较。
+- [持续接收回归](../../../../tests/research/record-ingestion.test.ts)：ACK 重试/重启、原始类型、快照、权限、附件、准确范围与采样。
+- [队列回归](../../../../scripts/testing/test-experiment-collector.py)：半条记录、覆盖代际、确认丢失、恢复和额度计数。
+- [原生导入集成](../../../../tests/research/experiment-records.integration.ts)、[WSL 验证器](../../../../scripts/integration/verify-record-ingestion-wsl.mjs) 与[合成训练](../../../../scripts/integration/simulate-record-server.py)：真实 SDK、训练中增长、远程 HTTP、离线队列、后端重启、类型与附件。
+- [浏览器流程](../../../../frontend/e2e/experiment-records.spec.ts)、[大数据浏览器](../../../../frontend/e2e/experiment-performance.spec.ts) 与[接收性能脚本](../../../../scripts/diagnostics/benchmark-record-ingestion.mjs)：交互、窄屏、离屏释放、稳定视口、准确范围和有界渲染。
 
-可选原生读取器与服务集成的准备方式见 [测试指南](../../../playbooks/testing.md)，普通后端回归不要求外部账号或 Python 包。
+测试准备与研究样本范围见[测试指南](../../../playbooks/testing.md#实验生态记录调研)。旧服务连接与模拟 overlay 仍只提供对应来源事实，不作为本接收端的持久权威。

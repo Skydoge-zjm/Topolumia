@@ -101,6 +101,14 @@ export class ResearchAssetService {
     this.commands.check(actor,"research.view"); const fingerprint=versionHash({target:input.target,variant:input.variant,destinationDigest:input.destinationDigest}), id=versionHash({owner:principal(actor),key:input.idempotencyKey});
     const previous=this.store.get("jobs",id);
     if(previous) {if(previous.fingerprint!==fingerprint)fail("IDEMPOTENCY_CONFLICT","Download key was reused.",409); if(previous.status==="failed")fail("COMPLETE_EXPORT_UNAVAILABLE",previous.error);return this.exportResult(previous,actor);}
+    if(input.target.kind==="recordAttachment") {
+      if(input.variant!=="original")fail("VARIANT_UNAVAILABLE","Record attachments support original bytes only.");
+      this.commands.ingestion.block(input.target.blockId,actor);
+      const snapshot=input.target.snapshotId?this.commands.ingestion.getSnapshot(input.target.snapshotId,actor):null;
+      if(snapshot&&snapshot.blockId!==input.target.blockId)fail("INGESTION_SCOPE_MISMATCH","Snapshot belongs to another block.",403);
+      const blob=this.commands.projectRecords.attachment(snapshot?.block??this.commands.ingestion.block(input.target.blockId,actor),input.target.sha256,snapshot);
+      const job={id,type:"download",target:input.target,status:"ready",fingerprint,checksum:"sha256:"+input.target.sha256,sizeBytes:blob.size}; this.store.put("jobs",id,job);return this.exportResult(job,actor);
+    }
     if(input.target.kind==="asset") {
       const a=this.assert(input.target.assetId,actor);if(input.target.expectedChecksum&&input.target.expectedChecksum!==a.checksum)fail("OBJECT_VERSION_CONFLICT","Asset version changed.",409);
       if(!["original","compiledPdf","previewImage"].includes(input.variant))fail("VARIANT_UNAVAILABLE","Asset variant unsupported.");
@@ -114,6 +122,7 @@ export class ResearchAssetService {
   }
   exportResult(job,actor) {
     if(job.status!=="ready")return{status:"pending",operationId:job.id,taskId:job.id};
+    if(job.target?.kind==="recordAttachment"){this.commands.ingestion.block(job.target.blockId,actor);const snapshot=job.target.snapshotId?this.commands.ingestion.getSnapshot(job.target.snapshotId,actor):null;this.commands.projectRecords.attachment(snapshot?.block??this.commands.ingestion.block(job.target.blockId,actor),job.target.sha256,snapshot);return{status:"ready",operationId:job.id,checksum:job.checksum,sizeBytes:job.sizeBytes,contentPath:"/api/research/record-blocks/"+encodeURIComponent(job.target.blockId)+"/attachments/"+job.target.sha256+(snapshot?"?snapshotId="+encodeURIComponent(snapshot.id):"")};}
     this.assert(job.assetId,actor);return{status:"ready",operationId:job.id,assetId:job.assetId,checksum:job.checksum,sizeBytes:job.sizeBytes,contentPath:"/api/research/assets/"+encodeURIComponent(job.assetId)+"/content?variant="+(job.variant??"original")};
   }
   async processExport(job) {

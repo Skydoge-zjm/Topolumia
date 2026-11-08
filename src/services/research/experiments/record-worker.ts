@@ -33,6 +33,7 @@ function initialize(root, pythonCommand) {
   );
 }
 const summaries = new WeakMap<object, any>();
+const finiteLines = new WeakMap<object, any[]>();
 const sampledLines = new WeakMap<object, { limit: number; points: any[] }>();
 const directories = new WeakMap<object, Map<string, Map<string, any[]>>>();
 function pointDirectory(index) {
@@ -65,6 +66,7 @@ function summary(index) {
         sourceId: run.sourceId,
         label: run.label,
         status: run.status,
+        nativeSemantics: run.nativeSemantics,
         series: run.series.map(({ points, ...line }) => ({
           ...line,
           pointCount: points.length,
@@ -162,6 +164,19 @@ async function execute(input) {
     const temporary = file + "." + randomUUID();
     await writeFile(temporary, JSON.stringify(result));
     await rename(temporary, file);
+    const eventsFile = reader.eventsPath(input.asset, input.provider);
+    const eventsTemporary = eventsFile + "." + randomUUID();
+    await writeFile(eventsTemporary, JSON.stringify({
+      schemaVersion: "experiment-record-events.v1",
+      provider: input.provider,
+      assetId: input.asset.id,
+      checksum: input.asset.checksum,
+      runs: index.runs.map((run) => ({
+        sourceId: run.sourceId,
+        events: Array.isArray(run.events) ? run.events : [],
+      })),
+    }));
+    await rename(eventsTemporary, eventsFile);
     return result;
   }
   if (input.action === "select") {
@@ -201,7 +216,9 @@ async function execute(input) {
       let selected;
       if (query.maxPoints !== undefined) {
         // Flatten multiple archives once; exact range reads never copy an entire line.
-        const points = parts.length === 1 ? parts[0] : parts.flat();
+        const originalPoints = parts.length === 1 ? parts[0] : parts.flat();
+        let points = finiteLines.get(originalPoints);
+        if (!points) { points = originalPoints.some(point => point.nonFinite) ? originalPoints.filter(point => !point.nonFinite) : originalPoints; finiteLines.set(originalPoints, points); }
         const cached = sampledLines.get(points);
         selected =
           cached?.limit === query.maxPoints

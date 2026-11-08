@@ -10,6 +10,9 @@ import { handleResearchCommandsRoutes } from "./http/routes/research/commands.js
 import { handleTopologyRoutes } from "./http/routes/topology.js";
 import { handleNotebookRoutes } from "./http/routes/research/notebook.js";
 import { handleResearchNodeRoutes } from "./http/routes/research/nodes.js";
+import { handleRecordIngestionRoutes, handleRecordAttachmentRead } from "./http/routes/research/record-ingestion.js";
+import { handleManagedRecordRoutes } from "./http/routes/managed-records.js";
+import { ManagedRecordCollectors } from "./services/environments/managed-record-collectors.js";
 import { handleExperimentRecordRoutes } from "./http/routes/research/experiment-records.js";
 import { handleResearchGroupRoutes } from "./http/routes/research/groups.js";
 import { handleResearchObjectRoutes } from "./http/routes/research/objects.js";
@@ -39,8 +42,11 @@ const routeHandlers = [
   handlePlatformAuthRoutes,
   handlePlatformCollaborationRoutes,
   handleAgentsConfigurationRoutes,
+  handleManagedRecordRoutes,
   handleEnvironmentsRoutes,
   handleResearchCommandsRoutes,
+  handleRecordIngestionRoutes,
+  handleRecordAttachmentRead,
   handleExperimentRecordRoutes,
   handleResearchNodeRoutes,
   handleResearchGroupRoutes,
@@ -121,6 +127,7 @@ export async function createMvpApplication(options = {}) {
     refreshForContext,
   } = await createProjectRuntimeRegistry({ config, collaboration, options });
 
+  let recordCollectors;
   const handler = async (request, response) => {
     const url = new URL(
       request.url,
@@ -154,7 +161,11 @@ export async function createMvpApplication(options = {}) {
       let requestActor = null;
       let requestRuntime = defaultRuntime;
       if (!isPublicApi) {
-        requestActor = collaboration.requireActor(request, requestedProjectId);
+        if (pathname.startsWith("/api/record-ingestion/")) {
+          requestRuntime = await getRuntime(requestedProjectId);
+          const token = String(request.headers.authorization ?? "").replace(/^Bearer /i, "");
+          requestActor = requestRuntime.researchCommands.ingestion.authenticate(token, (userId, projectId) => collaboration.actorForUser(userId, projectId));
+        } else requestActor = collaboration.requireActor(request, requestedProjectId);
         if (requestActor.isAgent && !pathname.startsWith("/api/research/"))
           throw new AppError(
             "AGENT_SCOPE_FORBIDDEN",
@@ -234,6 +245,7 @@ export async function createMvpApplication(options = {}) {
             collaboration,
             sshConnections,
             sshEnvironments,
+            recordCollectors,
             topologyLayoutService,
             runtimes,
             getRuntime,
@@ -292,20 +304,35 @@ export async function createMvpApplication(options = {}) {
       else response.end();
     });
   });
-  server.on("close", () => {
-    void sshEnvironments
-      .close()
-      .finally(() => sshConnections.close())
-      .catch(() => {});
+  recordCollectors = new ManagedRecordCollectors({ runtimes, sshConnections, sshEnvironments, collaboration, dataDirectory: options.recordCollectorDataDirectory, address: () => { const address = server.address(); return typeof address === "object" && address ? { port: address.port, host: address.address === "::1" ? "::1" : "127.0.0.1" } : null; } });
+  server.once("listening", () => void recordCollectors.reconcile());
+  let disposal: Promise<void> | null = null;
+  const dispose = () => disposal ??= (async () => {
+    await recordCollectors.close().catch(() => {});
+    await sshEnvironments.close().catch(() => {});
+    await sshConnections.close().catch(() => {});
     for (const runtime of runtimes.values()) {
       runtime.sourceRefresh.stop();
-      void runtime.toolEnvironment.research.close();
-      void runtime.toolEnvironment.catalog.close();
       runtime.curatorTriggerCoordinator.stop();
-      void runtime.agentSessionGateway.closeAll().catch(() => {});
     }
-    void Promise.allSettled([...runtimes.values()].map(async runtime => { await runtime.researchCommands.assets.close(); await runtime.researchCommands.records.close(); })).then(() => collaboration.close());
-  });
+    await Promise.allSettled([...runtimes.values()].map(async runtime => {
+      await runtime.agentSessionGateway.closeAll().catch(() => {});
+      await runtime.toolEnvironment.research.close();
+      await runtime.toolEnvironment.catalog.close();
+      await runtime.agentMedia.close();
+      await runtime.researchCommands.assets.close();
+      await runtime.researchCommands.records.close();
+    }));
+    collaboration.close();
+  })();
+  server.on("close", () => { void dispose(); });
+  const close = async () => {
+    if (server.listening) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+    await dispose();
+  };
 
   return {
     ...defaultRuntime,
@@ -316,7 +343,9 @@ export async function createMvpApplication(options = {}) {
     topologyLayoutService,
     sshConnections,
     sshEnvironments,
+    recordCollectors,
     server,
+    close,
   };
 }
 

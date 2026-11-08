@@ -10,8 +10,6 @@ import type { ResearchNode } from "@/features/research/model";
 import { nodeKinds } from "@domain/research/node-fields";
 import { NodeDeleteDialog } from "./NodeDeleteDialog";
 import { NodeCoreEditor } from "./NodeCoreEditor";
-import { ExperimentWorkbench } from "@/features/experiments/ExperimentWorkbench";
-import { ExperimentDataWorkspace } from "@/features/experiments/ExperimentDataWorkspace";
 import { ObjectContentWorkspace } from "./ObjectContentWorkspace";
 import type { ContentBlock } from "./ContentBlockRenderer";
 import { ObjectRelations } from "./ObjectRelations";
@@ -28,7 +26,7 @@ function NodeDetail() {
   const { id } = useParams(), [params, setParams] = useSearchParams(), en = useUiStore(state => state.locale) === "en", permissions = useResearchPermissions(), client = useQueryClient(), navigate = useNavigate();
   const [editingCore, setEditingCore] = useState(false), [deleting, setDeleting] = useState(false);
   const requestedTab = params.get("tab");
-  const tab = requestedTab === "runs" ? "data" : ["content", "data", "relations"].includes(requestedTab ?? "") ? requestedTab! : "content", setTab = (value: string) => { if (value === tab || !confirmUnsavedChanges()) return; setParams(current => { const next = new URLSearchParams(current); next.set("tab", value); return next; }, { replace: true }); };
+  const tab = ["content", "relations"].includes(requestedTab ?? "") ? requestedTab! : "content", setTab = (value: string) => { if (value === tab || !confirmUnsavedChanges()) return; setParams(current => { const next = new URLSearchParams(current); next.set("tab", value); return next; }, { replace: true }); };
   const query = useQuery({ queryKey: ["research-node", projectId(), id], enabled: Boolean(id), queryFn: () => api<Detail>("/api/research-nodes/" + encodeURIComponent(id!)) });
   const kind = query.data?.node.kind ?? params.get("kind") ?? "note";
   const refresh = () => { void client.invalidateQueries({ queryKey: ["research-node", projectId(), id] }); void client.invalidateQueries({ queryKey: ["topology", projectId()] }); for (const key of ["experiment-runs", "experiment-data-overview", "experiment-data-metrics", "experiment-data-table"]) void client.invalidateQueries({ queryKey: [key, projectId(), id] }); void client.invalidateQueries({ queryKey: ["research-experiments", projectId()] }); void client.invalidateQueries({ queryKey: ["experiment-record-plot", projectId(), id] }); void client.invalidateQueries({ queryKey: ["temporary-experiment-compare", projectId()] }); };
@@ -49,15 +47,10 @@ function NodeDetail() {
     {paper
       ? <PaperBibliography core={data.core} en={en} initialExpanded={!data.contentBlocks.length && !data.pendingCandidates?.length} />
       : summary && <section className="research-card research-core-summary"><p>{summary}</p></section>}
-    <div className={kind === "experiment" ? "experiment-detail-navigation" : undefined}><nav className="research-tabs" aria-label={en ? "Node workspace" : "节点工作区"}>{[{ value: "content", label: en ? "Research material" : "研究材料" }, ...(kind === "experiment" ? [{ value: "data", label: en ? "Experiment data" : "实验数据" }] : []), { value: "relations", label: en ? "Relations" : "关系与来源" }].map(item => <button key={item.value} className={tab === item.value ? "is-active" : ""} onClick={() => setTab(item.value)}>{item.label}</button>)}</nav>
+    <div className={kind === "experiment" ? "experiment-detail-navigation" : undefined}><nav className="research-tabs" aria-label={en ? "Node workspace" : "节点工作区"}>{[{ value: "content", label: en ? "Research material" : "研究材料" }, { value: "relations", label: en ? "Relations" : "关系与来源" }].map(item => <button key={item.value} className={tab === item.value ? "is-active" : ""} onClick={() => setTab(item.value)}>{item.label}</button>)}</nav>
     {Array.isArray(data.core.tags) && data.core.tags.length > 0 && <div className="research-inline-facts">{data.core.tags.map((tag: string) => <span className="research-badge" key={tag}>{tag}</span>)}</div>}
     </div><PendingObjectChanges candidates={data.pendingCandidates ?? []} owner={owner} en={en} empty={!data.contentBlocks.length} />
-    {tab === "content" && (kind === "experiment"
-      ? <ExperimentWorkbench nodeId={id} owner={owner} blocks={data.contentBlocks} collectionRevision={data.blockCollectionRevision} en={en} canEdit={permissions.nodes} onChanged={refresh}>
-          <ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={data.contentBlocks.filter(block => block.type === "experimentRecord").map(block => block.id)} nodeKind={kind} onChanged={refresh} />
-        </ExperimentWorkbench>
-      : <>{kind === "note" && <NoteBodyWorkspace owner={owner} block={bodyBlock} collectionRevision={data.blockCollectionRevision} en={en} canEdit={permissions.nodes} onChanged={refresh} />}<ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={bodyBlock ? [bodyBlock.id] : []} nodeKind={kind} onChanged={refresh} /></>)}
-    {tab === "data" && kind === "experiment" && <ExperimentDataWorkspace nodeId={id} en={en} />}
+    {tab === "content" && <>{kind === "note" && <NoteBodyWorkspace owner={owner} block={bodyBlock} collectionRevision={data.blockCollectionRevision} en={en} canEdit={permissions.nodes} onChanged={refresh} />}<ObjectContentWorkspace owner={owner} en={en} canEdit={permissions.nodes} collectionRevision={data.blockCollectionRevision} initialBlocks={data.contentBlocks as never[]} hiddenBlockIds={bodyBlock ? [bodyBlock.id] : []} nodeKind={kind} onChanged={refresh} /></>}
     {tab === "relations" && <ObjectRelations owner={owner} label={title} en={en} canEdit={permissions.nodes} onChanged={refresh} />}
     {permissions.deleteNodes && <div className="research-delete-section"><button className="button" onClick={() => setDeleting(true)}>{en ? "Delete node" : "删除节点"}</button></div>}
     {deleting && <NodeDeleteDialog id={id} title={title} nodeRevision={data.nodeRevision} relationCount={data.relations.length} groupCount={data.groupCount ?? 0} en={en} onClose={() => setDeleting(false)} onReload={async () => { const result = await query.refetch(); if (result.error) throw result.error; }} onDeleted={historyId => { void client.invalidateQueries({ queryKey: ["topology"] }); void client.invalidateQueries({ queryKey: ["research-node", projectId(), id] }); navigate(historyId ? "/records/history/" + historyId : "/records"); }} />}

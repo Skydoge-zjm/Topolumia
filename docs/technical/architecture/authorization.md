@@ -28,8 +28,12 @@ MCP 的访问控制、每次调用授权与审计，不能代替 HTTP 和领域�
 
 ## 持续连接
 
-SSE 发送前及心跳检查当前身份和项目权限，并订阅权限/成员/登录变化。撤权后发送 access.revoked 并关闭；缓存的页面或流连接不能延长访问权。
+### 实验采集授权
 
-图片、科研资产和条件缓存响应在 304 前鉴权。关闭 Agent 运行实例时撤销其凭据。
+采集授权限定项目来源及授予用户，来源保存主机与目录；授权由“工具与环境”的托管部署创建和维护，读取器使用私有凭据文件。部署、目录配置和进程操作要求 project.manageSettings，项目记录读取要求 research.view；科研归属修改要求 research.applyChange。接收请求逐次检查授予者当前权限，附件落盘前再次检查；凭据仅可向指定来源提交事件和附件，不拥有节点、关系、审批或运行归属修改能力。
 
-验证：[approval-authority.test.ts](../../../tests/agents/sessions/approval-authority.test.ts)、[collaboration.test.ts](../../../tests/platform/collaboration.test.ts)、[reliability.test.ts](../../../tests/agents/sessions/reliability.test.ts)。
+项目来源先保存新 run，再由人工明确选择到实验记录块；Agent 归组沿用候选审批。明确的专属目录规则只追加匹配的来源事实，不能改写人工元数据。块查询、事件文本、附件与快照按所选 run 及来源水位校验，不能利用同项目凭据越过块选择范围。
+
+暂停或撤销采集不删除已接收记录及队列，归档块不撤销其他块引用的来源。查询继续检查当前项目权限。采集凭据不复用浏览器 cookie、Agent 凭据或第三方 Key，不进入常规 Agent 上下文、API 状态或部署日志。
+
+平台在授权临近到期时续期，暂停拒绝后续接收，恢复保持来源身份。旧块已有的累计记录和固定快照仍按原范围读取，不复制到项目来源；普通用户入口统一使用项目来源。

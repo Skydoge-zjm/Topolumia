@@ -156,6 +156,14 @@ test("native offline W&B and TensorBoard files keep original bytes, all runs and
         (line) => !line.sampled && line.points.length === line.pointCount,
       ),
     );
+    const richEvents = await c.records.read(
+      { mode: "events", nodeId, blockId: block.id, limit: 100 },
+      actor,
+    );
+    assert.ok(richEvents.data.items.some((item) => item.event.kind !== "scalar"));
+    if (provider === "wandb")
+      assert.ok(richEvents.data.items.some((item) => ["config", "summary", "media", "distribution"].includes(item.event.kind)));
+    assert.ok(richEvents.data.items.every((item) => item.readHint?.tool === "read_experiment" || item.event.kind === "scalar"));
     const firstAsset = c.assets.assert(assets[0].id, actor);
     await rm(c.records.indexPath(firstAsset, provider));
     c.changes.direct(

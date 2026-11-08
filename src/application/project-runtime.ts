@@ -254,7 +254,7 @@ export async function createProjectRuntimeRegistry({
     history.resolveResearchObject = (type, id, revision) => {
       const version = researchCommands.store.get("versions", JSON.stringify([type, id]) + ":" + revision);
       if (!version) return null;
-      return { ...version.object, members: version.object.members?.map(member => ({ ...member, label: researchCommands.store.get("nodes", member.nodeId)?.core?.nodeName ?? member.nodeId })), contentBlockVersions: version.blocks.map(block => ({ id: block.id, title: block.title, type: block.type, revision: block.revision, lifecycle: block.lifecycle })) };
+      return { ...version.object, members: version.object.members?.map(member => ({ ...member, label: researchCommands.store.get("nodes", member.nodeId)?.core?.nodeName ?? member.nodeId })), contentBlockVersions: version.blocks.map(block => ({ id: block.id, title: block.title, type: block.type, revision: block.revision, lifecycle: block.lifecycle, ...(block.type === "experimentRecord" ? { recordCollection: block.recordCollection } : {}) })) };
     };
     runtime.groups = researchCommands.groups;
     runtime.records = new ResearchRecords(runtime.notebook, state);

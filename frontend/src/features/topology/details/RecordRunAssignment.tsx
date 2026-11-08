@@ -4,22 +4,24 @@ import { SelectMenu } from "@/shared/ui/SelectMenu";
 
 export function RecordRunAssignment({
   experimentId,
+  blockId,
   runId,
   en,
   onChange,
 }: {
   experimentId: string;
+  blockId: string;
   runId?: string;
   en: boolean;
   onChange: (runId?: string) => void;
 }) {
   const query = useQuery({
-    queryKey: ["experiment-runs", projectId(), experimentId],
+    queryKey: ["experiment-runs", projectId(), experimentId, blockId],
     queryFn: () =>
-      api<{ runs: { id: string; label: string }[] }>(
+      api<{ runs: { id: string; label: string; firstWatermark?: number }[] }>(
         "/api/research-nodes/" +
           encodeURIComponent(experimentId) +
-          "/experiment",
+          "/experiment?blockId=" + encodeURIComponent(blockId),
       ),
   });
   if (query.error)
@@ -43,7 +45,7 @@ export function RecordRunAssignment({
       disabled={query.isPending}
       options={[
         { value: "", label: en ? "Identify by source" : "按来源识别" },
-        ...(query.data?.runs ?? []).map((run) => ({
+        ...(query.data?.runs ?? []).filter(run => run.firstWatermark === undefined).map((run) => ({
           value: run.id,
           label: run.label,
         })),

@@ -50,12 +50,14 @@ const PAGE_SIZE = 20;
 
 export function ExperimentRunsPanel({
   nodeId,
+  blockId,
   blocks,
   en,
   canEdit,
   onChanged,
 }: {
   nodeId: string;
+  blockId?: string;
   blocks: ContentBlock[];
   en: boolean;
   canEdit: boolean;
@@ -69,15 +71,15 @@ export function ExperimentRunsPanel({
     [error, setError] = useState(""),
     [page, setPage] = useState(0);
   const query = useQuery({
-    queryKey: ["experiment-runs", projectId(), nodeId],
-    queryFn: () => api<ExperimentOverview>("/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment"),
+    queryKey: ["experiment-runs", projectId(), nodeId, blockId],
+    queryFn: () => api<ExperimentOverview>("/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment?blockId=" + encodeURIComponent(blockId ?? "")),
   });
   const save = async (patch: object, expectedRevision = query.data!.revision) => {
     const result = await api<ExperimentOverview>("/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment", {
       method: "PATCH",
-      body: JSON.stringify({ expectedExperimentRevision: expectedRevision, patch }),
+      body: JSON.stringify({ blockId, expectedExperimentRevision: expectedRevision, patch }),
     });
-    client.setQueryData(["experiment-runs", projectId(), nodeId], result);
+    client.setQueryData(["experiment-runs", projectId(), nodeId, blockId], result);
     void client.invalidateQueries({ queryKey: ["research-experiments", projectId()] });
     onChanged();
   };
@@ -132,7 +134,7 @@ export function ExperimentRunsPanel({
         {visible.map((run) => {
           const links = data.materialLinks.filter((link) => link.runId === run.id);
           const providers = [...new Set(run.sources.map((source) => providerLabel(source.provider)))];
-          const runStyle = runColor(nodeId, run.id);
+          const runStyle = runColor(nodeId, run.id, blockId);
           return (
             <li key={run.id} className="experiment-run-item">
               <div className="experiment-run-toggle">

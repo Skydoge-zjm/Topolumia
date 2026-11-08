@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChartLine } from "lucide-react";
 import { api, projectId } from "@/shared/lib/api";
@@ -11,6 +11,7 @@ import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { ExperimentCompareDialog } from "./ExperimentCompareDialog";
 import type { ExperimentIndex } from "./ExperimentCompareDialog";
 import { RunStatusDot } from "./RunStatusDot";
+import { TrainingRecordsView } from "./TrainingRecordsView";
 import "./experiment-records.css";
 
 const summarize = (runs: { status: string }[]) => ({
@@ -20,6 +21,8 @@ const summarize = (runs: { status: string }[]) => ({
 });
 
 export function ExperimentsPage() {
+  const [params, setParams] = useSearchParams();
+  const recordsView = params.get("view") === "records";
   const en = useUiStore((state) => state.locale) === "en",
     permissions = useResearchPermissions();
   const [compare, setCompare] = useState(false),
@@ -55,6 +58,8 @@ export function ExperimentsPage() {
           )}
         </div>
       </header>
+      <nav className="research-tabs"><button className={!recordsView ? "is-active" : ""} onClick={() => setParams({})}>{en ? "Experiments" : "实验"}</button><button className={recordsView ? "is-active" : ""} onClick={() => setParams({ view: "records" })}>{en ? "Training records" : "训练记录"}</button></nav>
+      {recordsView ? <TrainingRecordsView en={en} hostId={params.get("hostId") ?? ""} canEdit={permissions.nodes} /> : <>
       <div className="experiment-run-toolbar">
         <SelectMenu
           ariaLabel={en ? "Filter experiments" : "筛选实验"}
@@ -115,6 +120,7 @@ export function ExperimentsPage() {
           </p>
         )}
       </div>
+      </>}
       {compare && <ExperimentCompareDialog en={en} onClose={() => setCompare(false)} />}
     </section>
   );

@@ -10,7 +10,7 @@
 | 科研历程 | 同库项目化历史；[ResearchHistoryStore](../../../src/services/research/history/history-store.ts) |
 | Agent 会话 | 每项目 agent-sessions/history.sqlite；[AgentHistoryStore](../../../src/services/agents/agent-history-store.ts) |
 | 科研文件字节及派生预览 | 项目数据目录 research-assets；[资产服务](../../../src/services/research/assets/asset-service.ts) |
-| 实验 run 与材料对应 | 实验节点对象和对象版本；过程记录块只引用 run 与资产，数值索引位于资产 derived 目录，可从归档原件重建 |
+| 实验记录块、run 与材料对应 | 实验记录块的独立记录集合、块/集合版本和材料引用；连续事件、运行目录、索引、水位、快照与附件由记录接收表维护，静态导入的富事件索引与曲线索引均可从归档原件重建 |
 | 会话图片与原生 imageView 快照 | history.sqlite 同级 attachments；[会话媒体](../../../src/services/agents/agent-attachment-service.ts) |
 | 项目设置、原生 Agent 配置 | settings.json、agent-config；[项目装配](../../../src/application/project-runtime.ts) 决定路径 |
 
@@ -33,6 +33,27 @@ SQLite 事务负责正式科研对象、状态与审计的协调；内存投影�
 会话历史使用 WAL 与 FULL synchronous。运行实例 maxSessions 不属于历史存储限制；有界 Trace 仅裁剪诊断事件，不裁剪回合正文和整个会话记录。保存失败必须可见和可重试。
 
 科研资产、会话附件与 transfer 临时文件不是同一对象。候选绑定、正式绑定、草稿引用和历史引用决定保留；不能简单按文件年龄删除所有材料。
+
+## 实验连续记录存储
+
+[实验接收端](../modules/experiments-and-sources/README.md#持续接收) 的科研元数据、连续事件与查询数据分开。节点只表达科研归属；可选记录块的集合、手动 run 元数据与材料关联由共同研究表和版本保存，大量数组不写入 payload。每块独立，托管来源以项目为范围保存原始 run 和累计数据，记录块通过显式运行选择引用；累计数据不因多个块引用而复制。
+
+[RecordIngestionService](../../../src/services/research/experiments/record-ingestion.ts) 使用同一项目 SQLite 中的事件 ledger、来源/运行目录、标量索引、水位、快照和附件清单。原始事件保留来源封装及事件类型，可按水位重放重建索引；静态导入在资产派生目录保存同一规范化事件索引，查询层合并静态事件与持续事件。SQLite FULL 事务把原始事件与索引一并提交后才确认，没有外部日志和数据库之间的确认窗口。持久和可查询水位分别返回，当前同事务推进而相等；重试同身份同内容幂等，同身份异内容回滚整批。
+
+| 状态 | 权威范围 |
+| --- | --- |
+| 科研版本 | 块编辑、手动运行元数据和材料引用，沿用统一变更/候选/历史 |
+| 数据水位 | 持久且可查询的连续观察；追加不触发节点修订 |
+| 固定快照 | 查询水位、解释版本、节点/块/材料版本、运行选择、各来源水位及附件清单 |
+| 附件齐全 | 独立于事件确认，不阻塞标量查询 |
+
+点序号独立于 step，准确页走系列/序号索引；重复、回退、原始 dtype 与 restart 保留。数据库分桶采样保留边界/极值，不改变准确数据。快照的后续读取固定原目录，追加、改名或归档不会改写；删除节点后仍可按项目权限重读历史快照。
+
+附件在资产根下的 record-blobs 中按实际接收范围（项目来源或已有块）及 SHA-256 管理；下载入口按块运行选择和快照水位解析实际范围，流式写临时文件、校验、sync、原子重命名后登记。原生日志按完整前缀分段归档，清单保留路径/代际/偏移；缺依赖和超额度明确记录。关闭项目先完成资源/解析释放再关闭数据库；应用 close 返回可等待的完成结果。
+
+训练机的[持久队列](../../../scripts/runtime/topolumia_collector/spool.py) 使用独立 SQLite WAL/FULL。事件、必要文件和原生游标一起提交，ACK 后独立推进远端确认点；丢 ACK 重传相同身份。默认待发额度 128 MiB，附件 64 MiB，原件分段 4 MiB；背压暂停读取，停止保留队列。覆盖/截断建立新 generation，完整坏校验不跳过；无法恢复读取前已被外部删除的源文件。
+
+备份同时覆盖应用 SQLite/WAL、资产与 record-blobs；未发送队列仍在训练机另行保留。凭据撤销和块归档不删除数据。旧节点级记录只做一次事务交接，原节点/块完整保留后进入单一新合同，不长期双写。
 
 ## 节点组归属
 

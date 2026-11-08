@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fail } from "../../../domain/research/access.js";
 export { readHistoryJson } from "./record-reader.js";
@@ -42,9 +43,31 @@ export class ExperimentRecordImporter {
       this.c.assets.root,
       "derived",
       asset.id.slice(6),
-      "experiment-record-v1",
+      "experiment-record-v2",
       provider + ".json",
     );
+  }
+  eventsPath(asset, provider) {
+    return this.indexPath(asset, provider) + ".events.json";
+  }
+  async staticEvents(assetId, provider, actor) {
+    const asset = this.c.assets.assert(assetId, actor);
+    await this.indexed(assetId, provider, actor);
+    let file = this.eventsPath(asset, provider);
+    if (!existsSync(file)) {
+      await this.task({
+        action: "ensure",
+        provider,
+        asset: { ...asset, file: this.c.assets.file(asset) },
+      });
+      file = this.eventsPath(asset, provider);
+    }
+    if (!existsSync(file)) return [];
+    const text = await readFile(file, "utf8");
+    const value = JSON.parse(text);
+    if (value.checksum !== asset.checksum || value.provider !== provider)
+      fail("EXPERIMENT_RECORD_CHANGED", "实验记录事件索引与原文件不一致。", 409);
+    return value.runs ?? [];
   }
   task(input) {
     if (this.closed)
@@ -148,10 +171,11 @@ export class ExperimentRecordImporter {
   }
   async inspect(provider, assetIds, actor) {
     this.c.check(actor, "research.view");
-    const merged = new Map<string, any>();
+    const merged = new Map<string, any>(), diagnostics: any[] = [];
     for (const assetId of [...new Set<string>(assetIds)]) {
       const index = await this.indexed(assetId, provider, actor);
       for (const run of index.runs) {
+        for (const warning of run.nativeSemantics?.warnings ?? []) diagnostics.push({ sourceId: run.sourceId, assetId, key: warning.key, missingDependencies: warning.missingDependencies?.slice(0, 2).map(path => String(path).slice(0, 180)) });
         const metrics = run.series.map((line) => ({
           key: line.key,
           xKey: line.xKey,
@@ -186,7 +210,7 @@ export class ExperimentRecordImporter {
           },
         });
     }
-    return { provider, runs: [...merged.values()] };
+    return { provider, runs: [...merged.values()], diagnostics: diagnostics.slice(0, 5), omittedDiagnosticCount: Math.max(0, diagnostics.length - 5) };
   }
   async selectPoints(lines, selection, actor) {
     // Recheck every requested asset at the caller boundary, including cache hits.

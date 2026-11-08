@@ -48,6 +48,8 @@ class WandbRecordReader:
             padding = self.file.read(remaining)
             if not padding:
                 return None
+            if len(padding) != remaining:
+                raise ValueError("Incomplete W&B record padding")
             if padding != b"\0" * remaining:
                 raise ValueError("Invalid W&B record padding")
         available = BLOCK_SIZE - self.file.tell() % BLOCK_SIZE
@@ -60,8 +62,10 @@ class WandbRecordReader:
         if kind not in self.crc or length > available - HEADER_SIZE:
             raise ValueError("Invalid W&B record fragment")
         data = self.file.read(length)
-        if len(data) != length or checksum != zlib.crc32(data, self.crc[kind]) & 0xFFFFFFFF:
-            raise ValueError("Invalid W&B record checksum or incomplete file")
+        if len(data) != length:
+            raise ValueError("Incomplete W&B record data")
+        if checksum != zlib.crc32(data, self.crc[kind]) & 0xFFFFFFFF:
+            raise ValueError("Invalid W&B record checksum")
         return kind, data
 
     def scan_data(self):
@@ -74,6 +78,7 @@ class WandbRecordReader:
         if kind != 2:
             raise ValueError("Expected the first W&B record fragment")
         parts = [data]
+        total = len(data)
         while True:
             fragment = self.fragment()
             if fragment is None:
@@ -81,6 +86,9 @@ class WandbRecordReader:
             kind, data = fragment
             if kind not in (3, 4):
                 raise ValueError("Invalid fragmented W&B record sequence")
+            total += len(data)
+            if total > 64 * 1024 * 1024:
+                raise ValueError("W&B record exceeds 64 MiB reader limit")
             parts.append(data)
             if kind == 4:
                 return b"".join(parts)

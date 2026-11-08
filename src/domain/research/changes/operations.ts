@@ -9,7 +9,7 @@ const fromAsset = z.strictObject({ assetId: id, format: z.enum(["markdown", "pla
 const blockFields = contentBlockInput.omit({ review: true }).extend({ review: z.enum(["unreviewed", "needs_review"]).optional() });
 export const blockPatchSchema = z.strictObject({ ...Object.fromEntries(Object.entries(blockFields.shape).map(([key, schema]) => [key, (typeof schema.removeDefault === "function" ? schema.removeDefault() : schema).optional().nullable()])), payloadFromAsset: fromAsset.optional() });
 export const operationSchemas = {
-  editExperiment: z.strictObject({ op: z.literal("editExperiment"), owner: objectRefSchema, expectedExperimentRevision: revision, patch: experimentPatchSchema }),
+  editExperiment: z.strictObject({ op: z.literal("editExperiment"), owner: objectRefSchema, blockId: id, expectedExperimentRevision: revision, patch: experimentPatchSchema }),
   addNode: z.strictObject({ op: z.literal("addNode"), clientRef: id, kind: z.string().max(80), core: z.record(z.string(), z.unknown()), sourceRefs: refs }),
   addGroup: z.strictObject({ op: z.literal("addGroup"), clientRef: id, core: groupCoreSchema, members: groupMembersSchema.default([]), parentId: id.nullable().default(null), expectedParentRevision: revision.optional(), sourceRefs: refs }),
   updateCore: z.strictObject({ op: z.literal("updateCore"), owner: objectRefSchema, expectedCoreRevision: revision, patch: z.record(z.string(), z.unknown()), sourceRefs: refs }),

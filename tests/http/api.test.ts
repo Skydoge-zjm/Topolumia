@@ -73,8 +73,11 @@ test("research experiment API uses saved node/run identities and never invents t
   assert.equal(topology.payload.nodes.some(node => forbiddenKinds.has(node.kind)), false);
   assert.ok(topology.payload.nodes.every(node => ["paper", "experiment", "note"].includes(node.kind)));
   const nodeId = "experiment:g1";
+  const record = await request("/api/research-objects/node/" + encodeURIComponent(nodeId) + "/content-blocks", { method: "POST", body: JSON.stringify({ title: "Records", type: "experimentRecord", payload: { provider: "wandb", runs: [] } }) });
+  assert.equal(record.response.status, 201);
+  const blockId = record.payload.contentBlock.id;
   const recorded = await request("/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment", {
-    method: "PATCH", body: JSON.stringify({ expectedExperimentRevision: 1, patch: { addRuns: [{ label: "OOM attempt", status: "failed" }, { label: "Retry", status: "succeeded" }] } }),
+    method: "PATCH", body: JSON.stringify({ blockId, expectedExperimentRevision: 1, patch: { addRuns: [{ label: "OOM attempt", status: "failed" }, { label: "Retry", status: "succeeded" }] } }),
   });
   assert.equal(recorded.response.status, 200, JSON.stringify(recorded.payload));
   const index = await request("/api/research-experiments");

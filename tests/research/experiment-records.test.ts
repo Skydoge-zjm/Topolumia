@@ -200,55 +200,27 @@ test("large point reads and batched columns preserve exact ranges without loadin
   );
 });
 
-test("block-scoped reads keep other record blocks out when no revision was supplied", async (t) => {
+test("record collections isolate source identities and reject a run from another block", async t => {
   const { c, actor, create, upload, add } = await fixture(t);
-  const node = create("experiment", "Separate record blocks");
-  const blocks = [];
-  for (const index of [0, 1]) {
-    const asset = await upload(
-      "part" + index + ".json",
-      JSON.stringify({
-        id: "part" + index,
-        history: [{ _step: index, loss: index + 0.5 }],
-      }),
-    );
-    const records = await c.records.inspect("wandb", [asset.id], actor);
-    blocks.push(
-      add(node.id, {
-        title: "Part " + index,
-        type: "experimentRecord",
-        payload: {
-          provider: "wandb",
-          runs: records.runs.map(({ metrics, ...run }) => ({
-            ...run,
-            ...(index ? { runId: blocks[0].payload.runs[0].runId } : {}),
-          })),
-        },
-        representations: [{ kind: "asset", assetId: asset.id, role: "source" }],
-      }),
-    );
-  }
-  const runId = blocks[0].payload.runs[0].runId;
-  const input = {
-    mode: "series",
-    nodeId: node.id,
-    runId,
-    metric: "loss",
-    pointLimit: 10,
-  };
-  const all = await c.records.read(input, actor);
-  assert.equal(all.data.pointCount, 2);
-  const scoped = await c.records.read(
-    { ...input, blockId: blocks[0].id },
-    actor,
-  );
-  assert.deepEqual(scoped.data.points, [{ x: 0, y: 0.5 }]);
-  assert.equal(scoped.data.sources.length, 1);
-  const plot = await c.records.plot(
-    { selections: [{ nodeId: node.id, runId }], blockId: blocks[1].id },
-    actor,
-  );
-  assert.deepEqual(plot.series[0].points, [{ x: 1, y: 1.5 }]);
+  const node = create("experiment", "Independent blocks");
+  const asset = await upload("shared.json", JSON.stringify({ id: "shared", history: [{ _step: 0, loss: .5 }] }));
+  const imported = await c.records.inspect("wandb", [asset.id], actor);
+  const input = { type: "experimentRecord", title: "First", payload: { provider: "wandb", runs: imported.runs.map(({ metrics, ...run }) => run) }, representations: [{ kind: "asset", assetId: asset.id, role: "source" }] };
+  const first = add(node.id, input), second = add(node.id, { ...input, title: "Second" });
+  assert.notEqual(first.payload.runs[0].runId, second.payload.runs[0].runId);
+  assert.throws(() => add(node.id, { ...input, payload: { ...input.payload, runs: [{ ...input.payload.runs[0], runId: first.payload.runs[0].runId }] } }), { code: "EXPERIMENT_RUN_NOT_FOUND" });
+  const scoped = await c.records.read({ mode: "series", nodeId: node.id, blockId: second.id, runId: second.payload.runs[0].runId, metric: "loss" }, actor);
+  assert.deepEqual(scoped.data.points, [{ x: 0, y: .5 }]);
+  await assert.rejects(c.records.read({ mode: "series", nodeId: node.id, blockId: second.id, runId: first.payload.runs[0].runId, metric: "loss" }, actor), { code: "EXPERIMENT_RUN_NOT_FOUND" });
+  // A preserved pre-refactor run ID may occur in independent historical blocks.
+  const historical = c.store.get("blocks", second.id);
+  historical.recordCollection.runs[0].id = first.payload.runs[0].runId;
+  historical.payload.runs[0].runId = first.payload.runs[0].runId;
+  c.store.put("blocks", second.id, historical);
+  const comparison = await c.records.plot({ selections: [first, second].map(block => ({ nodeId: node.id, blockId: block.id, runId: first.payload.runs[0].runId })) }, actor);
+  assert.equal(comparison.series.length, 2);
+  assert.ok(comparison.series.every(line => line.pointCount === 1 && line.sources.every(source => source.blockId === line.blockId)));
+
 });
 
 test("three types share atomic note bodies and free tags while old scientific identities remain readable", async (t) => {
@@ -412,11 +384,11 @@ test("one record block holds three runs and four exact metrics, with versioned m
       role: "source",
     })),
   });
-  assert.deepEqual(
+  assert.notDeepEqual(
     again.payload.runs.map((run) => run.runId),
     block.payload.runs.map((run) => run.runId),
   );
-  assert.equal(c.records.overview(experiment.id, actor).runs.length, 3);
+  assert.equal(c.records.overview(experiment.id, actor).runs.length, 6);
   const config = await upload("rank4.yaml", "rank: 4\nbatch_size: 32\n");
   const configBlock = add(experiment.id, {
     title: "Configurations",
@@ -431,11 +403,12 @@ test("one record block holds three runs and four exact metrics, with versioned m
       rows: [{ batch: 32 }, { batch: 16 }],
     },
   });
-  const revision = c.records.overview(experiment.id, actor).revision;
+  const revision = c.records.overview(experiment.id, actor, undefined, block.id).revision;
   c.changes.direct(
     [
       {
         op: "editExperiment",
+        blockId: block.id,
         owner: nodeRef(experiment.id),
         expectedExperimentRevision: revision,
         patch: {
@@ -537,8 +510,9 @@ test("one record block holds three runs and four exact metrics, with versioned m
 });
 
 test("experiment metadata and associations remain human-reviewed and use current read receipts", async (t) => {
-  const { c, actor, create } = await fixture(t),
+  const { c, actor, create, add } = await fixture(t),
     node = create("experiment", "Recorded experiment");
+  const recordBlock = add(node.id, { title: "Record", type: "experimentRecord", payload: { provider: "wandb", runs: [] } });
   const agent = {
     isAgent: true,
     user: { id: "owner" },
@@ -553,7 +527,8 @@ test("experiment metadata and associations remain human-reviewed and use current
         [
           {
             op: "editExperiment",
-            owner: nodeRef(node.id),
+            blockId: recordBlock.id,
+        owner: nodeRef(node.id),
             expectedExperimentRevision: 1,
             patch: { addRuns: [{ label: "Attempt", status: "failed" }] },
           },
@@ -570,7 +545,8 @@ test("experiment metadata and associations remain human-reviewed and use current
           nodeChanges: [
             {
               nodeId: node.id,
-              expectedExperimentRevision: 1,
+              recordBlockId: recordBlock.id,
+          expectedExperimentRevision: 1,
               experimentPatch: {
                 addRuns: [{ label: "OOM", status: "failed" }],
               },
@@ -581,7 +557,7 @@ test("experiment metadata and associations remain human-reviewed and use current
       ),
     { code: "EVIDENCE_SCOPE_INSUFFICIENT" },
   );
-  const read = await c.records.read({ mode: "runs", nodeId: node.id }, agent);
+  const read = await c.records.read({ mode: "runs", nodeId: node.id, blockId: recordBlock.id }, agent);
   const candidate = c.proposals.create(
     {
       reason: "Record a failed attempt",
@@ -589,6 +565,7 @@ test("experiment metadata and associations remain human-reviewed and use current
       nodeChanges: [
         {
           nodeId: node.id,
+          recordBlockId: recordBlock.id,
           expectedExperimentRevision: 1,
           experimentPatch: { addRuns: [{ label: "OOM", status: "failed" }] },
         },
@@ -610,7 +587,8 @@ test("experiment metadata and associations remain human-reviewed and use current
         [
           {
             op: "editExperiment",
-            owner: nodeRef(node.id),
+            blockId: recordBlock.id,
+        owner: nodeRef(node.id),
             expectedExperimentRevision: 1,
             patch: { addRuns: [{ label: "Stale" }] },
           },
@@ -683,7 +661,8 @@ test("an Agent can incrementally link its pending record and config, while pagin
     agent,
   );
   const preview = c.snapshot(proposed.id, agent),
-    pendingRun = preview.nodes.find((item) => item.id === node.id).runs[0],
+    recordBlock = preview.blocks.find(block => block.type === "experimentRecord"),
+    pendingRun = recordBlock.recordCollection.runs[0],
     config = preview.blocks.find((block) => block.title === "Config");
   const revised = c.proposals.edit(
     {
@@ -692,6 +671,7 @@ test("an Agent can incrementally link its pending record and config, while pagin
       nodeChanges: [
         {
           nodeId: node.id,
+          recordBlockId: recordBlock.id,
           experimentPatch: {
             addLinks: [
               {
@@ -718,11 +698,12 @@ test("an Agent can incrementally link its pending record and config, while pagin
     c.records.overview(node.id, actor).materialLinks[0].runId,
     pendingRun.id,
   );
-  const before = c.records.overview(node.id, actor);
+  const before = c.records.overview(node.id, actor, undefined, recordBlock.id);
   c.changes.direct(
     [
       {
         op: "editExperiment",
+        blockId: recordBlock.id,
         owner: nodeRef(node.id),
         expectedExperimentRevision: before.revision,
         patch: { addRuns: [{ label: "Not yet read", status: "failed" }] },
@@ -731,7 +712,7 @@ test("an Agent can incrementally link its pending record and config, while pagin
     actor,
   );
   const read = await c.records.read(
-    { mode: "runs", nodeId: node.id, limit: 1 },
+    { mode: "runs", nodeId: node.id, blockId: recordBlock.id, limit: 1 },
     agent,
   );
   const hidden = c.records.overview(node.id, actor).runs.at(-1);
@@ -746,7 +727,8 @@ test("an Agent can incrementally link its pending record and config, while pagin
           nodeChanges: [
             {
               nodeId: node.id,
-              expectedExperimentRevision: read.data.revision,
+              recordBlockId: recordBlock.id,
+          expectedExperimentRevision: read.data.revision,
               experimentPatch: {
                 updateRuns: [{ id: hidden.id, status: "succeeded" }],
               },
@@ -955,10 +937,12 @@ test("a record block can render more runs than a temporary cross-experiment comp
 test("CSV material associations read archived rows beyond the bounded preview", async (t) => {
   const { c, actor, create, upload, add } = await fixture(t),
     node = create("experiment", "CSV config");
+  const recordBlock = add(node.id, { title: "Record", type: "experimentRecord", payload: { provider: "wandb", runs: [] } });
   c.changes.direct(
     [
       {
         op: "editExperiment",
+        blockId: recordBlock.id,
         owner: nodeRef(node.id),
         expectedExperimentRevision: 1,
         patch: { addRuns: [{ label: "CSV run" }] },
@@ -997,6 +981,7 @@ test("CSV material associations read archived rows beyond the bounded preview", 
     [
       {
         op: "editExperiment",
+        blockId: recordBlock.id,
         owner: nodeRef(node.id),
         expectedExperimentRevision: 2,
         patch,
@@ -1044,10 +1029,12 @@ test("CSV material associations read archived rows beyond the bounded preview", 
 test("uploaded spreadsheet rows use immutable file coordinates and Agent row-read scopes", async (t) => {
   const { c, actor, create, upload, add } = await fixture(t),
     node = create("experiment", "Spreadsheet config");
+  const recordBlock = add(node.id, { title: "Record", type: "experimentRecord", payload: { provider: "wandb", runs: [] } });
   c.changes.direct(
     [
       {
         op: "editExperiment",
+        blockId: recordBlock.id,
         owner: nodeRef(node.id),
         expectedExperimentRevision: 1,
         patch: { addRuns: [{ label: "CLI run" }] },
@@ -1105,6 +1092,7 @@ test("uploaded spreadsheet rows use immutable file coordinates and Agent row-rea
     [
       {
         op: "editExperiment",
+        blockId: recordBlock.id,
         owner: nodeRef(node.id),
         expectedExperimentRevision: 2,
         patch,
@@ -1123,14 +1111,15 @@ test("uploaded spreadsheet rows use immutable file coordinates and Agent row-rea
   );
   assert.equal(values.data.items[0].values.c2, 16);
   assert.equal(linked.selection.sheet, "Config");
-  const revision = c.records.overview(node.id, actor).revision;
+  const revision = c.records.overview(node.id, actor, undefined, recordBlock.id).revision;
   assert.throws(
     () =>
       c.changes.direct(
         [
           {
             op: "editExperiment",
-            owner: nodeRef(node.id),
+            blockId: recordBlock.id,
+        owner: nodeRef(node.id),
             expectedExperimentRevision: revision,
             patch: {
               addLinks: [
@@ -1154,7 +1143,7 @@ test("uploaded spreadsheet rows use immutable file coordinates and Agent row-rea
     projectId: "records",
     permissions: ["research.view", "research.proposeChange"],
   };
-  const runs = await c.records.read({ mode: "runs", nodeId: node.id }, agent),
+  const runs = await c.records.read({ mode: "runs", nodeId: node.id, blockId: recordBlock.id }, agent),
     manifest = await c.queries.readBlocks({
       actor: agent,
       mode: "read",
@@ -1170,7 +1159,8 @@ test("uploaded spreadsheet rows use immutable file coordinates and Agent row-rea
     nodeChanges: [
       {
         nodeId: node.id,
-        expectedExperimentRevision: revision,
+        recordBlockId: recordBlock.id,
+          expectedExperimentRevision: revision,
         experimentPatch: {
           addLinks: [
             {

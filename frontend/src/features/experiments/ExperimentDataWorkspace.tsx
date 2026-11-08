@@ -16,7 +16,9 @@ type Metric = {
   sampled?: boolean;
   readHint?: { expectedContentVersion?: string };
 };
-type Point = { x: number; y: number };
+type Numeric = number | { dtype: string; value: string };
+const exactText = (value: Numeric | null) => value === null ? "" : typeof value === "object" ? value.value : String(value);
+type Point = { x: Numeric; y: Numeric };
 type DataPage = {
   xKey: string;
   pointCount: number;
@@ -27,9 +29,17 @@ type DataPage = {
 
 export function ExperimentDataWorkspace({
   nodeId,
+  blockId,
+  snapshotId,
+  latestWatermark,
+  onLatest,
   en,
 }: {
   nodeId: string;
+  blockId?: string;
+  snapshotId?: string;
+  latestWatermark?: number;
+  onLatest?: () => void;
   en: boolean;
 }) {
   const [runId, setRunId] = useState("");
@@ -38,13 +48,25 @@ export function ExperimentDataWorkspace({
   const [firstRow, setFirstRow] = useState(0);
   const [rowWindow, setRowWindow] = useState(40);
   const scrollHost = useRef<HTMLDivElement>(null);
+  // A snapshot is a read mode selected by the caller. Latest mode must stay a
+  // live query and must never create or cache a snapshot as its substitute.
+  const pinnedId = snapshotId;
+  const dataVersion = snapshotId ?? `latest:${latestWatermark ?? 0}`;
   const overview = useQuery({
-    queryKey: ["experiment-data-overview", projectId(), nodeId],
-    queryFn: ({ signal }) =>
-      api<Overview>(
-        "/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment",
-        { signal },
-      ),
+    queryKey: ["experiment-data-overview", projectId(), nodeId, blockId, dataVersion],
+    enabled: true,
+    queryFn: async ({ signal }): Promise<Overview> => {
+      if (!pinnedId) {
+        const path = "/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment" + (blockId ? "?blockId=" + encodeURIComponent(blockId) : "");
+        return api(path, { signal });
+      }
+      const runs: Run[] = []; let cursor: string | null = null;
+      do {
+        const page: { data: { items: Run[] }; page: { nextCursor: string | null } } = await api("/api/research/experiments/read", { method: "POST", signal, body: JSON.stringify({ mode: "runs", nodeId, blockId, snapshotId: pinnedId, limit: 100, maxChars: 16000, ...(cursor ? { cursor } : {}) }) });
+        runs.push(...page.data.items); cursor = page.page.nextCursor;
+      } while (cursor);
+      return { runs };
+    },
   });
   const runs = useMemo(() => overview.data?.runs ?? [], [overview.data?.runs]);
   useEffect(() => {
@@ -52,7 +74,7 @@ export function ExperimentDataWorkspace({
     if (!runs.some((run) => run.id === runId)) setRunId(runs[0].id);
   }, [runs, runId]);
   const metrics = useQuery({
-    queryKey: ["experiment-data-metrics", projectId(), nodeId, runId],
+    queryKey: ["experiment-data-metrics", projectId(), nodeId, blockId, dataVersion, runId],
     enabled: Boolean(runId),
     queryFn: async ({ signal }) => {
       const items: Metric[] = [];
@@ -66,7 +88,7 @@ export function ExperimentDataWorkspace({
           signal,
           body: JSON.stringify({
             mode: "metrics",
-            nodeId,
+            nodeId, blockId, snapshotId: pinnedId,
             runId,
             limit: 100,
             maxChars: 16000,
@@ -108,7 +130,7 @@ export function ExperimentDataWorkspace({
     queryKey: [
       "experiment-data-table",
       projectId(),
-      nodeId,
+      nodeId, blockId, dataVersion,
       runId,
       visibleMetrics.map((item) => [
         item.key,
@@ -123,7 +145,7 @@ export function ExperimentDataWorkspace({
         method: "POST",
         signal,
         body: JSON.stringify({
-          nodeId,
+          nodeId, blockId, snapshotId: pinnedId,
           runId,
           metrics: visibleMetrics.map((item) => ({ key: item.key, xKey: item.xKey, expectedContentVersion: item.readHint?.expectedContentVersion })),
           pointOffset: offset,
@@ -155,34 +177,29 @@ export function ExperimentDataWorkspace({
       {
         key: string;
         axis: string;
-        x: number;
+        x: Numeric;
         occurrence: number;
-        values: (number | null)[];
+        values: (Numeric | null)[];
       }
     >();
     pointData.forEach((data, column) => {
-      const occurrences = new Map<number, number>();
+      const occurrences = new Map<string, number>();
       for (const point of data.points) {
-        const occurrence = occurrences.get(point.x) ?? 0;
-        occurrences.set(point.x, occurrence + 1);
+        const occurrence = occurrences.get(exactText(point.x)) ?? 0;
+        occurrences.set(exactText(point.x), occurrence + 1);
         const key = JSON.stringify([data.xKey, point.x, occurrence]);
         const row = aligned.get(key) ?? {
           key,
           axis: data.xKey,
           x: point.x,
           occurrence,
-          values: Array<number | null>(pointData.length).fill(null),
+          values: Array<Numeric | null>(pointData.length).fill(null),
         };
         row.values[column] = point.y;
         aligned.set(key, row);
       }
     });
-    return [...aligned.values()].sort(
-      (a, b) =>
-        a.axis.localeCompare(b.axis) ||
-        a.x - b.x ||
-        a.occurrence - b.occurrence,
-    );
+    return [...aligned.values()];
   }, [pointData]);
   const run = runs.find((item) => item.id === runId);
   const pointCount = Math.max(
@@ -202,8 +219,8 @@ export function ExperimentDataWorkspace({
       ),
       ...rows.map((row) =>
         [
-          mixedAxes ? `${row.axis} ${row.x}` : row.x,
-          ...row.values.map((value) => value ?? ""),
+          mixedAxes ? `${row.axis} ${exactText(row.x)}` : exactText(row.x),
+          ...row.values.map((value) => exactText(value)),
         ].join("\t"),
       ),
     ];
@@ -222,6 +239,7 @@ export function ExperimentDataWorkspace({
       className="experiment-data-workspace"
       aria-label={en ? "Experiment data" : "实验数据"}
     >
+      {pinnedId && <div className="experiment-run-toolbar"><span className="research-badge">{en ? "Snapshot" : "快照"} · {pinnedId.slice(-12)}</span>{onLatest && <button className="button" onClick={() => onLatest()}>{en ? "Read latest data" : "读取最新数据"}</button>}</div>}
       {!runs.length ? (
         <p className="research-empty">
           {en ? "No runs recorded." : "尚无运行记录。"}
@@ -380,10 +398,10 @@ export function ExperimentDataWorkspace({
                       .slice(firstRow, firstRow + rowWindow)
                       .map((row, index) => (
                         <tr key={row.key} aria-rowindex={firstRow + index + 2}>
-                          <td>{mixedAxes ? `${row.axis} ${row.x}` : row.x}</td>
+                          <td>{mixedAxes ? `${row.axis} ${exactText(row.x)}` : exactText(row.x)}</td>
                           {row.values.map((value, index) => (
                             <td key={experimentMetricId(visibleMetrics[index])}>
-                              {value ?? "—"}
+                              {value === null ? "—" : exactText(value)}
                             </td>
                           ))}
                         </tr>

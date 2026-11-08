@@ -6,7 +6,7 @@ export function useResearchPermissions() {
   const query = useQuery({ queryKey: ["collaboration-context", projectId()], queryFn: () => api<any>("/api/collaboration/context") });
   const permissions: string[] = query.data?.permissions ?? [];
   const has = (permission: string) => Boolean(query.data?.actor?.serverRole === "server-admin" || permissions.includes("*") || permissions.includes(permission));
-  return { actorId: String(query.data?.actor?.id ?? "anonymous"), nodes: has(reviewPermission("accept")), deleteNodes: has("research.withdrawOrSupersede"), records: has("research.recordProgress"), confirm: has(reviewPermission("reject")), approveHighRisk: has("agent.approveHighRiskTool") };
+  return { actorId: String(query.data?.actor?.id ?? "anonymous"), nodes: has(reviewPermission("accept")), manageEnvironments: has("project.manageSettings"), deleteNodes: has("research.withdrawOrSupersede"), records: has("research.recordProgress"), confirm: has(reviewPermission("reject")), approveHighRisk: has("agent.approveHighRiskTool") };
 }
 const dirtyEditors = new Set<symbol>();
 export function confirmUnsavedChanges() {

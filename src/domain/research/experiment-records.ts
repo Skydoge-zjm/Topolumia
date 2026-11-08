@@ -31,10 +31,12 @@ export const recordRunSchema = z.strictObject({
   status: runStatusSchema.default("unknown"),
   assetIds: z.array(id).max(40).default([]),
   ref: id.optional(),
+  projectSource: z.strictObject({ sourceId: id, runId: id }).optional(),
 });
 export const experimentRecordPayloadSchema = z.strictObject({
   provider: z.enum(experimentProviders),
-  runs: z.array(recordRunSchema).min(1).max(200),
+  runs: z.array(recordRunSchema).max(200).default([]),
+  followSources: z.array(z.strictObject({ sourceId: id, directory: z.string().min(1).max(1000) })).max(20).optional(),
 });
 export const materialSelectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("block") }),
@@ -96,6 +98,14 @@ export type ExperimentRun = {
 };
 export type ExperimentMaterialLink = z.infer<typeof materialLinkSchema> & {
   id: string;
+};
+/** Small, versioned research metadata. Continuous records are stored separately. */
+export type ExperimentRecordCollection = {
+  id: string;
+  blockId: string;
+  revision: number;
+  runs: ExperimentRun[];
+  materialLinks: ExperimentMaterialLink[];
 };
 export type ExperimentPoint = {
   x: number;

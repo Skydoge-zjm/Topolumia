@@ -45,6 +45,7 @@ export function readHistoryJson(
       ];
   return runs.map((run: any, index: number) => {
     const series = new Map<string, ExperimentSeries>();
+    const events: any[] = Array.isArray(run.events) ? structuredClone(run.events) : [];
     const add = (
       key: string,
       x: unknown,
@@ -56,6 +57,7 @@ export function readHistoryJson(
       const identity = JSON.stringify([key, xKey]);
       const line = series.get(identity) ?? { key, xKey, points: [] };
       line.points.push({ x, y, ...(finite(timestamp) ? { timestamp } : {}) });
+      events.push({ kind: "scalar", key, xKey, x, value: y, ...(finite(timestamp) ? { timestamp } : {}) });
       series.set(identity, line);
     };
     const history =
@@ -113,6 +115,12 @@ export function readHistoryJson(
         run.run?.id ??
         (runs.length === 1 ? fallbackId : fallbackId + ":" + index),
     );
+    for (const [seq, event] of events.entries()) {
+      event.seq ??= seq;
+      event.sourceRunId ??= sourceId;
+    }
+    for (const [kind, value] of [["config", run.config ?? run.params], ["summary", run.summary]] as const)
+      if (value && typeof value === "object") events.push({ kind, sourceRunId: sourceId, seq: events.length, data: { update: value, remove: [] } });
     return {
       sourceId,
       label: String(
@@ -126,6 +134,7 @@ export function readHistoryJson(
       status: status(run.status ?? run.state),
       originalStatus: run.status ?? run.state,
       series: [...series.values()],
+      events,
       metrics: Object.fromEntries(
         Object.entries(run.metrics ?? run.summary ?? {}).filter(([, value]) =>
           finite(value),
@@ -164,9 +173,12 @@ export class ExperimentRecordReader {
       this.c.assets.root,
       "derived",
       asset.id.slice(6),
-      "experiment-record-v1",
+      "experiment-record-v2",
       provider + ".json",
     );
+  }
+  eventsPath(asset, provider) {
+    return this.indexPath(asset, provider) + ".events.json";
   }
   index(assetId, provider, actor) {
     const asset = this.c.assets.assert(assetId, actor),
@@ -279,14 +291,14 @@ export class ExperimentRecordReader {
           fail("EXPERIMENT_RECORD_INVALID", "实验记录包含无效数值。", 422);
     }
     const value = {
-      schemaVersion: "experiment-record-index.v1",
+      schemaVersion: "experiment-record-index.v2",
       provider,
       assetId: asset.id,
       checksum: asset.checksum,
       contentVersion: versionHash({
         checksum: asset.checksum,
         provider,
-        parser: 1,
+        parser: 2,
       }),
       runs,
     };

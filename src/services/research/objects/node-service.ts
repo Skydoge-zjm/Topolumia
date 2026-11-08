@@ -14,7 +14,7 @@ export class NodeObjectService {
     if (!source) fail("RESEARCH_NODE_NOT_FOUND", "Research node not found.", 404);
     return this.identity(source);
   }
-  identity(source) { return { id: source.id, kind: storedResearchNodeKind(source.kind) ?? source.kind, core: { nodeName: localized(source.label), ...(source.kind !== "paper" && localized(source.summary) ? { summary: localized(source.summary) } : {}) }, sourceRefs: [], revision: 1, coreRevision: 1, blockCollectionRevision: 1, relationRevision: 1, ...(source.kind === "experiment" ? { experimentRevision: 1, runs: [], materialLinks: [] } : {}), status: source.status, createdAt: source.data?.createdAt ?? null }; }
+  identity(source) { return { id: source.id, kind: storedResearchNodeKind(source.kind) ?? source.kind, core: { nodeName: localized(source.label), ...(source.kind !== "paper" && localized(source.summary) ? { summary: localized(source.summary) } : {}) }, sourceRefs: [], revision: 1, coreRevision: 1, blockCollectionRevision: 1, relationRevision: 1,  status: source.status, createdAt: source.data?.createdAt ?? null }; }
   nodes() { const stored = new Map(this.store.all("nodes").map(node => [node.id, { ...node, kind: storedResearchNodeKind(node.kind) ?? node.kind }])); return this.commands.formalTopology().nodes.map(node => stored.get(node.id) ?? this.identity(node)).filter(node => !node.deleted); }
   blocks(id, archived = false) { return this.commands.objects.blocks(nodeRef(id), archived); }
   block(id, blockId) { return this.commands.objects.block(nodeRef(id), blockId); }

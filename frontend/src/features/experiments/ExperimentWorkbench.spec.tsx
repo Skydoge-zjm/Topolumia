@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ExperimentWorkbench } from "./ExperimentWorkbench";
+import { ObjectContentWorkspace } from "@/features/topology/details/ObjectContentWorkspace";
 import type { ContentBlock } from "@/features/topology/details/ContentBlockRenderer";
 
 const owner = { kind: "node" as const, id: "node:experiment" };
@@ -12,13 +12,16 @@ afterEach(() => { cleanup(); client?.clear(); vi.restoreAllMocks(); vi.unstubAll
 function show(canEdit = true) {
   const fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
     if (options.method === "PATCH" || options.method === "DELETE") return Response.json({ ...record, title: "Renamed" });
-    if (url.endsWith("/experiment")) return Response.json({ revision: 1, runs: [], materialLinks: [] });
+    if (url.includes("/experiment?")) return Response.json({ revision: 1, runs: [{ id: "run:one" }], materialLinks: [] });
+    if (url.endsWith("/status")) return Response.json({ snapshots: [] });
+    if (url.endsWith("/version")) return Response.json({ durableWatermark: 0, updatedAt: null });
+    if (url.includes("collaboration/context")) return Response.json({ permissions: canEdit ? ["*"] : [] });
     return Response.json({ temporary: true, runs: [], series: [], metricKeys: [], omittedMetricCount: 0 });
   });
   vi.stubGlobal("fetch", fetch);
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const changed = vi.fn();
-  render(<QueryClientProvider client={client}><ExperimentWorkbench nodeId={owner.id} owner={owner} blocks={[record]} collectionRevision={5} en canEdit={canEdit} onChanged={changed} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><ObjectContentWorkspace nodeKind="experiment" owner={owner} initialBlocks={[record]} collectionRevision={5} en canEdit={canEdit} onChanged={changed} /></QueryClientProvider>);
   return { fetch, changed };
 }
 
@@ -26,7 +29,9 @@ it("plots one run once when multiple sources share its identity", async () => {
   const { fetch } = show();
   await waitFor(() => expect(fetch.mock.calls.some(([url]) => url.endsWith("/plot"))).toBe(true));
   const input = JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/plot"))![1]?.body));
-  expect(input.selections).toEqual([{ nodeId: owner.id, runId: "run:one" }]);
+  expect(input.nodeId).toBe(owner.id);
+  expect(input.blockId).toBe(record.id);
+  expect(input.selections).toBeUndefined();
   expect(input.blockRevision).toBe(3);
 });
 

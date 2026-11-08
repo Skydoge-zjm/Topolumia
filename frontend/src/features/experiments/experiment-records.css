@@ -834,3 +834,49 @@
   min-height: 32px;
   font-size: 13px;
 }
+
+.record-block-workbench { min-width: 0; }
+.record-block-workbench > .experiment-run-toolbar { justify-content: space-between; margin-bottom: 12px; }
+.record-block-workbench .research-tabs { margin: 0; min-width: 0; max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+.content-block-list > .content-block-card { min-width: 0; max-width: 100%; }
+.record-block-workbench > .experiment-run-toolbar > .research-tabs { flex: 1 1 320px; }
+.record-block-workbench.is-expanded { position: fixed; inset: 16px; z-index: 80; overflow: auto; padding: 16px; background: var(--surface, #fff); border: 1px solid var(--border, #dce5df); }
+.record-source-panel { display: grid; gap: 12px; min-width: 0; }
+.record-source-panel td { overflow-wrap: anywhere; }
+
+.record-source-overview { display: grid; gap: 16px; padding: 8px 0 16px; border-bottom: 1px solid var(--color-line-soft); }
+.record-source-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.record-source-state strong { font-size: 16px; color: var(--color-ink); }
+.record-source-state span { font-size: 14px; color: var(--color-ink-soft); }
+.record-source-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 0; }
+.record-source-summary > div { min-width: 0; }
+.record-source-summary dt { color: var(--color-ink-soft); font-size: 12px; }
+.record-source-summary dd { margin: 4px 0 0; color: var(--color-ink); font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.record-source-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.record-source-message { margin: 0; font-size: 14px; }
+.record-source-section { margin: 4px 0 0; padding-top: 12px; border-top: 1px solid var(--color-line-soft); }
+.record-source-section h4 { margin: 0 0 8px; font-size: 16px; }
+.record-source-section summary { cursor: pointer; color: var(--color-ink-soft); font-size: 14px; }
+.record-source-list { display: grid; margin-top: 8px; }
+.record-source-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; }
+.record-source-access { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: 8px 16px; padding: 10px 0; }
+.record-source-access + .record-source-access { border-top: 1px solid var(--color-line-soft); }
+.record-source-access strong { display: block; font-size: 14px; }
+.record-source-access span, .record-source-access code { display: block; margin-top: 4px; color: var(--color-ink-soft); font-size: 12px; overflow-wrap: anywhere; }
+.record-source-access > details { grid-column: 1 / -1; }
+.record-source-access > details summary { font-size: 12px; }
+@media (max-width: 600px) {
+  .record-source-access { grid-template-columns: minmax(0,1fr); }
+}
+
+.record-collectors-section { padding-block: 16px; min-width: 0; }
+.record-collectors-section h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.record-collectors-section td { vertical-align: top; }
+.record-collectors-section td small, .training-record-browser td small { display: block; font-size: 12px; }
+.record-collectors-section code, .training-record-browser td code { overflow-wrap: anywhere; white-space: normal; }
+.record-collectors-section td:nth-child(3) { max-width: 360px; }
+.training-record-browser { display: grid; gap: 12px; min-width: 0; }
+.training-record-browser > .research-table-wrap { max-height: 420px; overflow: auto; }
+.training-record-browser .experiment-run-toolbar > input { flex: 1 1 180px; min-width: 120px; }
+.training-record-browser .experiment-run-toolbar label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.training-record-browser input[type=checkbox] { width: 18px; height: 18px; }

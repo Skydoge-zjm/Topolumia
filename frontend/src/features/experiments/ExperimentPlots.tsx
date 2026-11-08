@@ -122,7 +122,7 @@ export function ExperimentPlots({
         >
           {legendEntries.map((line) => {
             const key = runKey(line),
-              style = runColor(line.nodeId, line.runId),
+              style = runColor(line.nodeId, line.runId, line.blockId),
               shown = !hidden.includes(key);
             return (
               <button
@@ -217,6 +217,11 @@ function MetricChart({
   const [inView, setInView] = useState(
     typeof IntersectionObserver === "undefined",
   );
+  const lockedRange = useRef(false);
+  const userRange = useRef<{ min: number; max: number } | null>(null);
+  const currentData = useRef<any>(null);
+  const currentSeries = useRef<any>(null);
+  const currentHoverIndices = useRef<any>(null);
   const savedRange = useRef<{ min: number; max: number } | null>(null);
   useEffect(() => {
     if (!container.current || typeof IntersectionObserver === "undefined")
@@ -261,9 +266,14 @@ function MetricChart({
     return Number.isFinite(min) ? [min, max === min ? min + 1 : max] : [0, 1];
   }, [visible]);
 
+  currentData.current = data;
+  currentSeries.current = { visible, label };
+  currentHoverIndices.current = hoverIndices;
+  const structure = JSON.stringify(visible.map(line => [line.nodeId, line.runId, line.key, line.xKey, line.runLabel, line.nodeName, line.points.length === 1]));
   useEffect(() => {
     if (!canvas || !inView || !container.current) return;
     const host = container.current;
+    const { visible, label } = currentSeries.current as { visible: RecordLine[]; label: (line: RecordLine) => string };
     const options: uPlot.Options = {
       mode: 2,
       width: chartWidth(host),
@@ -273,7 +283,7 @@ function MetricChart({
         focus: { prox: 24 },
         dataIdx: (self, index) => {
           const x = self.posToVal(self.cursor.left ?? 0, "x");
-          return hoverIndices[index]?.(x) ?? null;
+          return currentHoverIndices.current[index]?.(x) ?? null;
         },
       },
       legend: { show: false },
@@ -300,7 +310,7 @@ function MetricChart({
       series: [
         {},
         ...visible.map((line) => {
-          const style = runColor(line.nodeId, line.runId);
+          const style = runColor(line.nodeId, line.runId, line.blockId);
           return {
             label: label(line),
             stroke: CHART_COLORS[style],
@@ -319,6 +329,7 @@ function MetricChart({
         }),
       ],
       hooks: {
+        setSelect: [self => { if (self.select.width > 0) { lockedRange.current = true; userRange.current = { min: self.posToVal(self.select.left, "x"), max: self.posToVal(self.select.left + self.select.width, "x") }; } }],
         setScale: [
           (self) => {
             const { min, max } = self.scales.x;
@@ -345,7 +356,7 @@ function MetricChart({
     };
     const instance = new uPlot(
       options,
-      data as unknown as uPlot.AlignedData,
+      currentData.current as unknown as uPlot.AlignedData,
       host,
     );
     chart.current = instance;
@@ -353,7 +364,8 @@ function MetricChart({
       initialMax = instance.scales.x.max;
     if (initialMin !== undefined && initialMax !== undefined)
       host.dataset.xRange = `${initialMin}:${initialMax}`;
-    if (savedRange.current) instance.setScale("x", savedRange.current);
+    const restored = userRange.current ?? savedRange.current;
+    if (restored) instance.setScale("x", restored);
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
@@ -373,13 +385,21 @@ function MetricChart({
   }, [
     canvas,
     inView,
-    visible,
-    data,
-    label,
+    structure,
     xAxisLabel,
     onHoverX,
-    hoverIndices,
+    // Series metadata is captured by structure; data is updated on the existing instance.
   ]);
+
+  useEffect(() => {
+    const instance = chart.current;
+    if (!instance) return;
+    const range = userRange.current;
+    instance.batch(() => {
+      instance.setData(data as unknown as uPlot.AlignedData, true);
+      if (lockedRange.current && range) instance.setScale("x", range);
+    });
+  }, [data, structure, inView]);
 
   useEffect(() => {
     const instance = chart.current;
@@ -403,6 +423,7 @@ function MetricChart({
   }, [hoverX, visible, data, inView]);
 
   const zoom = (factor: number) => {
+    lockedRange.current = true;
     const instance = chart.current;
     if (!instance) return;
     const { min, max } = instance.scales.x;
@@ -411,9 +432,11 @@ function MetricChart({
       half = ((max - min) * factor) / 2;
     const lower = Math.max(domain[0], center - half),
       upper = Math.min(domain[1], center + half);
-    if (upper > lower) instance.setScale("x", { min: lower, max: upper });
+    if (upper > lower) { userRange.current = { min: lower, max: upper }; instance.setScale("x", userRange.current); }
   };
   const reset = () => {
+    lockedRange.current = false;
+    userRange.current = null;
     const instance = chart.current;
     if (!instance || !visible.length) return;
     instance.setScale("x", { min: domain[0], max: domain[1] });

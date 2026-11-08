@@ -36,6 +36,14 @@ get_environment 只读缓存梗概，不枚举全部包。PDF 或图像未索引
 
 create_candidate/edit_candidate 接受节点、内容块与增量修改的业务表达，内部编译成操作；Agent 不应手写内部事务序列。候选编辑不重述未修改正文。
 
+### 实验持续数据读取
+
+Agent 从实验的内容目录定位具体记录块/集合/run，再经 read_experiment 读取指标和准确范围。只有结果表格的实验走普通块/资产接口。人和 Agent 使用同一目录、数据点、采样和固定快照，返回块/run 来源与原始数值类型；绘图采样不能替代完整点证据。
+
+read_experiment snapshot 创建或读取固定依据；后续 runs/metrics/series 携带 blockId 和 snapshotId。快照保留数据水位、科研块/材料版本、解释版本与运行目录，后续追加和归档不改变原依据；项目权限仍检查。笔记候选使用 sourceRefs 中 kind=experimentSnapshot、value=快照 ID，保存可再读引用，服务端验证引用。连续数据水位不参与节点版本，避免无关追加造成候选冲突。
+
+read_experiment events 按水位与类型读取原始富记录；大记录目录明确预览截断，使用 eventWatermark、textOffset/textLength 分段取原文。返回的附件 downloadHint 使用 transfer_asset 的 recordAttachment 目标，经同一私有交接目录和校验传输完整原件，不传大段 base64。采集凭据不会进入研究上下文，也不能绕过科研候选审批。
+
 ## 节点组接口
 
 [组接口](../modules/node-groups/interfaces-and-changes.md) 通过 read_groups、组搜索及现有候选提供组读写；共同内容块、核心字段、neighbors 与资产块目标使用类型化对象引用。组概览不隐式展开所有成员，成员目录按范围、版本和字符预算分页。

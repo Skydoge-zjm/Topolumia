@@ -8,7 +8,7 @@ export type ContentBlockType = typeof contentBlockTypes[number];
 
 export const sourceRef = z.strictObject({
   id: z.string().max(240).optional(), clientRef: z.string().max(240).optional(), assetId: z.string().max(240).optional(),
-  kind: z.enum(["url", "doi", "arxiv", "file", "page", "figure", "table", "section", "range"]),
+  kind: z.enum(["url", "doi", "arxiv", "file", "page", "figure", "table", "section", "range", "experimentSnapshot"]),
   value: z.string().trim().min(1).max(2_000),
   locator: z.strictObject({
     page: z.string().max(80).optional(), figure: z.string().max(80).optional(), table: z.string().max(80).optional(),

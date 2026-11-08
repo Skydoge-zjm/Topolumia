@@ -1,5 +1,6 @@
 export type RecordLine = {
   nodeId: string;
+  blockId?: string;
   nodeName: string;
   runId: string;
   runLabel: string;
@@ -35,16 +36,16 @@ export const AXIS_INK = "#526c60";
 export const GRID_INK = "#dce5df";
 
 /** Stable across blocks, dialogs and reloads: the run identity, not its position, picks the colour. */
-export function runColor(nodeId: string, runId: string) {
+export function runColor(nodeId: string, runId: string, blockId?: string) {
   let hash = 2166136261;
-  for (const char of nodeId + "\u0000" + runId) {
+  for (const char of nodeId + "\u0000" + (blockId ? blockId + "\u0000" : "") + runId) {
     hash ^= char.codePointAt(0)!;
     hash = Math.imul(hash, 16777619);
   }
   return Math.abs(hash) % CHART_COLORS.length;
 }
-export const runKey = (line: { nodeId: string; runId: string }) =>
-  JSON.stringify([line.nodeId, line.runId]);
+export const runKey = (line: { nodeId: string; blockId?: string; runId: string }) =>
+  JSON.stringify(line.blockId ? [line.nodeId, line.blockId, line.runId] : [line.nodeId, line.runId]);
 const numberFormat = new Intl.NumberFormat(undefined, {
   maximumSignificantDigits: 5,
 });

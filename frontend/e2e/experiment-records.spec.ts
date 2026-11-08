@@ -100,7 +100,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
       .fill("训练过程");
     await page.getByRole("button", { name: "内容类型", exact: true }).click();
     await page
-      .getByRole("option", { name: "实验记录—W&B", exact: true })
+      .getByRole("option", { name: "实验记录", exact: true })
       .click();
     const history = (run: number) =>
       JSON.stringify({
@@ -115,6 +115,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
           "eval/ssim": step / 250,
         })),
       });
+    await page.getByRole("button", { name: "导入记录文件", exact: true }).click();
     await page.getByLabel("上传运行记录", { exact: true }).setInputFiles(
       [1, 2, 3].map((run) => ({
         name: "run-" + run + ".json",
@@ -155,7 +156,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
         );
       })
       .toBe(true);
-    await page.getByRole("button", { name: "实验数据", exact: true }).click();
+    await page.getByRole("button", { name: "数据表", exact: true }).click();
     await expect(
       page.getByRole("region", { name: "实验数据", exact: true }),
     ).toBeVisible();
@@ -163,7 +164,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await expect(
       page.getByRole("cell", { name: "1", exact: true }).first(),
     ).toBeVisible();
-    await page.getByRole("button", { name: "研究材料", exact: true }).click();
+    await page.getByRole("button", { name: "曲线", exact: true }).click();
 
     await page.getByRole("button", { name: "添加内容块", exact: true }).click();
     await page
@@ -182,6 +183,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await expect(page.locator(".asset-text-preview")).toContainText(
       "batch_size: 32",
     );
+    await page.getByRole("button", { name: "运行与材料", exact: true }).click();
     const run1 = page
       .locator(".experiment-run-item")
       .filter({ hasText: "Run 1" });
@@ -223,6 +225,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
       (block) => block.id === tableView.allocation["block:table"],
     );
     await page.reload();
+    await page.getByRole("button", { name: "运行与材料", exact: true }).click();
     await page
       .locator(".experiment-run-item")
       .filter({ hasText: "Run 2" })
@@ -263,6 +266,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
       actor,
     );
     await page.reload();
+    await page.getByRole("button", { name: "运行与材料", exact: true }).click();
     await page.getByRole("button", { name: "运行配置表", exact: true }).click();
     await expect(
       page.getByRole("dialog").getByRole("cell", { name: "16", exact: true }),
@@ -319,6 +323,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
       actor,
     );
     await page.reload();
+    await page.getByRole("button", { name: "运行与材料", exact: true }).click();
     await page
       .locator(".experiment-run-item")
       .filter({ hasText: "Run 3" })

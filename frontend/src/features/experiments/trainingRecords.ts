@@ -1,0 +1,2 @@
+export type TrainingRun = { sourceId: string; label: string; status: string; provider: string; projectSource: { sourceId: string; runId: string }; hostId: string; hostLabel: string; directory: string; updatedAt?: string; assigned: boolean };
+export const asRecordEntry = (run: TrainingRun) => ({ sourceId: run.sourceId, label: run.label, status: run.status, assetIds: [], projectSource: run.projectSource });

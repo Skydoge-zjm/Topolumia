@@ -4,6 +4,7 @@ import { readFile, stat, mkdir, writeFile, rename } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { Duplex } from "node:stream";
+import { connect as connectTcp } from "node:net";
 import ssh2 from "ssh2";
 const { Client, utils } = ssh2;
 import * as z from "zod/v4";
@@ -825,11 +826,32 @@ export class SshConnectionService {
       );
     return session;
   }
+  async reverseForward(owner, id, localPort, localHost = "127.0.0.1") {
+    const session = await this.connected(owner, id), client = session.client;
+    const port = await new Promise<number>((resolve, reject) => client.forwardIn("127.0.0.1", 0, (error, port) => error ? reject(error) : resolve(port)));
+    let closed = false;
+    const sockets = new Set<any>();
+    const listener = (details, accept, reject) => {
+      if (details.destPort !== port) return;
+      if (closed || this.sessions.get(this.sessionKey(owner, id)) !== session || session.status !== "connected") { reject(); return; }
+      const channel = accept(), socket = connectTcp({ host: localHost, port: localPort });
+      sockets.add(socket); sockets.add(channel);
+      socket.on("error", () => channel.destroy()); channel.on("error", () => socket.destroy());
+      socket.on("close", () => { sockets.delete(socket); channel.destroy(); });
+      channel.on("close", () => { sockets.delete(channel); socket.destroy(); });
+      socket.pipe(channel).pipe(socket);
+    };
+    client.on("tcp connection", listener);
+    const close = () => { if (closed) return; closed = true; client.removeListener("tcp connection", listener); for (const socket of sockets) socket.destroy(); try { client.unforwardIn("127.0.0.1", port, () => {}); } catch {} };
+    if (this.sessions.get(this.sessionKey(owner, id)) !== session || session.status !== "connected") { close(); throw new AppError("SSH_NOT_CONNECTED", "SSH 连接已断开。", { status: 409 }); }
+    client.once("close", close);
+    return { port, close: () => { client.removeListener("close", close); close(); }, session, get active() { return !closed; } };
+  }
   async exec(
     owner,
     id,
     statement,
-    { input = "", timeoutMs = 20000, maxOutputBytes = 131072 } = {},
+    { input = "", timeoutMs = 20000, maxOutputBytes = 131072, onStdout = undefined } = {},
   ) {
     const session = await this.connected(owner, id);
     return new Promise((resolve) => {
@@ -872,6 +894,7 @@ export class SshConnectionService {
         stream = channel;
         session.channels.add(stream);
         channel.on("data", (chunk) => {
+          onStdout?.(chunk.toString("utf8"));
           if (output.length + chunk.length > maxOutputBytes)
             stop({ ok: false, outputLimitExceeded: true });
           else output = Buffer.concat([output, chunk]);

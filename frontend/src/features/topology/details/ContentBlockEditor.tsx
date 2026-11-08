@@ -3,7 +3,8 @@ import { SelectMenu } from "@/shared/ui/SelectMenu";
 import type { ContentBlock } from "./ContentBlockRenderer";
 import { contentBlockTypes } from "@domain/research/content-blocks";
 import { inspectRecordAssets } from "./experimentRecordImport";
-import { ProviderRunPicker } from "./ProviderRunPicker";
+import { TrainingRecordPicker } from "@/features/experiments/TrainingRecordPicker";
+import { asRecordEntry } from "@/features/experiments/trainingRecords";
 import { RecordRunAssignment } from "./RecordRunAssignment";
 import { runStatusLabel } from "@/features/experiments/runPresentation";
 
@@ -52,17 +53,18 @@ const defaults = (type: string): any => ({
 })[type];
 type BlockEdit = { title?: string; type?: string; payload?: any; sourceRefs?: any[]; review?: string; representations?: any[]; primaryRepresentationId?: string | null };
 
-export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, experimentId }: {
+export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, experimentId, initialRecordImport = false }: {
   en: boolean;
   initial?: Partial<ContentBlock>;
   onSave: (value: BlockEdit) => Promise<void> | void;
   onCancel: () => void;
   onUpload?: (file: File) => Promise<ImportedAsset>;
   experimentId?: string;
+  initialRecordImport?: boolean;
 }) {
   const [title, setTitle] = useState(initial?.title ?? ""), [type, setType] = useState(initial?.type ?? "richText");
   const [provider, setProvider] = useState<"wandb" | "tensorboard" | "mlflow">((initial?.payload?.provider as "wandb" | "tensorboard" | "mlflow") ?? "wandb");
-  const [pickRuns, setPickRuns] = useState(false);
+  const [pickRuns, setPickRuns] = useState(false), [recordImport, setRecordImport] = useState(initialRecordImport);
   const [payload, setPayload] = useState<any>(() => initial?.id ? structuredClone(initial.payload) : initial?.payload === undefined ? defaults(initial?.type ?? "richText") : structuredClone(initial.payload));
   const [tableText, setTableText] = useState(() => toTsv(initial?.payload));
   const [sourceRefs, setSourceRefs] = useState<any[]>(() => structuredClone(initial?.sourceRefs ?? []));
@@ -73,7 +75,7 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, ex
     : <input value={payload?.[key] ?? ""} onChange={event => field(key, event.target.value)} />}</label>;
   const options = useMemo(() => [
     ...contentBlockTypes.filter(value => value !== "experimentRecord").map(value => ({ value, label: labels[value]?.[en ? 1 : 0] ?? value })),
-    ...(experimentId || initial?.type === "experimentRecord" ? RECORD_OPTIONS.map(option => ({ value: "experimentRecord:" + option.provider, label: option.label[en ? 1 : 0] })) : []),
+    ...(experimentId || initial?.type === "experimentRecord" ? [{ value: "experimentRecord", label: en ? "Experiment record" : "实验记录" }] : []),
   ], [en, experimentId, initial?.type]);
   const resetType = (next: string) => {
     const choice = RECORD_OPTIONS.find(option => "experimentRecord:" + option.provider === next);
@@ -83,6 +85,7 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, ex
     setTableText("");
     setError("");
     if (kind === "experimentRecord") {
+      if (!title.trim()) setTitle(en ? "Training records" : "训练记录");
       // Keep already-selected runs when only the provider changes; validation reports the mismatch.
       const runs = choice && provider !== choice.provider ? payload?.runs ?? [] : [];
       if (choice) setProvider(choice.provider);
@@ -118,7 +121,6 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, ex
       const sources = sourceRefs.map(source => { const value = { ...source }; delete value.delivery; return value; });
       const reps = await uploadFiles();
       if (type === "experimentRecord" && files.length) { setRepresentations(reps); setFiles([]); nextPayload = await inspectRecordAssets(provider, reps, payload?.runs); setPayload(nextPayload); }
-      if (type === "experimentRecord" && !nextPayload?.runs?.length) throw new Error(en ? "Read a record file or select an existing run." : "请先读取记录文件或选择已有运行。");
       if (files.length && ["document", "spreadsheet"].includes(type)) {
         const name = files[0].name;
         const format = type === "spreadsheet" ? (/\.csv$/i.test(name) ? "csv" : "xlsx")
@@ -141,9 +143,14 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, ex
     } catch (cause) { setError(cause instanceof Error ? cause.message : (en ? "Unable to save this content block." : "无法保存这个内容块。")); }
     finally { setSaving(false); }
   }}>
-    <div className="research-form-grid"><label>{en ? "Block title" : "内容块标题"}<input required value={title} onChange={event => setTitle(event.target.value)} placeholder={en ? "e.g. Table 2 metrics" : "例如：Table 2 指标"} /></label><label>{en ? "Content type" : "内容类型"}<SelectMenu ariaLabel={en ? "Content type" : "内容类型"} value={type === "experimentRecord" ? "experimentRecord:" + provider : type} onChange={resetType} options={options} /></label></div>
-    {type === "experimentRecord" && <>{onUpload && fileInput(en ? "Upload run records" : "上传运行记录")}<div className="experiment-run-toolbar"><button type="button" className="button" disabled={saving || !files.length && !representations.length} onClick={() => void readRecords()}>{saving ? en ? "Reading…" : "读取中…" : en ? "Read records" : "读取记录"}</button><button type="button" className="button" onClick={() => setPickRuns(true)}>{en ? "Select existing runs" : "选择已有运行"}</button></div>{payload?.runs?.length > 0 && <div className="research-table-wrap"><table className="research-table"><thead><tr><th>{en ? "Run" : "运行"}</th><th>{en ? "Status" : "状态"}</th><th>{en ? "Files" : "文件"}</th><th>{en ? "Actions" : "操作"}</th></tr></thead><tbody>{payload.runs.map((run: any) => <tr key={run.sourceId}><td>{run.label}{experimentId && <RecordRunAssignment experimentId={experimentId} runId={run.runId} en={en} onChange={runId => field("runs", payload.runs.map((item: any) => { if (item.sourceId !== run.sourceId) return item; const next = { ...item }; if (runId) next.runId = runId; else delete next.runId; return next; }))} />}</td><td>{runStatusLabel(run.status, en)}</td><td>{run.assetIds.length}</td><td><button type="button" className="button" onClick={() => field("runs", payload.runs.filter((item: any) => item.sourceId !== run.sourceId))}>{en ? "Remove" : "移除"}</button></td></tr>)}</tbody></table></div>}{pickRuns && <ProviderRunPicker provider={provider} en={en} onClose={() => setPickRuns(false)} onSelect={runs => { field("runs", [...new Map([...(payload?.runs ?? []), ...runs].map(run => [run.sourceId, run])).values()]); setPickRuns(false); }} />}</>}
-    {type === "richText" && <>{textField("body", "文字 / Markdown", "Text / Markdown", true)}<SelectMenu ariaLabel={en ? "Text format" : "文字格式"} value={payload?.format ?? "markdown"} onChange={value => field("format", value)} options={["markdown", "plain", "html"].map(value => ({ value, label: value }))} /></>}
+    <div className="research-form-grid"><label>{en ? "Block title" : "内容块标题"}<input required value={title} onChange={event => setTitle(event.target.value)} placeholder={en ? "e.g. Table 2 metrics" : "例如：Table 2 指标"} /></label><label>{en ? "Content type" : "内容类型"}<SelectMenu ariaLabel={en ? "Content type" : "内容类型"} value={type} onChange={resetType} options={options} /></label></div>
+    {type === "experimentRecord" && <>
+      <div className="experiment-run-toolbar"><button type="button" className="button primary" onClick={() => setPickRuns(true)}>{en ? "Select training records" : "选择训练记录"}</button><button type="button" className="button" onClick={() => setRecordImport(true)}>{en ? "Import record files" : "导入记录文件"}</button></div>
+      {recordImport && <><SelectMenu ariaLabel={en ? "File recording tool" : "文件记录工具"} value={provider} onChange={value => { setProvider(value as typeof provider); field("provider", value); }} options={RECORD_OPTIONS.map(option => ({ value: option.provider, label: option.provider === "wandb" ? "W&B" : option.provider === "tensorboard" ? "TensorBoard" : "MLflow" }))} />{onUpload && fileInput(en ? "Upload run records" : "上传运行记录")}<button type="button" className="button" disabled={saving || !files.length && !representations.length} onClick={() => void readRecords()}>{saving ? en ? "Reading…" : "读取中…" : en ? "Read records" : "读取记录"}</button></>}
+      {payload?.runs?.length > 0 && <div className="research-table-wrap"><table className="research-table"><thead><tr><th>{en ? "Run" : "运行"}</th><th>{en ? "Status" : "状态"}</th><th>{en ? "Files" : "文件"}</th><th>{en ? "Actions" : "操作"}</th></tr></thead><tbody>{payload.runs.map((run: any) => <tr key={run.sourceId}><td>{run.label}{experimentId && initial?.id && !run.projectSource && <RecordRunAssignment experimentId={experimentId} blockId={initial.id} runId={run.runId} en={en} onChange={runId => field("runs", payload.runs.map((item: any) => { if (item.sourceId !== run.sourceId) return item; const next = { ...item }; if (runId) next.runId = runId; else delete next.runId; return next; }))} />}</td><td>{runStatusLabel(run.status, en)}</td><td>{run.assetIds.length}</td><td><button type="button" className="button" onClick={() => field("runs", payload.runs.filter((item: any) => item.sourceId !== run.sourceId))}>{en ? "Remove" : "移除"}</button></td></tr>)}</tbody></table></div>}
+      {pickRuns && <TrainingRecordPicker provider={payload?.runs?.length ? provider : undefined} en={en} onClose={() => setPickRuns(false)} onSelect={runs => { const nextProvider = runs[0].provider as typeof provider; setProvider(nextProvider); setPayload({ ...payload, provider: nextProvider, runs: [...new Map([...(payload?.runs ?? []), ...runs.map(asRecordEntry)].map(run => [run.sourceId, run])).values()] }); setPickRuns(false); }} />}
+    </>}
+    {type === "richText" && <>{textField("body", "文字 / Markdown", "Text / Markdown", true)}<SelectMenu ariaLabel={en ? "Text format" : "文字格式"} value={payload?.format ?? "markdown"} onChange={value => field("format", value)} options={["markdown", "plain", "html"].map(value => ({ value, label: value === "experimentSnapshot" ? en ? "Experiment snapshot" : "实验快照" : value }))} /></>}
     {type === "metric" && <MetricFields items={payload?.items ?? []} en={en} onChange={items => field("items", items)} />}
     {type === "table" && <><label>{en ? "Paste a table (tab-separated; first row is the header)" : "粘贴表格（Tab 分隔；第一行为表头）"}<textarea rows={5} value={tableText} onChange={event => setTableText(event.target.value)} /></label>{textField("caption", "表格说明", "Table caption")}{onUpload && fileInput(en ? "Or import TeX / XLSX / CSV" : "或导入 TeX / XLSX / CSV 表格")}</>}
     {type === "spreadsheet" && <>{onUpload && fileInput(en ? "Upload XLSX / CSV" : "上传 XLSX / CSV")}<div className="research-form-grid">{textField("sheet", "工作表", "Worksheet")}{textField("range", "单元格范围", "Cell range")}</div></>}
@@ -153,8 +160,8 @@ export function ContentBlockEditor({ en, initial, onSave, onCancel, onUpload, ex
     {type === "link" && <>{textField("label", "链接名称", "Link label")}{textField("url", "链接地址", "URL")}{textField("kind", "链接类型", "Link kind")}{textField("note", "备注", "Note", true)}</>}
     {type === "quote" && <>{textField("text", "原文摘录", "Quoted text", true)}{textField("translation", "译文", "Translation", true)}{textField("note", "备注", "Note", true)}</>}
     {type === "code" && <>{textField("language", "语言 / 格式", "Language / format")}{textField("filename", "文件名", "Filename")}{textField("code", "代码 / 命令 / 配置", "Code / command / configuration", true)}</>}
-    {type === "chart" && <div className="research-form-grid"><label>{en ? "Chart type" : "图表类型"}<SelectMenu ariaLabel={en ? "Chart type" : "图表类型"} value={payload?.chartType ?? "line"} onChange={value => field("chartType", value)} options={["line", "bar", "scatter", "area"].map(value => ({ value, label: value }))} /></label>{textField("dataBlockId", "数据内容块 ID", "Data content block ID")}</div>}
-    <details><summary>{en ? "Sources" : "来源引用"} · {sourceRefs.length}</summary>{sourceRefs.map((source, index) => <div className="research-form-grid" key={source.id ?? index}><label>{en ? "Source type" : "来源类型"}<SelectMenu ariaLabel={(en ? "Source type " : "来源类型 ") + (index + 1)} value={source.kind} onChange={kind => setSourceRefs(items => items.map((item, i) => i === index ? { ...item, kind } : item))} options={["url", "doi", "arxiv", "file", "page", "figure", "table", "section", "range"].map(value => ({ value, label: value }))} /></label><label>{source.label || (en ? "Source" : "来源")}<input aria-label={(en ? "Source " : "来源 ") + (index + 1)} value={source.value} onChange={event => setSourceRefs(items => items.map((item, i) => i === index ? { ...item, value: event.target.value } : item))} /></label></div>)}<button className="button" type="button" onClick={() => setSourceRefs(items => [...items, { id: "source:" + crypto.randomUUID(), kind: type === "image" ? "figure" : type === "table" ? "table" : "section", value: "" }])}>{en ? "Add source" : "添加来源"}</button></details>
+    {type === "chart" && <div className="research-form-grid"><label>{en ? "Chart type" : "图表类型"}<SelectMenu ariaLabel={en ? "Chart type" : "图表类型"} value={payload?.chartType ?? "line"} onChange={value => field("chartType", value)} options={["line", "bar", "scatter", "area"].map(value => ({ value, label: value === "experimentSnapshot" ? en ? "Experiment snapshot" : "实验快照" : value }))} /></label>{textField("dataBlockId", "数据内容块 ID", "Data content block ID")}</div>}
+    <details><summary>{en ? "Sources" : "来源引用"} · {sourceRefs.length}</summary>{sourceRefs.map((source, index) => <div className="research-form-grid" key={source.id ?? index}><label>{en ? "Source type" : "来源类型"}<SelectMenu ariaLabel={(en ? "Source type " : "来源类型 ") + (index + 1)} value={source.kind} onChange={kind => setSourceRefs(items => items.map((item, i) => i === index ? { ...item, kind } : item))} options={["url", "doi", "arxiv", "file", "page", "figure", "table", "section", "range", "experimentSnapshot"].map(value => ({ value, label: value === "experimentSnapshot" ? en ? "Experiment snapshot" : "实验快照" : value }))} /></label><label>{source.label || (en ? "Source" : "来源")}<input aria-label={(en ? "Source " : "来源 ") + (index + 1)} value={source.value} onChange={event => setSourceRefs(items => items.map((item, i) => i === index ? { ...item, value: event.target.value } : item))} /></label></div>)}<button className="button" type="button" onClick={() => setSourceRefs(items => [...items, { id: "source:" + crypto.randomUUID(), kind: type === "image" ? "figure" : type === "table" ? "table" : "section", value: "" }])}>{en ? "Add source" : "添加来源"}</button></details>
     {representations.length > 0 && <div className="research-form-grid">{representations.map((rep,index) => <div key={rep.id || rep.assetId}><span>{rep.label || rep.assetId || rep.url}</span><SelectMenu ariaLabel={en ? "Representation role" : "材料角色"} value={rep.role} onChange={role => setRepresentations(items => items.map((item,i) => i === index ? {...item,role} : item))} options={[{value:"source",label:en?"Original source":"原始来源"},{value:"transcription",label:en?"Transcription":"转录数据"},{value:"rendering",label:en?"Rendering":"排版版本"},{value:"supplement",label:en?"Supplement":"补充材料"}]} /><button type="button" className="button" onClick={() => setRepresentations(items=>items.filter((_,i)=>i!==index))}>{en?"Remove":"移除"}</button></div>)}</div>}
     {error && <p role="alert">{error}</p>}<footer><button type="button" className="button" onClick={onCancel}>{en ? "Cancel" : "取消"}</button><button className="button primary" disabled={saving}>{saving ? (en ? "Saving…" : "保存中…") : (en ? "Save block" : "保存内容块")}</button></footer>
   </form>;

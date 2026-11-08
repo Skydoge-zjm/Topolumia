@@ -270,6 +270,7 @@ beforeEach(() => {
           });
         }
       }
+      if (url.pathname === "/api/tools-environment/record-collectors") return Response.json({ adapters: [] });
       if (method === "PATCH") return Response.json(inventory);
       if (url.pathname.endsWith("/check")) return Response.json(inventory);
       throw new Error(`Unexpected fixture request: ${path}`);

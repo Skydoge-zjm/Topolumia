@@ -179,7 +179,7 @@ test("large archived records keep charts and raw-data rendering bounded", async 
       if (request.url().includes("/experiments/table"))
         requests.push(request.postDataJSON());
     });
-    await page.getByRole("button", { name: "实验数据", exact: true }).click();
+    await page.getByRole("button", { name: "数据表", exact: true }).click();
     await expect(page.getByRole("columnheader")).toHaveCount(13);
     await expect(page.getByRole("table")).toHaveAttribute(
       "aria-rowcount",
