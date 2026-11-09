@@ -39,7 +39,7 @@ test("imports real TeX and XLSX table files and renders both in a literature nod
   }, "SR3 Table 2");
   await writeFile(xlsxPath, Buffer.from(xlsx));
 
-  const app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false } } });
+  const app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { project: { workspacesRoot: path.join(root, "workspaces") }, sourceRefresh: { enabled: false } } });
   const admin = app.collaboration.bootstrapAdmin({ username: "table-preview", password: "Table-Preview-2026!" });
   const password = "Table-Preview-2026!";
   const project = app.collaboration.createProject({ id: "table-preview-project", name: "Table preview project" }, app.collaboration.actorForUser(admin.id, app.config.project.id));
@@ -57,7 +57,6 @@ test("imports real TeX and XLSX table files and renders both in a literature nod
     await page.getByRole("button", { name: "内容类型", exact: true }).click();
     await page.getByRole("option", { name: "表格", exact: true }).click();
     await page.getByLabel("或导入 TeX / XLSX / CSV 表格", { exact: true }).setInputFiles(texPath);
-    await page.getByLabel("原文定位（可选）", { exact: true }).fill("Table 2 · page 6");
     await page.getByRole("button", { name: "保存内容块", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Table 2 · TeX 原表", exact: true })).toBeVisible();
     await page.getByRole("tab", { name: "表格数据", exact: true }).click();
@@ -99,11 +98,11 @@ test("merged and styled TeX/XLSX retain their real layout, bold text, colors and
   const texPath = path.join(artifacts, "sr3-styled.tex"), xlsxPath = path.join(artifacts, "sr3-styled.xlsx");
   await writeFile(texPath, styledTexFixture(), "utf8");
   await writeFile(xlsxPath, styledXlsxFixture());
-  const app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false } } });
+  const app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { project: { workspacesRoot: path.join(root, "workspaces") }, sourceRefresh: { enabled: false } } });
   const admin = app.collaboration.bootstrapAdmin({ username: "styled-table-preview", password: "Styled-Table-2026!" });
   const project = app.collaboration.createProject({ id: "styled-preview-project", name: "Styled table preview" }, app.collaboration.actorForUser(admin.id, app.config.project.id));
   const runtime = await app.getRuntime(project.id);
-  const node = runtime.researchNodes.createNode("paper", "SR3", { nodeName: "SR3", paperTitle: "Merged cells and styled table preview" }, app.collaboration.actorForUser(admin.id, project.id));
+  const node = runtime.researchNodes.createNode("paper", { nodeName: "SR3", paperTitle: "Merged cells and styled table preview" }, app.collaboration.actorForUser(admin.id, project.id));
   try {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.request.post(app.url + "/api/auth/login", { data: { username: "styled-table-preview", password: "Styled-Table-2026!" } });

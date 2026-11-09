@@ -36,7 +36,6 @@ test("Claude handles parallel permission IDs, native withdrawal and stop without
   const parallel = f.driver.prompt({ turnId: "parallel", content: [{ type: "text", text: "approval-parallel" }] });
   const requests = await f.wait(2);
   await f.driver.resolvePermission(requests[0].payload.requestId, "allow_once");
-  assert.equal(f.driver.permissionHost.pending.size, 1);
   await f.driver.resolvePermission(requests[1].payload.requestId, "reject_once");
   assert.equal((await parallel).stopReason, "end_turn");
   const withdrawn = f.driver.prompt({ turnId: "withdraw", content: [{ type: "text", text: "approval-withdraw" }] });

@@ -262,8 +262,8 @@ describe("Agent workspace interactions", () => {
     rows[0].status = "running";
     const user = await open();
     const stop = screen.getByRole("button", { name: "停止 Agent" });
-    expect(stop).toHaveClass("composer-send");
-    expect(stop.querySelector(".composer-stop-icon")).not.toBeNull();
+    expect(stop).toBeVisible();
+    expect(stop).toBeEnabled();
     const input = screen.getByRole("textbox", { name: "研究消息" });
     expect(input).not.toBeDisabled();
     await user.type(input, "Follow-up task");

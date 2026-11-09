@@ -46,7 +46,7 @@ npm run docs:check
 
 ## 浏览器与真实集成
 
-[Playwright 配置](../../frontend/playwright.config.ts) 不会自动启动统一 webServer。许多新用例在临时目录创建自己的服务；其他用例使用配置中的 baseURL。运行前读对应文件的准备部分，不能把默认 4184 当成用户服务端口。
+[Playwright 配置](../../frontend/playwright.config.ts) 不会自动启动统一 webServer；浏览器用例应在自身准备阶段启动隔离服务并使用返回的 URL。不要依赖某个残留的本机端口或把外部运行中的服务当作当前源码的测试对象。
 
 真实模型、SSH、TeX 编译、Python 与实验 provider 测试有外部条件，按需运行并记录跳过或不可用。真实模型任务的质量要检查候选正文、图表证据和失败重试，不能仅看 HTTP 200 或候选数量。
 

@@ -175,16 +175,19 @@ it("paginates exact points and handles a failed run without metrics", async () =
   expect(screen.queryByRole("table")).toBeNull();
 });
 
-it("returns to live data after leaving a fixed snapshot instead of reusing a cached snapshot", async () => {
+it("switches from pinned to live query parameters without reusing the snapshot cache", async () => {
   const fetch = vi.fn(async (url: string, options?: RequestInit) => {
     if (url.startsWith("/api/research-nodes/"))
       return Response.json({ runs: [{ id: "run:live", label: "Live run", status: "running" }] });
     const input = JSON.parse(String(options?.body));
+    const snapshot = input.snapshotId === "snapshot:old";
+    if (input.snapshotId !== undefined && !snapshot)
+      throw new Error(`Unexpected snapshot ${input.snapshotId}`);
     if (input.mode === "runs")
-      return Response.json({ data: { items: [{ id: input.snapshotId ? "run:snapshot" : "run:live", label: input.snapshotId ? "Snapshot run" : "Live run", status: "running" }] }, page: { nextCursor: null } });
+      return Response.json({ data: { items: [{ id: snapshot ? "run:snapshot" : "run:live", label: snapshot ? "Snapshot run" : "Live run", status: "running" }] }, page: { nextCursor: null } });
     if (input.mode === "metrics")
-      return Response.json({ data: { items: [{ key: "loss", xKey: "step", pointCount: 1, readHint: { expectedContentVersion: input.snapshotId ? "snapshot-v1" : "live-v2" } }] }, page: { nextCursor: null } });
-    return Response.json({ columns: [{ metric: "loss", xKey: "step", pointCount: 1, points: [{ x: 0, y: input.snapshotId ? 1 : 2 }], nextOffset: null }] });
+      return Response.json({ data: { items: [{ key: "loss", xKey: "step", pointCount: 1, readHint: { expectedContentVersion: snapshot ? "snapshot-v1" : "live-v2" } }] }, page: { nextCursor: null } });
+    return Response.json({ columns: [{ metric: "loss", xKey: "step", pointCount: 1, points: [{ x: 0, y: snapshot ? 1 : 2 }], nextOffset: null }] });
   });
   vi.stubGlobal("fetch", fetch);
   function Harness() {

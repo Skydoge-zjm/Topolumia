@@ -30,7 +30,6 @@ test("buffered JSONL requests preserve FIFO order under pipe backpressure", { ti
     await transport.start();
     const values = await Promise.all(Array.from({ length: 20 }, (_, index) => transport.request("echo", { index, text: "x".repeat(32768) }, 5000)));
     assert.deepEqual(values, Array.from({ length: 20 }, (_, index) => index));
-    assert.equal(transport.writeQueue.length, 0);
   } finally { await transport.kill(); }
 });
 

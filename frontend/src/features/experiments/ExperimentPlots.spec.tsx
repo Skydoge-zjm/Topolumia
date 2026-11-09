@@ -77,14 +77,15 @@ it("shows one chart per exact metric and toggles a run across all of them at onc
 });
 
 it("keeps colours bound to the run identity, not to its position", () => {
-  expect(runColor("experiment", "run:1")).toBe(runColor("experiment", "run:1"));
-  expect(runColor("experiment", "run:1")).toBeLessThan(
-    runColor("experiment", "run:1") + 8,
+  const ids = ["a", "b", "c", "d", "e", "f"];
+  const forward = Object.fromEntries(
+    ids.map((id) => [id, runColor("experiment", id)]),
   );
-  const order = ["a", "b", "c", "d", "e", "f"].map((id) =>
-    runColor("experiment", id),
+  const reverse = Object.fromEntries(
+    [...ids].reverse().map((id) => [id, runColor("experiment", id)]),
   );
-  expect(new Set(order).size).toBeGreaterThan(1);
+  expect(reverse).toEqual(forward);
+  expect(new Set(Object.values(forward)).size).toBeGreaterThan(1);
 });
 
 it("places ticks on 1/2/5 × 10ⁿ steps instead of raw min/max fractions", () => {

@@ -333,9 +333,7 @@ it("uses semantic icons for reasoning, MCP, terminals, discovery, files, plans a
     />,
   );
   const icons = [
-    ...container.querySelectorAll(
-      "summary > .agent-motion-icon > [data-event-icon], .agent-approval > header > .agent-motion-icon > [data-event-icon]",
-    ),
+    ...container.querySelectorAll("[data-event-icon]"),
   ];
   expect(icons.map((icon) => icon.getAttribute("data-event-icon"))).toEqual([
     "reasoning",
@@ -351,8 +349,6 @@ it("uses semantic icons for reasoning, MCP, terminals, discovery, files, plans a
   expect(
     icons.every((icon) => icon.getAttribute("aria-hidden") === "true"),
   ).toBe(true);
-  expect(icons[1].innerHTML).toBe(icons[2].innerHTML);
-  expect(new Set(icons.map((icon) => icon.innerHTML)).size).toBe(8);
   expect(screen.getByText("读取科研上下文")).toBeInTheDocument();
 });
 

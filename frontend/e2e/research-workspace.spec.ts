@@ -12,7 +12,7 @@ const request = async (route: string, body?: any) => {
 };
 test.beforeAll(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "topolumia-notebook-browser-"));
-  app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false } } });
+  app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { project: { workspacesRoot: path.join(root, "workspaces") }, sourceRefresh: { enabled: false } } });
   const user = app.collaboration.bootstrapAdmin({ username: "notebook-browser", password });
   token = app.collaboration.login("notebook-browser", password).token;
   project = app.collaboration.createProject({ id: "notebook-browser-project", name: "Notebook browser project" }, app.collaboration.actorForUser(user.id, app.config.project.id));
@@ -85,14 +85,16 @@ test("groups collapse to a group node, expand, and open editable scientific deta
   await page.goto(app.url + "/#/topology/nodes/" + encodeURIComponent(experiment.node.id));
   await expect(page.getByRole("cell", { name: "31.2", exact: true })).toBeVisible();
   const curve = page.getByRole("figure", { name: "loss", exact: true });
+  await curve.scrollIntoViewIfNeeded();
   await expect(curve).toBeVisible();
-  await expect(curve.locator(".uplot")).toBeVisible();
+  await expect(curve.getByRole("img", { name: "loss · 1 次运行", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /W&B experiment dashboard/ })).toHaveAttribute("href", "https://wandb.ai/lab/study/runs/one");
-  await page.getByRole("button", { name: "实验数据", exact: true }).click();
+  await page.getByRole("button", { name: "数据表", exact: true }).click();
   await expect(page.getByRole("region", { name: "实验数据", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "0.25", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "研究材料", exact: true }).click();
+  await page.getByRole("button", { name: "曲线", exact: true }).click();
   await expect(curve).toContainText("曲线展示已采样");
+  await page.getByRole("button", { name: "运行与材料", exact: true }).click();
   await expect(page.locator(".experiment-run-item").filter({ hasText: "Training run 1" })).toBeVisible();
   await page.screenshot({ path: "runtime/research-experiment-results.png", fullPage: true });
 });

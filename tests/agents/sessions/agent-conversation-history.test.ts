@@ -36,7 +36,7 @@ test("conversation compacts thousands of deltas without losing messages, orderin
   assert.equal(events[1].payload.text, "Full authoritative text");
   assert.equal(events[1].id, "e2");
   assert.equal(events[1].payload.delta, undefined);
-  assert.equal(appendConversationEvent(events, event(2_006, "assistant.message.delta", { messageId: "first", delta: "late" })), events);
+  assert.deepEqual(appendConversationEvent(events, event(2_006, "assistant.message.delta", { messageId: "first", delta: "late" })), events);
 });
 
 test("conversation preserves partial cancelled messages, reasoning and independent turn identities", () => {

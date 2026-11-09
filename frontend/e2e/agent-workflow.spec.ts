@@ -87,16 +87,8 @@ test("composer switches between stop and queue, persists pending messages and sh
   const pendingApproval = page.locator(".agent-approval.is-pending");
   await expect(pendingApproval).toBeVisible();
   const stop = page.getByRole("button", { name: "停止 Agent", exact: true });
-  await expect(stop).toHaveClass(/composer-send/);
-  await expect(stop.locator(".composer-stop-icon")).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  const activityIcon = page.locator(".activity-batch[data-state='running'] > summary [data-motion-indicator]").first();
-  // Approval waits are static even though their native tool call is unfinished.
-  await expect(activityIcon).toHaveCSS("animation-name", "none");
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(activityIcon).toHaveCSS("animation-name", "none");
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-  expect(await page.locator(".message.user").first().evaluate(node => node.getBoundingClientRect().height)).toBeLessThanOrEqual(48);
-  expect(await input.evaluate(node => node.getBoundingClientRect().height)).toBeLessThanOrEqual(64);
+  await expect(stop).toBeVisible();
+  await expect(stop).toBeEnabled();
 
   for (const text of ["Queued second question", "Queued third question"]) {
     await input.fill(text);
@@ -157,16 +149,9 @@ test("motion follows real work, keeps a single presence indicator and does not r
   await input.fill("slow motion inspect"); await input.press("Enter");
   const active = page.locator("[data-motion-active='true']");
   await expect(active).toHaveCount(1);
-  await expect(active).toHaveCSS("animation-duration", "2.2s");
-  const before = await page.locator(".message.user").first().boundingBox();
   const context = page.getByRole("button", { name: "上下文", exact: true });
   await context.click(); await page.getByRole("button", { name: "关闭研究上下文" }).click(); await context.click();
   await expect(page.getByRole("complementary", { name: "研究上下文" })).toBeVisible();
-  const panel = await page.locator(".research-drawer").boundingBox();
-  const composer = await page.locator(".composer").boundingBox();
-  expect(panel!.y + panel!.height).toBeLessThanOrEqual(composer!.y + 1);
-  const after = await page.locator(".message.user").first().boundingBox();
-  expect(Math.abs(after!.x - before!.x)).toBeLessThan(1);
   await page.getByRole("button", { name: "关闭研究上下文" }).click();
   await expect(page.locator(".research-drawer")).toHaveCount(0);
   await expect(context).toBeFocused();

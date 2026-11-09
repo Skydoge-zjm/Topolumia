@@ -138,20 +138,19 @@ test("notes, multi-run records, versioned material links and temporary compariso
     const loss = page.getByRole("figure", { name: "train/loss", exact: true });
     await loss.scrollIntoViewIfNeeded();
     await expect(loss.locator("canvas")).toHaveCount(1);
-    const chartBox = await loss
-      .locator(".experiment-chart-surface")
-      .boundingBox();
+    const chartSurface = loss.getByRole("img").first();
+    const chartBox = await chartSurface.boundingBox();
     await page.mouse.move(
       chartBox!.x + chartBox!.width * 0.55,
       chartBox!.y + chartBox!.height * 0.45,
     );
-    await expect(loss.locator(".experiment-chart-tooltip")).toBeVisible();
+    await expect(loss.getByRole("status")).toBeVisible();
     await expect
       .poll(async () => {
         const active = page.locator(".experiment-metric-chart:has(canvas)");
         return (
           (await active.count()) > 1 &&
-          (await active.locator(".experiment-chart-tooltip").count()) ===
+          (await active.getByRole("status").count()) ===
             (await active.count())
         );
       })

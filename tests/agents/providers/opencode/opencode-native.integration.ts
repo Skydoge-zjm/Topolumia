@@ -15,7 +15,7 @@ import { OpenCodeAgentAdapter } from "../../../../src/adapters/agents/opencode/o
 // It exercises the native process and its tool loop without spending user quota.
 test("installed OpenCode: real MCP/CLI execution, second turn, snapshot, resume and cleanup", { timeout: 90_000 }, async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "topolumia-opencode-cli-"));
-  const workbench = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false } } });
+  const workbench = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { project: { workspacesRoot: path.join(root, "workspaces") }, sourceRefresh: { enabled: false } } });
   const owner = workbench.collaboration.bootstrapAdmin({ username: "native-cli", displayName: "Native CLI", password: "Native-CLI-2026-Test!" });
   const credential = workbench.collaboration.issueAgentCredential(workbench.collaboration.actorForUser(owner.id, workbench.config.project.id), workbench.config.project.id, "native-cli-session");
   const researchMcp = buildResearchMcpBinding({ baseUrl: workbench.url, projectId: workbench.config.project.id, sessionToken: credential, cwd: workbench.config.project.root });
@@ -24,7 +24,7 @@ test("installed OpenCode: real MCP/CLI execution, second turn, snapshot, resume 
   t.after(async () => {
     for (const owned of ownedAdapters) await owned.close();
     if (provider) { provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); }
-    await workbench.agentSessionGateway.closeAll(); workbench.server.closeAllConnections(); await new Promise(resolve => workbench.server.close(resolve));
+    await workbench.close();
     await rm(root, { recursive: true, force: true, maxRetries: 3 });
   });
   let requests = 0;
@@ -68,8 +68,11 @@ test("installed OpenCode: real MCP/CLI execution, second turn, snapshot, resume 
   assert.equal(events.filter(e => e.type === "tool.started").length, 1);
   const tool = events.find(e => e.type === "tool.completed");
   assert.ok(tool, JSON.stringify(events));
-  assert.match(String(tool.payload.item.output), /research-brief.v2/);
-  assert.ok(String(tool.payload.item.output).includes(workbench.config.project.id));
+  const context = JSON.parse(String(tool.payload.item.output));
+  assert.equal(context.schemaVersion, "research-agent-result.v1");
+  assert.equal(context.kind, "context");
+  assert.equal(context.projectId, workbench.config.project.id);
+  assert.equal(context.data.counts.nodes, 0);
   assert.ok(!JSON.stringify(events).includes(credential));
   assert.equal(events.filter(e => e.type === "assistant.message.completed").map(e => e.payload.text).join("\n"), "I will read research through MCP.\nNATIVE_MCP_VERIFIED");
   assert.equal((await adapter.prompt({ turnId: "second-turn", content: [{ type: "text", text: "Confirm the previous result." }] })).stopReason, "end_turn");

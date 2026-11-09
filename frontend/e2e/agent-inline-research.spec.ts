@@ -139,7 +139,7 @@ test("research proposals appear after their turn and can be previewed, accepted,
       paper.getByRole("button", { name: "接受并保存", exact: true }),
     ).toHaveCount(0);
     await expect(
-      paper.getByRole("link", { name: "查看已保存节点", exact: true }),
+      paper.getByRole("link", { name: "查看已保存对象 · Reviewed paper 1", exact: true }),
     ).toBeVisible();
     const question = section.getByRole("article", {
       name: "后续研究问题",

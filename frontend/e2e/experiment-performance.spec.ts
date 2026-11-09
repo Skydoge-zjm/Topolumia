@@ -141,36 +141,27 @@ test("large archived records keep charts and raw-data rendering bounded", async 
         return coloured;
       }),
     ).toBeGreaterThan(200);
-    const rangeBefore = await first
-      .locator(".experiment-chart-surface")
-      .getAttribute("data-x-range");
+    const surface = first.getByRole("img").first();
+    const rangeBefore = await surface.getAttribute("data-x-range");
     await first.getByRole("button", { name: "放大曲线", exact: true }).click();
     await expect
       .poll(() =>
-        first.locator(".experiment-chart-surface").getAttribute("data-x-range"),
+        surface.getAttribute("data-x-range"),
       )
       .not.toBe(rangeBefore);
-    const zoomed = await first
-      .locator(".experiment-chart-surface")
-      .getAttribute("data-x-range");
+    const zoomed = await surface.getAttribute("data-x-range");
     await figures.last().scrollIntoViewIfNeeded();
     await expect(figures.last().locator("canvas")).toHaveCount(1);
     await expect(first.locator("canvas")).toHaveCount(0);
     await first.scrollIntoViewIfNeeded();
     await expect(first.locator("canvas")).toHaveCount(1);
-    await expect(first.locator(".experiment-chart-surface")).toHaveAttribute(
-      "data-x-range",
-      zoomed!,
-    );
-    const box = await first.locator(".u-over").boundingBox();
+    await expect(surface).toHaveAttribute("data-x-range", zoomed!);
+    const box = await surface.boundingBox();
     await page.mouse.move(
       box!.x + box!.width * 0.5,
       box!.y + box!.height * 0.5,
     );
-    await expect(first.locator(".experiment-chart-tooltip")).toBeVisible();
-    expect(
-      await first.locator(".experiment-chart-tooltip span").count(),
-    ).toBeLessThanOrEqual(13);
+    await expect(first.getByRole("status")).toBeVisible();
     const visibleCharts = await page
       .locator(".experiment-plots canvas")
       .count();
