@@ -23,7 +23,7 @@ export async function cachedEnvironmentInspection(file, fingerprint) {
 
 function binding(runtime) {
   const { config, userSettings } = runtime;
-  return versionHash([config.project.id, config.project.root, config.researchEnvironment, config.toolCommands,
+  return versionHash([config.project.id, config.project.root, config.project.workspace, config.researchEnvironment, config.toolCommands,
     userSettings.settings.researchLocation, userSettings.settings.remoteEnvironment]);
 }
 
@@ -66,7 +66,7 @@ export async function readResearchEnvironmentContext({ runtime, actor, sshEnviro
     .find(entry => runtime.toolEnvironment.catalog.isCurrent(entry));
   const target = remote ? await sshEnvironments.contextSnapshot(runtime, actor.user.id) : {
     host: { kind: "local", platform: process.platform },
-    directory: runtime.config.project.root,
+    directory: runtime.config.project.workspace?.kind === "unassigned" ? null : runtime.config.project.root,
     name: localEntry?.name ?? runtime.toolEnvironment.research.view().name,
     selection: runtime.config.researchEnvironment,
     toolCommands: runtime.config.toolCommands,
@@ -76,13 +76,14 @@ export async function readResearchEnvironmentContext({ runtime, actor, sshEnviro
   if (initial !== binding(runtime))
     throw new AppError("ENVIRONMENT_CHANGED", "所选环境已改变，请重新读取环境梗概。", { status: 409 });
   const selection = target.selection;
+  const pendingEnvironment = Boolean(target.pendingEnvironment);
   const python = target.inspection?.components?.find(item => item.id === "python" && item.status === "ready");
   const paths = remote ? path.posix : path;
-  const executable = python?.python?.executable || (selection.kind === "conda"
+  const executable = pendingEnvironment ? null : python?.python?.executable || (selection.kind === "conda"
     ? paths.join(selection.prefix, !remote && process.platform === "win32" ? "python.exe" : "bin/python")
     : selection.pythonCommand || "python");
   const prefix = selection.kind === "conda" ? selection.prefix : python?.python?.prefix ?? null;
-  const invocation = selection.kind === "conda"
+  const invocation = pendingEnvironment ? null : selection.kind === "conda"
     ? { command: target.toolCommands?.conda || "conda", args: ["run", "--no-capture-output", "--prefix", selection.prefix, executable] }
     : { command: executable, args: [] };
   const availableTools = new Map((target.tools ?? []).map(item => [item.id, item]));
@@ -95,7 +96,7 @@ export async function readResearchEnvironmentContext({ runtime, actor, sshEnviro
     bindingVersion: versionHash([initial, hostIdentity, target.directory, target.selection, target.toolCommands]),
     host: target.host,
     workingDirectory: target.directory,
-    environment: { name: target.name, kind: python?.python?.kind ?? selection.kind, prefix,
+    environment: { name: target.name, kind: python?.python?.kind ?? selection.kind, ...(pendingEnvironment ? { selected: false } : {}), prefix,
       python: { executable, version: python?.version ?? null, checkedAt: python?.checkedAt ?? null } },
     execution: { location: remote ? "remote-host" : "local-host", pythonPrefix: invocation },
     inspection: { status: target.inspection?.status ?? "unchecked", checkedAt: target.inspection?.checkedAt ?? null,
@@ -114,6 +115,8 @@ export async function readResearchEnvironmentContext({ runtime, actor, sshEnviro
       ? "Use this selected target; inspect and execute with your own tools. Append Python arguments to pythonPrefix; use -m pip for packages. Remote paths/commands belong on the remote host; SSH login is separate from Topolumia's connection. Checks and free GPU memory are cached observations, not a live guarantee. Verify before training; do not silently use another environment."
       : "以此所选目标为准，用你自己的工具检查和执行。Python 参数追加到 pythonPrefix，包操作使用 -m pip。远程路径和命令须在远程主机使用，SSH 登录独立于 Topolumia 的连接。组件检测与空闲显存是缓存快照，训练前自行核实，不要静默改用其它环境。",
   };
+  if (pendingEnvironment) result.guidance = locale === "en" ? "The project directory is on the selected SSH host. No Python environment has been selected. Choose one in Tools & environment before executing Python; do not fall back to this computer." : "项目工作目录位于已关联的 SSH 主机，尚未选择 Python 环境。请在工具与环境中选择后再执行 Python，不要默认在本机运行。";
+  if (!target.directory) result.guidance = locale === "en" ? "The project has no research directory yet. Link a directory in Tools & environment before accessing project code or collecting training records." : "项目尚未关联科研目录，请先在工具与环境关联目录，再访问代码或接入训练记录。";
   if (JSON.stringify(result).length > 8000)
     throw new AppError("ENVIRONMENT_CONTEXT_TOO_LARGE", "环境配置超出梗概长度限制，请精简路径或服务配置。", { status: 422 });
   return result;

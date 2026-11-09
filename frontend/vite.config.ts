@@ -3,16 +3,24 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { configurationFiles } from "../src/lib/app-paths";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const configFile = path.resolve(root, "../config/topolumia.config.json");
-const exampleConfigFile = path.resolve(root, "../config/topolumia.config.example.json");
 function readWorkbenchConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(configFile, "utf8"));
-  } catch {
-    try { return JSON.parse(fs.readFileSync(exampleConfigFile, "utf8")); } catch { return {}; }
+  const config: {
+    server: { host?: string; port?: number };
+    frontend: { host?: string; port?: number; apiUrl?: string };
+  } = { server: {}, frontend: {} };
+  for (const file of configurationFiles()) {
+    try {
+      const value = JSON.parse(fs.readFileSync(file, "utf8"));
+      Object.assign(config.server, value.server);
+      Object.assign(config.frontend, value.frontend);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
+  return config;
 }
 const workbenchConfig = readWorkbenchConfig();
 const frontendConfig = workbenchConfig.frontend ?? {};
@@ -33,7 +41,9 @@ export default defineConfig(({ mode }) => ({
     strictPort: false,
     proxy: {
       "/api": {
-        target: frontendConfig.apiUrl ?? `http://${serverConfig.host ?? "127.0.0.1"}:${serverConfig.port ?? 5510}`,
+        target:
+          frontendConfig.apiUrl ??
+          `http://${serverConfig.host ?? "127.0.0.1"}:${serverConfig.port ?? 5510}`,
         changeOrigin: false,
       },
     },

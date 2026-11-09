@@ -5,7 +5,7 @@ import path from "node:path";
 import { AppError } from "../../lib/errors.js";
 
 const textExtensions = new Set([".md", ".txt", ".yaml", ".yml", ".json", ".py"]);
-const ignoredNames = new Set([".git", "node_modules", ".cache", "__pycache__", ".env", ".topolumia-transfer", ".topolumia-skills", ".codex", ".claude", ".opencode"]);
+const ignoredNames = new Set([".git", "node_modules", ".cache", "__pycache__", ".env", ".topolumia", ".topolumia-transfer", ".topolumia-skills", ".codex", ".claude", ".opencode"]);
 
 export function isPathInside(parent, candidate) {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));

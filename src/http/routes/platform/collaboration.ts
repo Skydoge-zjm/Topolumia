@@ -11,7 +11,29 @@ export async function handlePlatformCollaborationRoutes(context) {
     requestedProjectId,
     requestActor,
     collaboration,
+    projectWorkspaces,
   } = context;
+  if (pathname.startsWith("/api/project-workspaces")) {
+    if (pathname === "/api/project-workspaces/defaults" && request.method === "GET") {
+      sendJson(response, 200, projectWorkspaces.defaults(requestActor)); return true;
+    }
+    if (pathname === "/api/project-workspaces" && request.method === "GET") {
+      sendJson(response, 200, projectWorkspaces.get(requestedProjectId, requestActor)); return true;
+    }
+    if (pathname === "/api/project-workspaces" && request.method === "PATCH") {
+      const body = await readJson(request, 16384);
+      if (!body || Object.keys(body).some(key => !["workspace", "expectedRevision"].includes(key))) throw new AppError("PROJECT_INPUT_INVALID", "工作目录配置无效。", { status: 422 });
+      sendJson(response, 200, { project: await projectWorkspaces.update(requestedProjectId, body.workspace, body.expectedRevision, requestActor) }); return true;
+    }
+    if (pathname === "/api/project-workspaces/directories" && request.method === "GET") {
+      const params = new URL(request.url, "http://localhost").searchParams;
+      sendJson(response, 200, await projectWorkspaces.browse({ kind: params.get("kind"), connectionId: params.get("connectionId"), directory: params.get("directory") ?? "", query: params.get("q") ?? "", offset: Number(params.get("offset") ?? 0) }, requestActor)); return true;
+    }
+    if (pathname === "/api/project-workspaces/validate" && request.method === "POST") {
+      sendJson(response, 200, { workspace: await projectWorkspaces.prepare(await readJson(request, 16384), requestActor) }); return true;
+    }
+    throw new AppError("METHOD_NOT_ALLOWED", "此项目目录操作不可用。", { status: 405 });
+  }
 
   if (pathname === "/api/collaboration/context" && request.method === "GET") {
     const contextProject = collaboration.projectById(requestedProjectId);
@@ -50,7 +72,7 @@ export async function handlePlatformCollaborationRoutes(context) {
   if (pathname === "/api/projects" && request.method === "POST") {
     const body = await readJson(request);
     sendJson(response, 201, {
-      project: collaboration.createProject(body, requestActor),
+      project: await projectWorkspaces.create(body, requestActor),
     });
     return true;
   }

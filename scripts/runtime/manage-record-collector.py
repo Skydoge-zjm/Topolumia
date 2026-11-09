@@ -14,6 +14,11 @@ import zipfile
 import uuid
 
 
+def reader_root(data_directory=None, home=None):
+    data = Path(data_directory) if data_directory else Path(home or Path.home()) / ".topolumia" / "data"
+    return data / "record-readers"
+
+
 def private_write(file, value):
     file.parent.mkdir(parents=True, exist_ok=True)
     temporary = file.with_suffix(file.suffix + ".tmp")
@@ -86,7 +91,7 @@ def main():
     source_id = options["id"]
     if not isinstance(source_id, str) or not source_id.startswith("record-source:") or len(source_id) != 50:
         raise ValueError("Invalid project source identity")
-    base = Path(options.get("dataDirectory") or os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "topolumia" / "record-readers"
+    base = reader_root(options.get("dataDirectory"))
     root = base / "sources" / hashlib.sha256(source_id.encode()).hexdigest()[:32]
     root.mkdir(parents=True, exist_ok=True)
     if os.name != "nt":

@@ -14,7 +14,10 @@
 | 会话图片与原生 imageView 快照 | history.sqlite 同级 attachments；[会话媒体](../../../src/services/agents/agent-attachment-service.ts) |
 | 项目设置、原生 Agent 配置 | settings.json、agent-config；[项目装配](../../../src/application/project-runtime.ts) 决定路径 |
 
-默认应用数据位于 runtime；每项目路径由装配代码推导，不在文档复制所有路径规则。科研工作目录通常位于 workspaces 或用户指定位置，与应用数据分开。
+[app-paths.ts](../../../src/lib/app-paths.ts)在所有平台统一使用用户主目录下的 .topolumia，独立于源码和安装目录。全局配置为 ~/.topolumia/topolumia.config.json，账户数据库及每项目资产/设置/会话放 data，默认科研工作区放 workspaces/<projectId>，缓存放 cache。前后端共用配置解析，TOPOLUMIA_CONFIG 仅作为显式实例覆盖；不再根据 AppData、XDG 或 Application Support 自动分散应用数据。
+
+Python 记录读取器在所在主机使用同一根下 data/record-readers 保存私有凭据、依赖和队列；测试或受控部署可显式覆盖其数据位置。用户选择的现有本机或 SSH 科研目录保持原位置，应用默认工作区与其分别表达。
+
 
 ## 正式对象与投影
 
@@ -69,3 +72,9 @@ SQLite 事务负责正式科研对象、状态与审计的协调；内存投影�
 - 文件细节：[内容块生命周期](../modules/content-blocks/file-lifecycle.md)、[会话媒体](../modules/agent-workbench/sessions-and-media.md)。
 
 这里描述当前存储机制，不承诺任意多进程共享同一应用数据目录。备份须覆盖数据库和文件，并正确处理 WAL，见 [运行维护](../../playbooks/operations.md)。
+
+## 项目工作目录
+
+项目 SQLite 的位置记录是项目主工作目录的权威，含本机/SSH/默认工作区选择及独立修订，已有未关联记录保持可读。创建项目、位置和创建者成员身份在同一事务保存；目录验证在提交前完成，不写入所选已有目录。项目 ID 自动生成，名称可以相同；默认位置预览使用与实际创建一致的 ID 和完整路径。
+
+应用资产、配置和会话历史继续使用应用数据目录。关联本机目录只改变代码工作根，关联 SSH 目录不会将远端路径当成本机路径。更新使用观察修订；运行中拒绝切换，空闲时关闭原上下文并从同一项目数据重建。旧位置保存设置的目录修订与新位置不符时，运行环境选择和文件范围重新确定，科研内容与原件保留。机制见[环境模块](../modules/tools-and-environments/README.md#项目创建与工作目录)。

@@ -1,0 +1,578 @@
+.page {
+  width: min(100%, 960px);
+  margin-inline: auto;
+  padding: 28px 24px 48px;
+}
+.page h1 {
+  margin: 16px 0 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+.form {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.createForm {
+  padding: 28px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+.form label,
+.workspaceFields label,
+.browser label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  min-width: 0;
+}
+.form input:not([type="radio"]),
+.browser input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-ink);
+  font-size: 14px;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.form input::placeholder,
+.browser input::placeholder {
+  color: var(--color-muted);
+  opacity: 1;
+}
+.form input:not([type="radio"]):focus,
+.browser input:focus {
+  border-color: var(--color-mint);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+.form input[aria-invalid="true"] {
+  border-color: var(--color-alert);
+}
+.workspaceFields {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+.locationChoices {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  min-width: 0;
+}
+.locationChoices > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.locationChoices label {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  min-height: 72px;
+  padding: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 120ms ease;
+}
+.locationChoices:not(:disabled) label:active {
+  transform: scale(0.985);
+}
+.locationChoices label:hover {
+  border-color: var(--color-mint);
+  background: var(--color-mint-pale);
+}
+.locationChoices input {
+  grid-column: 3;
+  grid-row: 1;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-mint);
+}
+.locationChoices .selectedChoice {
+  border-color: var(--color-mint);
+  background: var(--color-mint-soft);
+  font-weight: 600;
+}
+.locationChoices label span {
+  grid-column: 2;
+  grid-row: 1;
+}
+.locationChoices:disabled label {
+  cursor: default;
+  opacity: 0.65;
+}
+.locationDetails {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 112px;
+  padding-top: 20px;
+  min-width: 0;
+  animation: detailEnter 160ms ease-out;
+}
+.pathRow {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.pathField {
+  flex: 1 1 260px;
+}
+.pathRow > button,
+.pathRow :global(.select-menu-trigger) {
+  min-height: 44px;
+}
+.remoteFields {
+  display: grid;
+  gap: 8px;
+}
+.connectionState {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+.actions,
+.createActions,
+.dialogActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dialogActions {
+  justify-content: end;
+  padding-top: 4px;
+}
+.createActions {
+  justify-content: end;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-line-soft);
+}
+.createActions > :global(.button) {
+  min-height: 44px;
+  padding-inline: 20px;
+}
+.createActions > :global(.primary) {
+  min-width: 142px;
+  background: var(--color-green);
+  border-color: var(--color-green);
+  font-weight: 600;
+}
+.createActions > :global(.primary):hover:not(:disabled) {
+  background: var(--color-green2);
+  border-color: var(--color-green2);
+}
+.createActions > :global(.primary) svg {
+  transition: transform 150ms ease;
+}
+.createActions > :global(.primary):hover:not(:disabled) svg:not(.spin) {
+  transform: translateX(2px);
+}
+.createActions > :global(.button):active:not(:disabled) {
+  transform: translateY(1px);
+}
+.form button:disabled,
+.form a[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+.error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-alert);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.validation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+.error svg,
+.validation svg {
+  flex-shrink: 0;
+}
+.retryLink {
+  min-height: 28px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--color-green2);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+:global(.research-dialog).directoryDialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: min(740px, calc(100dvh - 40px));
+  max-height: calc(100dvh - 40px);
+  overflow: hidden;
+  animation: directoryEnter 140ms ease-out;
+}
+.directoryDialog > header {
+  margin-bottom: 16px;
+}
+.browser {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+}
+.browserContent {
+  display: grid;
+  grid-template-rows: auto minmax(160px, 1fr);
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.browserControls {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+.browser .pathRow {
+  flex-wrap: nowrap;
+}
+.browser .pathField {
+  flex-basis: 0;
+}
+.browser .pathRow > button {
+  margin-left: 0;
+}
+.browserNavigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 40px;
+  overflow-x: auto;
+}
+.browserNavigation > button {
+  flex-shrink: 0;
+}
+.browserResults {
+  display: grid;
+  grid-template-rows: 24px minmax(0, 1fr) 36px;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+}
+.browserMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.browserMeta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browserTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.currentPath {
+  display: block;
+  font-size: 12px;
+  line-height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folderList {
+  display: grid;
+  align-content: start;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border-block: 1px solid var(--color-line);
+  min-height: 0;
+}
+.folderEntries {
+  display: grid;
+  min-width: 0;
+  animation: directoryEnter 120ms ease-out;
+}
+.folderLoading {
+  padding: 0 8px;
+}
+.folderError {
+  margin: 12px 0;
+}
+.folderError > button {
+  margin-top: 8px;
+}
+.folderList button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  text-align: start;
+  font-size: 14px;
+  cursor: pointer;
+}
+.folderList button:hover {
+  background: var(--color-mint-soft);
+}
+.folderList button span {
+  overflow-wrap: anywhere;
+  flex: 1;
+  min-width: 0;
+}
+.folderList button svg {
+  flex-shrink: 0;
+}
+.folderArrow {
+  color: var(--color-muted);
+  transition: transform 150ms ease;
+}
+.folderList button:hover .folderArrow,
+.folderList button:focus-visible .folderArrow {
+  transform: translateX(2px);
+}
+.emptyFolders {
+  margin: 0;
+  padding: 24px 8px;
+  color: var(--color-muted);
+  font-size: 14px;
+}
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding-block: 12px;
+  border-block: 1px solid var(--color-line);
+  font-size: 14px;
+  min-width: 0;
+}
+.summary code {
+  flex: 1 1 240px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.summary strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.pageHeader {
+  margin-bottom: 24px;
+}
+.backLink {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: fit-content;
+  min-height: 32px;
+  color: var(--color-muted);
+  font-size: 14px;
+  text-decoration: none;
+}
+.backLink:hover {
+  color: var(--color-mint);
+}
+.nameField {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.nameField > label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.nameField > label::before {
+  content: "";
+  width: 3px;
+  height: 16px;
+  background: var(--color-mint);
+  border-radius: 1px;
+}
+.locationChoices legend {
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  margin-bottom: 12px;
+}
+.locationChoices legend::before {
+  content: "";
+  width: 3px;
+  height: 16px;
+  background: var(--color-mint);
+  border-radius: 1px;
+}
+.locationChoices label svg {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+.locationChoices .selectedChoice svg {
+  color: var(--color-green2);
+}
+.locationChoices label:has(input:focus-visible) {
+  outline: 2px solid var(--color-mint);
+  outline-offset: 3px;
+}
+.destination {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  font-size: 14px;
+}
+.destination > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+.destination dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-muted);
+}
+.destination dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-ink);
+}
+.destination code {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.spin {
+  animation: spin 900ms linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes detailEnter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes directoryEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (max-width: 760px) {
+  .locationChoices > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .locationChoices label {
+    min-height: 52px;
+    padding-block: 12px;
+  }
+}
+@media (max-width: 600px) {
+  .page {
+    padding: 16px 16px 32px;
+  }
+  .pageHeader {
+    margin-bottom: 20px;
+  }
+  .createForm {
+    padding: 20px 16px;
+    gap: 20px;
+  }
+  .pathField {
+    flex-basis: 100%;
+  }
+  .pathRow > button {
+    margin-left: auto;
+  }
+  .destination > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .createActions {
+    flex-wrap: nowrap;
+  }
+  .createActions > :global(.primary) {
+    flex: 1;
+    min-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .locationDetails,
+  .folderEntries,
+  :global(.research-dialog).directoryDialog {
+    animation: none;
+  }
+  .form input,
+  .locationChoices label,
+  .createActions > :global(.primary) svg,
+  .folderArrow {
+    transition: none;
+  }
+  .locationChoices:not(:disabled) label:active,
+  .createActions > :global(.button):active:not(:disabled),
+  .createActions > :global(.primary):hover:not(:disabled) svg:not(.spin),
+  .folderList button:hover .folderArrow,
+  .folderList button:focus-visible .folderArrow {
+    transform: none;
+  }
+}

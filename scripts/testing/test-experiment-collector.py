@@ -13,6 +13,7 @@ import uuid
 import shutil
 import time
 import venv
+import importlib.util
 from http.server import BaseHTTPRequestHandler, HTTPServer
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runtime"))
 from topolumia_collector.spool import Spool
@@ -31,6 +32,14 @@ class FakeNativeReader:
 
 
 class CollectorTests(unittest.TestCase):
+    def test_reader_state_uses_the_same_home_root_and_explicit_test_isolation(self):
+        file = Path(__file__).resolve().parents[1] / "runtime" / "manage-record-collector.py"
+        spec = importlib.util.spec_from_file_location("managed_record_runtime", file)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.reader_root(home=self.root), self.root / ".topolumia" / "data" / "record-readers")
+        self.assertEqual(module.reader_root(self.root / "isolated-data"), self.root / "isolated-data" / "record-readers")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="topolumia-spool-test-")
         self.root = Path(self.temp.name)
@@ -135,7 +144,7 @@ os._exit(17)
             thread.start()
         runtime = Path(__file__).resolve().parents[1] / "runtime"
         data = self.root / "managed-data"
-        reader = data / "topolumia" / "record-readers" / "wandb"
+        reader = data / "record-readers" / "wandb"
         package = reader / "package"
         shutil.copytree(runtime / "topolumia_collector", package / "topolumia_collector", ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copyfile(runtime / "wandb_record_reader.py", package / "wandb_record_reader.py")

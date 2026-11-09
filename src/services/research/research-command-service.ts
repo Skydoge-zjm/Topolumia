@@ -1,4 +1,5 @@
 import path from "node:path";
+import { appPaths } from "../../lib/app-paths.js";
 import { ResearchRepository } from "./objects/repository.js";
 import { NodeObjectService } from "./objects/node-service.js";
 import { ResearchObjectService } from "./objects/object-service.js";
@@ -18,7 +19,7 @@ export class ResearchCommandService {
   constructor({state,topologyService,projectId,projectName,sourceReader=null,sourceText=null,sourceAllowed=null,db,assetRoot,recordOptions={}}={}) {
     Object.assign(this,{state,topologyService,projectId,projectName,sourceReader,sourceText,sourceAllowed});
     this.store=new ResearchRepository(db,projectId);this.nodes=new NodeObjectService(this);this.groups=new GroupObjectService(this);this.objects=new ResearchObjectService(this);this.changes=new ResearchChangeService(this);this.proposals=new ResearchProposalService(this);this.queries=new AgentResearchQueries(this);
-    this.assets=new ResearchAssetService(this,assetRoot??path.resolve("runtime","research-assets",projectId));
+    this.assets=new ResearchAssetService(this,assetRoot??path.join(appPaths().dataRoot,"projects",projectId,"research-assets"));
     this.records=new ExperimentRecordService(this,recordOptions);
     this.ingestion=new RecordIngestionService(this);
     this.projectRecords=new ProjectRecordCatalog(this);

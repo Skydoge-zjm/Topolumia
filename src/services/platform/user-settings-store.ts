@@ -101,6 +101,7 @@ export function defaultUserSettings(config) {
   const relativeRoot = (root) => path.relative(config.project.root, root).split(path.sep).join("/") || ".";
   return {
     schemaVersion: USER_SETTINGS_SCHEMA_VERSION,
+    workspaceRevision: config.project.workspace?.revision ?? 0,
     interface: {
       locale: "zh",
       topologyLayout: "elk",
@@ -188,7 +189,7 @@ export function defaultUserSettings(config) {
       },
     },
     researchEnvironment: { kind: "default", prefix: "", pythonCommand: "python", ...config.researchEnvironment },
-    researchLocation: "local",
+    researchLocation: config.project.workspace?.kind === "ssh" ? "ssh" : "local",
     remoteEnvironment: null,
     tools: Object.fromEntries(Object.entries({ conda: "conda", uv: "uv", nvidia: "nvidia-smi", cuda: "nvcc" }).map(([id, command]) => [id, { command: config.toolCommands?.[id] ?? command }])),
     execution: {
@@ -224,6 +225,13 @@ export function defaultUserSettings(config) {
 
 export function normalizeUserSettings(input, config, base = defaultUserSettings(config)) {
   const merged = deepMerge(base, input ?? {});
+  const workspaceRevision = config.project.workspace?.revision ?? 0;
+  if ((merged.workspaceRevision ?? 0) !== workspaceRevision) {
+    merged.researchLocation = config.project.workspace?.kind === "ssh" ? "ssh" : "local";
+    merged.remoteEnvironment = null;
+    merged.researchEnvironment = { kind: "default", prefix: "", pythonCommand: "python", ...config.researchEnvironment };
+    merged.sources ??= {}; merged.sources.filesystem ??= {}; merged.sources.filesystem.roots = ["."];
+  }
   const profiles = profileDefaults(config);
   const result = defaultUserSettings(config);
   result.interface = {
@@ -333,7 +341,7 @@ export function normalizeUserSettings(input, config, base = defaultUserSettings(
     result.remoteEnvironment = Object.fromEntries(["ownerId", "connectionId", "environmentId", "name", "source", "prefix", "pythonCommand", "hostLabel"].map(key => [key, text(remote[key], "", `remoteEnvironment.${key}`, { max: 600 })]));
     result.remoteEnvironment.revision = number(remote.revision, 1, 1, 1000000, "remoteEnvironment.revision");
   }
-  if (result.researchLocation === "ssh" && !result.remoteEnvironment) throw new AppError("USER_SETTINGS_INVALID", "远程环境引用不完整。", { status: 422 });
+  if (result.researchLocation === "ssh" && !result.remoteEnvironment && config.project.workspace?.kind !== "ssh") throw new AppError("USER_SETTINGS_INVALID", "远程环境引用不完整。", { status: 422 });
   if (result.researchEnvironment.kind === "conda" && !path.isAbsolute(result.researchEnvironment.prefix)) {
     throw new AppError("USER_SETTINGS_INVALID", "Conda 环境必须使用完整目录路径。", { status: 422 });
   }
@@ -501,7 +509,7 @@ export class UserSettingsStore {
     const defaults = defaultUserSettings(this.config);
     try {
       const payload = JSON.parse(await readFile(this.filePath, "utf8"));
-      this.settings = normalizeUserSettings(payload.settings ?? payload, this.config, defaults);
+      this.settings = normalizeUserSettings({ workspaceRevision: 0, ...(payload.settings ?? payload) }, this.config, defaults);
       this.source = "workspace";
       this.updatedAt = payload.updatedAt ?? null;
     } catch (error) {

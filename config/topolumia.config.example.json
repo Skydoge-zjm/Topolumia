@@ -10,9 +10,7 @@
   },
   "project": {
     "id": "diffusion-sr-reproduction",
-    "name": "DiffusionSR Reproduction",
-    "root": ".",
-    "workspacesRoot": "workspaces"
+    "name": "DiffusionSR Reproduction"
   },
   "researchEnvironment": {
     "kind": "default",
@@ -74,8 +72,6 @@
   },
   "agentSessions": {
     "maxSessions": 50,
-    "maxEventsPerSession": 1000,
-    "historyFile": "runtime/agent-sessions/history.json",
-    "managedWrappersRoot": "managed-wrappers"
+    "maxEventsPerSession": 1000
   }
 }

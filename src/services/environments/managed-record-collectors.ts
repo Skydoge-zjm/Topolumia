@@ -20,6 +20,7 @@ export class ManagedRecordCollectors {
   key(runtime, source) { return runtime.config.project.id + ":" + source.id; }
   actor(runtime, source) { return this.options.collaboration.actorForUser(source.userId, runtime.config.project.id); }
   async context(runtime, actor, hostId) {
+    if (runtime.config.project.workspace?.kind === "unassigned") throw new AppError("PROJECT_DIRECTORY_REQUIRED", "请先关联项目工作目录，再启用实验记录采集。", { status: 422 });
     if (hostId === "local") return { directory: runtime.config.project.root, hostLabel: "本机", python: runtime.config.experimentRecords.pythonCommand || "python" };
     const info = await this.options.sshEnvironments.info(actor.user.id, hostId);
     await this.options.sshConnections.connected(actor.user.id, hostId);

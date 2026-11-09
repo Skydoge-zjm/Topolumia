@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { appPaths, configurationFiles } from "./lib/app-paths.js";
 
 const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
 const compiled = path.basename(path.resolve(moduleRoot, "..")) === "dist";
@@ -39,10 +40,11 @@ async function readOptionalJson(filePath) {
 }
 
 export async function loadConfig(overrides = {}) {
-  // The repository root is the safe local default. The previous parent-directory
-  // default resolved to the drive root in this checkout on Windows.
-  const defaultProjectRoot = mvpRoot;
+  const locations = appPaths();
+  const defaultProjectRoot = path.join(locations.workspacesRoot, "research-project");
   const defaults = {
+    applicationPaths: locations,
+    publicRoot: path.resolve(mvpRoot, "frontend", "dist"),
     server: {
       host: "127.0.0.1",
       port: 5510,
@@ -51,7 +53,7 @@ export async function loadConfig(overrides = {}) {
       id: "diffusion-sr-reproduction",
       name: "DiffusionSR Reproduction",
       root: defaultProjectRoot,
-      workspacesRoot: path.resolve(mvpRoot, "workspaces"),
+      workspacesRoot: locations.workspacesRoot,
     },
     sourceRefresh: {
       enabled: true,
@@ -130,7 +132,7 @@ export async function loadConfig(overrides = {}) {
       model: "gpt-6-luna",
       timeoutMs: 300_000,
       maxOutputBytes: 4_194_304,
-      runtimeRoot: path.resolve(mvpRoot, "runtime/curator"),
+      runtimeRoot: path.join(locations.cacheRoot, "curator"),
       maxEvents: 120,
       maxSources: 100,
       maxNodes: 180,
@@ -150,10 +152,10 @@ export async function loadConfig(overrides = {}) {
       },
     },
     userSettings: {
-      file: path.resolve(mvpRoot, "runtime/user-settings.json"),
+      file: path.join(locations.dataRoot, "user-settings.json"),
     },
     collaboration: {
-      databaseFile: path.resolve(mvpRoot, "runtime/collaboration.sqlite"),
+      databaseFile: path.join(locations.dataRoot, "collaboration.sqlite"),
       allowDevIdentity: false,
       adminPassword: process.env.MVP_ADMIN_PASSWORD || "",
       sessionTtlMs: 8 * 60 * 60 * 1_000,
@@ -161,7 +163,7 @@ export async function loadConfig(overrides = {}) {
     agentSessions: {
       maxSessions: 50,
       maxEventsPerSession: 1_000,
-      historyFile: path.resolve(mvpRoot, "runtime/agent-sessions/history.sqlite"),
+      historyFile: path.join(locations.dataRoot, "agent-sessions/history.sqlite"),
       managedWrappersRoot: path.resolve(bundledRoot, "managed-wrappers"),
       profiles: [
         {
@@ -236,12 +238,10 @@ export async function loadConfig(overrides = {}) {
     },
   };
 
-  const configPath = process.env.TOPOLUMIA_CONFIG
-    ? path.resolve(process.env.TOPOLUMIA_CONFIG)
-    : path.resolve(mvpRoot, "config/topolumia.config.json");
-  const fileConfig = await readOptionalJson(configPath);
-  let config = deepMerge(defaults, fileConfig);
+  let config = defaults;
+  for (const configPath of configurationFiles()) config = deepMerge(config, await readOptionalJson(configPath));
   config = deepMerge(config, overrides);
+  config.applicationPaths = locations;
 
   config.server.host = String(config.server.host || "127.0.0.1");
   config.server.port = Number(config.server.port || 5510);

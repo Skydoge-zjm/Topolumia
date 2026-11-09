@@ -7,6 +7,7 @@ export function publicProjectForApi(project) {
     id: project.id,
     name: project.name,
     root: project.root,
+    workspace: project.workspace ?? { kind: "local", directory: project.root, revision: 0 },
     status: project.status,
     role: project.membership_role ?? null,
     stateVersion: project.state_version ?? null,

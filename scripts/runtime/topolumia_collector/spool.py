@@ -110,7 +110,7 @@ class Spool:
         now = time.monotonic()
         if now >= getattr(self, "discovery_at", 0):
             files = []
-            excluded = {".git", ".venv", "venv", "node_modules", "__pycache__", ".cache", ".topolumia-transfer", "runtime"}
+            excluded = {".git", ".venv", "venv", "node_modules", "__pycache__", ".cache", ".topolumia", ".topolumia-transfer", "runtime"}
             for directory, children, names in os.walk(root, followlinks=False):
                 children[:] = sorted(name for name in children if name not in excluded and not (Path(directory) / name).is_symlink())
                 for name in sorted(names):

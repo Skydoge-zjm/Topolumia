@@ -5,8 +5,8 @@ import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { renderMarkdown } from "@/shared/lib/markdown";
 import { safeUrl } from "../model";
 import type { ResearchLink, Metric } from "../model";
-export function ResearchDialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
-  return <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content aria-describedby={undefined} translate="no" className="research-dialog research-workspace">
+export function ResearchDialog({ title, children, onClose, className = "" }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
+  return <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content aria-describedby={undefined} translate="no" className={`research-dialog research-workspace ${className}`}>
     <header><div><Dialog.Title>{title}</Dialog.Title></div><button className="button" aria-label="关闭 / Close" onClick={onClose}><X size={18} /></button></header>{children}
   </Dialog.Content></Dialog.Portal></Dialog.Root>;
 }

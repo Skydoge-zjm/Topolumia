@@ -826,6 +826,54 @@ export class SshConnectionService {
       );
     return session;
   }
+  async browseDirectory(owner, id, directory = "", { list = true, offset = 0, query = "" } = {}) {
+    const session = await this.connected(owner, id);
+    if (session.infoTask) await session.infoTask;
+    const sftp: any = await new Promise((resolve, reject) => {
+      let settled = false;
+      const opening = setTimeout(() => { settled = true; reject(new AppError("PROJECT_DIRECTORY_TIMEOUT", "SSH 目录通道打开超时，请重试。", { status: 504 })); }, 10000);
+      session.client.sftp((error, channel) => {
+        clearTimeout(opening);
+        if (settled) { channel?.end(); return; }
+        settled = true;
+        if (error) reject(new AppError("PROJECT_DIRECTORY_UNAVAILABLE", "SSH 主机未能打开目录通道，请检查 SFTP 服务。", { status: 422 })); else resolve(channel);
+      });
+    });
+    sftp.on("error", () => {});
+    session.channels.add(sftp);
+    const call = (method, ...args) => new Promise<any>((resolve, reject) => sftp[method](...args, (error, value) => error ? reject(error) : resolve(value)));
+    let timer;
+    try {
+      const task = (async () => {
+        const home = session.info?.home || "/";
+        const requested = directory === "~" ? home : directory.startsWith("~/") ? path.posix.join(home, directory.slice(2)) : directory || home;
+        const canonical = await call("realpath", requested), info = await call("stat", canonical);
+        if (!info.isDirectory()) throw new AppError("PROJECT_DIRECTORY_INVALID", "所选路径不是目录。", { status: 422 });
+        const handle = await call("opendir", canonical), entries = [];
+        let partial = false, scanned = 0;
+        try {
+          if (list) while (true) {
+            let chunk;
+            try { chunk = await call("readdir", handle); }
+            catch (error) { if (error.code === 1) break; throw error; }
+            if (!chunk) break;
+            for (const entry of chunk) {
+              scanned++;
+              if (entry.filename !== "." && entry.filename !== ".." && entry.attrs.isDirectory() && entry.filename.toLowerCase().includes(query.toLowerCase())) entries.push({ name: entry.filename, path: path.posix.join(canonical, entry.filename) });
+            }
+            if (scanned >= 20000 || entries.length >= 3000) { partial = true; break; }
+          }
+        } finally { await call("close", handle); }
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+        if (this.sessions.get(this.sessionKey(owner, id)) !== session || session.status !== "connected") throw new AppError("SSH_NOT_CONNECTED", "SSH 连接已变化，请重新选择目录。", { status: 409 });
+        return { directory: canonical, parent: canonical === "/" ? null : path.posix.dirname(canonical), entries: entries.slice(offset, offset + 100), total: entries.length, nextOffset: offset + 100 < entries.length ? offset + 100 : null, partial, home, roots: [{ name: session.info?.user || "Home", path: home }, { name: "/", path: "/" }] };
+      })();
+      return await Promise.race([task, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new AppError("PROJECT_DIRECTORY_TIMEOUT", "目录读取超时，请重试或输入更具体的路径。", { status: 504 })), 15000); })]);
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(error.code === 2 ? "PROJECT_DIRECTORY_NOT_FOUND" : "PROJECT_DIRECTORY_UNAVAILABLE", error.code === 2 ? "目录不存在，请检查路径。" : error.code === 3 ? "目录不可访问，请检查 SSH 账号权限。" : "未能读取目录，请检查 SSH 连接后重试。", { status: 422 });
+    } finally { clearTimeout(timer); session.channels.delete(sftp); sftp.end(); }
+  }
   async reverseForward(owner, id, localPort, localHost = "127.0.0.1") {
     const session = await this.connected(owner, id), client = session.client;
     const port = await new Promise<number>((resolve, reject) => client.forwardIn("127.0.0.1", 0, (error, port) => error ? reject(error) : resolve(port)));

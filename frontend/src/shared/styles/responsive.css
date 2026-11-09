@@ -42,7 +42,9 @@
   .topbar .topbar-account-trigger { min-width: 36px; min-height: 36px; margin: 0; padding: 0; border: 0; }
   .topbar-account-trigger > span:nth-child(2), .topbar-account-trigger > svg { display: none; }
   .project-topbar > strong, .project-topbar-divider, .account-chip > span:last-child { display: none; }
-  .project-topbar .button { padding: 0 8px; font-size: 12px; }
+  .project-topbar .brand { flex-shrink: 0; }
+  .project-topbar .account-chip > span:last-child { display: none; }
+  .project-topbar .button { min-width: 44px; min-height: 44px; padding: 0 8px; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
   .project-topbar .account-chip { margin: 0; }
   .app .shell, .app .shell.is-collapsed, .app .shell:has(.agent-workbench) { display: flex; flex-direction: column; min-width: 0; }
   .app .shell > .sidebar { display: flex; flex-direction: row; align-items: center; gap: 4px; flex: none; width: 100%; height: auto; min-width: 0; min-height: 0; padding: 8px; border-right: 0; border-bottom: 1px solid var(--color-line); }

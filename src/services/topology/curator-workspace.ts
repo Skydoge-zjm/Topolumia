@@ -1,4 +1,5 @@
 import path from "node:path";
+import { appPaths } from "../../lib/app-paths.js";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { compactId } from "../../lib/hash.js";
 import { AppError } from "../../lib/errors.js";
@@ -94,7 +95,7 @@ function compactEvent(event) {
 
 export class CuratorWorkspaceService {
   constructor(config = {}) {
-    this.root = path.resolve(config.runtimeRoot ?? path.resolve(process.cwd(), "runtime", "curator"));
+    this.root = path.resolve(config.runtimeRoot ?? path.join(appPaths().cacheRoot, "curator"));
     this.maxEvents = config.maxEvents ?? 120;
     this.maxSources = config.maxSources ?? 100;
     this.maxNodes = config.maxNodes ?? 180;

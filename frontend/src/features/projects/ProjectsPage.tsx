@@ -48,7 +48,7 @@ export function ProjectsPage() {
                   "research-workbench-project",
                   project.id,
                 );
-                window.location.hash = "#/agents";
+                window.location.hash = "#/overview";
               }}
             >
               <strong>{project.name}</strong>

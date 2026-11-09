@@ -27,6 +27,7 @@ import styles from "./ToolsTable.module.css";
 import { EnvironmentTree } from "@/features/environments/catalog/tree/EnvironmentTree";
 import { SshEnvironmentSelector } from "@/features/environments/ssh/SshEnvironmentSelector";
 import { RecordCollectorsPanel } from "./RecordCollectorsPanel";
+import { ProjectWorkspacePanel } from "@/features/projects/ProjectWorkspacePanel";
 import {
   environmentHeaders,
   sshOverviewKey,
@@ -37,9 +38,16 @@ export function ToolsEnvironmentPage() {
   const en = useUiStore((state) => state.locale === "en");
   const currentProject = projectId();
   const [searchParams] = useSearchParams();
+  const [workspaceEditing, setWorkspaceEditing] = useState(searchParams.get("workspace") === "edit");
   const queryClient = useQueryClient();
-  const [view, setView] = useState({ project: currentProject, id: searchParams.get("hostId") ?? "" });
-  const sshId = view.project === currentProject ? view.id : "";
+  const context = useQuery({
+    queryKey: ["collaboration-context", currentProject],
+    queryFn: () => api<CollaborationContext>("/api/collaboration/context"),
+  });
+  const [view, setView] = useState<{ project: string; id: string | null }>({ project: currentProject, id: searchParams.get("hostId") });
+  const workspace = context.data?.project?.workspace;
+  const preferredHost = workspace?.kind === "ssh" && workspace.ownerId === context.data?.actor?.id ? workspace.connectionId ?? "" : "";
+  const sshId = view.project === currentProject ? view.id ?? preferredHost : preferredHost;
   const key = ["tools-environment", currentProject, sshId || "local"];
   const headers = environmentHeaders(currentProject, sshId);
   const inventory = useQuery({
@@ -51,10 +59,6 @@ export function ToolsEnvironmentPage() {
       query.state.data?.researchEnvironment?.status === "running"
         ? 1200
         : false,
-  });
-  const context = useQuery({
-    queryKey: ["collaboration-context", currentProject],
-    queryFn: () => api<CollaborationContext>("/api/collaboration/context"),
   });
   const canManage = Boolean(
     context.data?.permissions?.some((permission) =>
@@ -250,6 +254,7 @@ export function ToolsEnvironmentPage() {
           </button>
         )}
       </header>
+      <ProjectWorkspacePanel en={en} editable editing={workspaceEditing} onEditingChange={setWorkspaceEditing} onSaved={location => setView({ project: currentProject, id: location.kind === "ssh" && location.ownerId === context.data?.actor?.id ? location.connectionId ?? "" : "" })} />
       <SshEnvironmentSelector
         overview={ssh.data}
         error={ssh.error}
@@ -258,6 +263,7 @@ export function ToolsEnvironmentPage() {
         en={en}
         canManage={canManage}
         selectedId={sshId}
+        onConfigureDirectory={workspace?.kind === "ssh" && workspace.ownerId === actor && workspace.connectionId === sshId ? () => setWorkspaceEditing(true) : undefined}
         onSelect={(id) => {
           setSelectedId(null);
           setNotice("");
@@ -291,7 +297,7 @@ export function ToolsEnvironmentPage() {
       )}
       {inventory.data && (
         <>
-          <RecordCollectorsPanel en={en} sshId={sshId} canManage={canManage} online={Boolean(online)} />
+          <RecordCollectorsPanel en={en} sshId={sshId} canManage={canManage && workspace?.kind !== "unassigned"} online={Boolean(online)} />
           <EnvironmentTree
             key={`${currentProject}:${actor}:${sshId}`}
             project={currentProject}

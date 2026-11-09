@@ -18,7 +18,7 @@ npm start
 
 打开 <http://127.0.0.1:5510>，首次访问创建管理员账号，无预设账号密码。在「Agent 配置」中选择已安装并完成认证的 Agent CLI，设置其支持的模型；默认模型为 `gpt-6-luna`，需要相应提供商支持。Agent CLI 及模型服务需自行准备。
 
-端口统一在 `config/topolumia.config.json` 中配置（该文件由 `config/topolumia.config.example.json` 复制而来）：后端使用 `server.port`，前端使用 `frontend.port`，前端代理地址使用 `frontend.apiUrl`。例如：
+所有平台统一使用用户主目录下的 `~/.topolumia/`（Windows 为 `%USERPROFILE%\.topolumia\`）。全局配置是 `~/.topolumia/topolumia.config.json`，结构参考 `config/topolumia.config.example.json`；`TOPOLUMIA_CONFIG` 可显式指定独立配置文件。前后端读取同一文件，源码目录中的配置不自动加载。后端使用 `server.port`，前端使用 `frontend.port`，前端代理地址使用 `frontend.apiUrl`。例如：
 
 ```json
 {
@@ -33,11 +33,13 @@ npm start
 
 保存配置后分别运行 `npm start` 和 `npm run dev:frontend` 即可。
 
+应用数据库、资产、项目设置和会话保存在 `~/.topolumia/data/`，缓存放 `cache/`，默认科研工作区放 `workspaces/<项目ID>/`。创建项目时显示完整保存路径，也可关联本机或 SSH 上的已有科研目录。软件源码和安装目录不存放默认用户数据。
+
 「Agent 配置」支持常用设置、完整配置项及原生文件编辑。各项目的 Codex `config.toml`、Claude Code `settings.json`、OpenCode `opencode.jsonc` 保存在应用数据目录中，启动时按各自方式加载；运行中的会话保留配置快照。
 
 Agent 任务的执行时限由各自原生运行时管理，Topolumia 不额外设置整回合倒计时；长任务可以持续运行，也可在会话中主动停止。
 
-可选配置：复制 `config/topolumia.config.example.json` 为 `config/topolumia.config.json`。默认来源配置包含合成样例；创建新项目可接入自己的研究材料。本地配置、账号、会话和研究数据不随源码分发。当前版本面向本机使用，默认仅监听 `127.0.0.1`。
+可选配置：将 `config/topolumia.config.example.json` 复制为 `~/.topolumia/topolumia.config.json`；不需要额外配置时可以直接启动。默认来源配置包含合成样例；创建新项目可接入自己的研究材料。本地配置、账号、会话和研究数据不随源码分发。当前版本面向本机使用，默认仅监听 `127.0.0.1`。
 
 「工具与环境」支持本机及 SSH 远程 Python、Conda、venv 的检测与包清单。Agent 可通过 MCP 的 `get_environment` 获取所选环境梗概，再使用自身工具探索和执行。远程检测支持 Linux、WSL 和 macOS；使用已有 SSH 别名需要服务机器安装 OpenSSH。登录凭据默认仅用于本次连接，Windows 可选加密保存。
 
@@ -50,7 +52,7 @@ python -m venv .venv-records
 .venv-records/Scripts/python.exe -m pip install -r requirements/experiment-record-readers.txt
 ```
 
-macOS/Linux 将上述解释器路径换为 `.venv-records/bin/python`。将 `config/topolumia.config.json` 中的 `experimentRecords.pythonCommand` 设为该解释器路径，重启后端。读取范围与限制见 [实验记录模块](docs/technical/modules/experiments-and-sources/README.md)。
+macOS/Linux 将上述解释器路径换为 `.venv-records/bin/python`。将 `~/.topolumia/topolumia.config.json` 中的 `experimentRecords.pythonCommand` 设为该解释器路径，重启后端。读取范围与限制见 [实验记录模块](docs/technical/modules/experiments-and-sources/README.md)。
 
 ## 开发
 

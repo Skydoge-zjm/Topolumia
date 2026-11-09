@@ -13,6 +13,7 @@ import { handleResearchNodeRoutes } from "./http/routes/research/nodes.js";
 import { handleRecordIngestionRoutes, handleRecordAttachmentRead } from "./http/routes/research/record-ingestion.js";
 import { handleManagedRecordRoutes } from "./http/routes/managed-records.js";
 import { ManagedRecordCollectors } from "./services/environments/managed-record-collectors.js";
+import { ProjectWorkspaceService } from "./services/platform/project-workspace-service.js";
 import { handleExperimentRecordRoutes } from "./http/routes/research/experiment-records.js";
 import { handleResearchGroupRoutes } from "./http/routes/research/groups.js";
 import { handleResearchObjectRoutes } from "./http/routes/research/objects.js";
@@ -77,6 +78,9 @@ export async function createMvpApplication(options = {}) {
   if (options.port === 0 && !options.userSettingsFile && !options.config?.userSettings?.file) {
     config.userSettings.file = path.join(path.dirname(config.collaboration.databaseFile), path.basename(config.collaboration.databaseFile) + ".runtime", "settings.json");
   }
+  if (options.port === 0 && !options.config?.project?.workspacesRoot) {
+    config.project.workspacesRoot = path.join(path.dirname(options.userSettingsFile ?? config.userSettings.file), "workspaces");
+  }
   if (!config.collaboration.allowDevIdentity) {
     config.project = {
       ...config.project,
@@ -120,12 +124,14 @@ export async function createMvpApplication(options = {}) {
     actorContext,
     runtimes,
     getRuntime,
+    replaceRuntime,
     defaultRuntime,
     baseTopologyService,
     topologyLayoutService,
     applyRuntimeSettings,
     refreshForContext,
   } = await createProjectRuntimeRegistry({ config, collaboration, options });
+  const projectWorkspaces = new ProjectWorkspaceService({ config, collaboration, sshConnections, replaceRuntime });
 
   let recordCollectors;
   const handler = async (request, response) => {
@@ -172,7 +178,7 @@ export async function createMvpApplication(options = {}) {
             "Agent 凭据仅可调用项目研究命令。",
             { status: 403 },
           );
-        const projectCollection = pathname === "/api/projects";
+        const projectCollection = pathname === "/api/projects" || pathname.startsWith("/api/project-workspaces");
         const invitationAcceptPath =
           /^\/api\/projects\/[^/]+\/invitations\/[^/]+\/accept$/.test(pathname);
         if (
@@ -243,6 +249,7 @@ export async function createMvpApplication(options = {}) {
             requestActor,
             requestRuntime,
             collaboration,
+            projectWorkspaces,
             sshConnections,
             sshEnvironments,
             recordCollectors,
@@ -345,6 +352,7 @@ export async function createMvpApplication(options = {}) {
     sshEnvironments,
     recordCollectors,
     server,
+    projectWorkspaces,
     close,
   };
 }

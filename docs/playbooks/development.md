@@ -8,7 +8,7 @@
 npm ci
 ```
 
-没有本机配置时，复制 [配置样例](../../config/topolumia.config.example.json) 为 config/topolumia.config.json。不要覆盖已有文件；保留用户选择的主机、项目根与端口。
+可以直接使用默认配置启动；需要本机配置时，将[配置样例](../../config/topolumia.config.example.json)复制为 ~/.topolumia/topolumia.config.json。所有平台使用同一用户根目录，源码内 config/topolumia.config.json 不自动加载。不要覆盖已有配置；保留用户选择的主机、项目根与端口。
 
 ```powershell
 npm run build

@@ -68,11 +68,13 @@ export class SshEnvironmentHub {
   }
   async projectSettings(runtime, owner, id) {
     await this.ssh.profile(owner, id);
+    const workspace = runtime.config.project.workspace;
+    const initial = workspace?.kind === "ssh" && workspace.ownerId === owner && workspace.connectionId === id ? { directory: workspace.directory } : {};
     try {
       const raw = await readFile(this.settingsFile(runtime, owner, id), "utf8");
-      if (raw.length < 16384) return projectSchema.parse(JSON.parse(raw));
+      if (raw.length < 16384) return { ...projectSchema.parse(JSON.parse(raw)), ...initial };
     } catch {}
-    return {};
+    return initial;
   }
   async remoteProbe(owner, id, mode, options = {}) {
     const session = await this.ssh.connected(owner, id);
@@ -168,6 +170,7 @@ export class SshEnvironmentHub {
         pythonCommand: settings.pythonCommand,
       });
       settings.directory = value.directory;
+      await runtime.updateWorkspaceDirectory?.(owner, id, value.directory);
     }
     const file = this.settingsFile(runtime, owner, id),
       temporary = `${file}.${randomUUID()}.tmp`;
@@ -183,6 +186,13 @@ export class SshEnvironmentHub {
   }
   async currentBinding(runtime, owner) {
     const settings = runtime.userSettings.settings;
+    const workspace = runtime.config.project.workspace;
+    if (settings.researchLocation === "ssh" && !settings.remoteEnvironment && workspace?.kind === "ssh") {
+      let profile = null;
+      if (workspace.ownerId === owner) { try { profile = await this.ssh.profile(owner, workspace.connectionId); } catch {} }
+      const session = profile && this.ssh.sessions.get(this.ssh.sessionKey(owner, profile.id));
+      return { kind: "ssh", name: "unselected", source: "unselected", hostLabel: profile?.name ?? workspace.hostLabel, connectionId: profile?.id ?? null, accessible: Boolean(profile), connected: session?.status === "connected", needsReview: !profile || profile.revision !== workspace.connectionRevision };
+    }
     if (settings.researchLocation === "ssh" && settings.remoteEnvironment) {
       const ref = settings.remoteEnvironment;
       let profile = null;
@@ -223,6 +233,14 @@ export class SshEnvironmentHub {
   // A briefing must never open SSH, discover environments, or run diagnostics.
   async contextSnapshot(runtime, owner) {
     const ref = runtime.userSettings.settings.remoteEnvironment;
+    const workspace = runtime.config.project.workspace;
+    if (!ref && workspace?.kind === "ssh") {
+      if (workspace.ownerId !== owner) throw new AppError("SSH_ENVIRONMENT_OWNER_MISMATCH", "项目目录关联到其他成员的 SSH 连接，请在工具与环境中配置你可用的连接。", { status: 403 });
+      const profile = await this.ssh.profile(owner, workspace.connectionId), settings = await this.projectSettings(runtime, owner, workspace.connectionId);
+      if (profile.revision !== workspace.connectionRevision) throw new AppError("SSH_CONFIGURATION_CHANGED", "SSH 配置已变化，请重新确认项目目录。", { status: 409 });
+      const session = this.ssh.sessions.get(this.ssh.sessionKey(owner, profile.id));
+      return { host: { kind: "ssh", label: profile.name, platform: session?.info?.platform ?? profile.lastInfo?.platform ?? null, connected: session?.status === "connected", ...(profile.mode === "alias" ? { alias: profile.alias } : { hostname: profile.host, user: profile.user, port: profile.port }) }, directory: settings.directory, name: "unselected", selection: { kind: "unselected", pythonCommand: null }, toolCommands: {}, inspection: null, tools: [], pendingEnvironment: true };
+    }
     if (!ref || ref.ownerId !== owner)
       throw new AppError("SSH_ENVIRONMENT_OWNER_MISMATCH", "此远程环境属于其他用户，请在工具与环境中选择你可用的连接。", { status: 403 });
     const profile = await this.ssh.profile(owner, ref.connectionId);

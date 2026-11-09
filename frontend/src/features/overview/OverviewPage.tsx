@@ -15,6 +15,7 @@ import { nodeUrl, text, type ResearchRecord } from "@/features/research/model";
 import { FAMILY_ORDER, familyColor, familyLabels } from "@/features/topology/model/nodeVisuals";
 import { researchConnections, openActions, ratio, researchStructure, upcoming, type Topology } from "./overviewModel";
 import styles from "./OverviewPage.module.css";
+import { ProjectWorkspacePanel } from "@/features/projects/ProjectWorkspacePanel";
 
 export function OverviewPage() {
   const en = useUiStore(state => state.locale) === "en";
@@ -60,6 +61,7 @@ export function OverviewPage() {
           </dl>
         }
       />
+      <ProjectWorkspacePanel en={en} />
       <nav className={styles.attention} aria-label={en ? "Needs attention" : "待处理"}>
         <Signal icon={GitPullRequest} label={en ? "Changes to review" : "待审变更"} count={pending.length}
           to={pending[0] ? `/agents?candidate=${encodeURIComponent(String(pending[0].id))}` : "/agents"} />

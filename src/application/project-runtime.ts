@@ -54,8 +54,9 @@ export async function createProjectRuntimeRegistry({
       id: project.id,
       name: project.name,
       root: project.root,
+      workspace: project.workspace,
     };
-    if (project.id !== config.project.id)
+    if (project.id !== config.project.id || path.resolve(project.root) !== path.resolve(config.project.root))
       projectConfig.filesystem.roots = [project.root];
     const runtimeRoot = path.resolve(
       path.dirname(options.userSettingsFile ?? config.userSettings.file),
@@ -250,6 +251,16 @@ export async function createProjectRuntimeRegistry({
       nativeConfigs,
       history: historyStore,
     };
+    runtime.updateWorkspaceDirectory = async (owner, connectionId, directory) => {
+      const workspace = runtime.config.project.workspace;
+      if (workspace?.kind !== "ssh" || workspace.ownerId !== owner || workspace.connectionId !== connectionId || workspace.directory === directory) return;
+      const actor = actorContext.getStore();
+      if (actor?.user?.id !== owner) throw new AppError("FORBIDDEN", "项目目录更新需要当前登录身份。", { status: 403 });
+      const result = collaboration.updateProjectWorkspace(project.id, { ...workspace, directory }, workspace.revision, actor);
+      runtime.config.project.workspace = result.workspace;
+      runtime.project.workspace = result.workspace;
+      await runtime.userSettings.update({ workspaceRevision: result.workspace.revision, researchLocation: "ssh", remoteEnvironment: null });
+    };
     runtime.notebook = new NotebookStore(collaboration.db, project.id, event => history.documentChanged(event));
     history.resolveResearchObject = (type, id, revision) => {
       const version = researchCommands.store.get("versions", JSON.stringify([type, id]) + ":" + revision);
@@ -335,6 +346,11 @@ export async function createProjectRuntimeRegistry({
       },
     });
     runtimes.set(project.id, runtime);
+    runtime.dispose = async () => {
+      runtime.sourceRefresh.stop();
+      await runtime.sourceRefresh.inFlight?.catch(() => {});
+      await Promise.allSettled(dispose.slice().reverse().map(close => Promise.resolve().then(close)));
+    };
     return runtime;
     } catch (error) {
       await Promise.allSettled(dispose.reverse().map(close => Promise.resolve().then(close)));
@@ -345,12 +361,26 @@ export async function createProjectRuntimeRegistry({
     const project = collaboration.projectById(projectId);
     if (!project || project.status === "deleted")
       throw new AppError("PROJECT_NOT_FOUND", "项目不存在。", { status: 404 });
+    if (runtimePromises.has(project.id)) return runtimePromises.get(project.id);
     if (runtimes.has(project.id)) return runtimes.get(project.id);
     if (!runtimePromises.has(project.id))
       runtimePromises.set(project.id, buildRuntime(project));
     const pending = runtimePromises.get(project.id);
     try { return await pending; }
     finally { if (runtimePromises.get(project.id) === pending) runtimePromises.delete(project.id); }
+  }
+  async function replaceRuntime(projectId, update) {
+    if (runtimePromises.has(projectId)) await runtimePromises.get(projectId);
+    const current = runtimes.get(projectId);
+    if (current && (current.activeCriticalOperations || current.curatorTriggerCoordinator.statusView().running || current.agentSessionGateway.list({ summary: true }).some(session => ["starting", "running", "awaiting_permission"].includes(session.status)))) throw new AppError("PROJECT_WORKSPACE_BUSY", "项目仍有运行中的任务，请结束后再更换工作目录。", { status: 409 });
+    const pending = Promise.resolve().then(async () => {
+      update();
+      if (current) await current.dispose();
+      runtimes.delete(projectId);
+      return buildRuntime(collaboration.projectById(projectId));
+    });
+    runtimePromises.set(projectId, pending);
+    try { return await pending; } finally { if (runtimePromises.get(projectId) === pending) runtimePromises.delete(projectId); }
   }
   const defaultRuntime = await getRuntime(config.project.id);
   function applyRuntimeSettings(settings, runtime) {
@@ -448,6 +478,7 @@ export async function createProjectRuntimeRegistry({
     actorContext,
     runtimes,
     getRuntime,
+    replaceRuntime,
     defaultRuntime,
     baseTopologyService,
     topologyLayoutService,

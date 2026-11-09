@@ -101,6 +101,7 @@ function publicProject(row) {
     id: row.id,
     name: row.name,
     root: row.root,
+    workspace: row.workspace ?? (row.workspace_json ? JSON.parse(row.workspace_json) : { kind: "local", directory: row.root, revision: 0 }),
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -172,6 +173,10 @@ export class CollaborationStore extends EventEmitter {
         state_version TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS project_workspaces (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id),
+        body TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS memberships (
         project_id TEXT NOT NULL REFERENCES projects(id),
@@ -332,13 +337,14 @@ export class CollaborationStore extends EventEmitter {
 
   projectById(projectId) {
     this.ensureReady();
-    return this.db.prepare("SELECT * FROM projects WHERE id = ?").get(String(projectId));
+    const row = this.db.prepare("SELECT p.*,w.body AS workspace_json FROM projects p LEFT JOIN project_workspaces w ON w.project_id=p.id WHERE p.id = ?").get(String(projectId));
+    return row ? { ...row, workspace: row.workspace_json ? JSON.parse(row.workspace_json) : { kind: "local", directory: row.root, revision: 0 } } : null;
   }
 
   listProjects(actor) {
     this.ensureReady();
-    if (actor?.isServerAdmin) return this.db.prepare("SELECT p.*, m.role AS membership_role FROM projects p LEFT JOIN memberships m ON m.project_id = p.id AND m.user_id = ? AND m.status = 'active' WHERE p.status != 'deleted' ORDER BY p.name").all(actor.user.id).map(publicProject);
-    return this.db.prepare("SELECT p.*, m.role AS membership_role FROM projects p JOIN memberships m ON m.project_id = p.id WHERE m.user_id = ? AND m.status = 'active' AND p.status != 'deleted' ORDER BY p.name").all(actor?.user?.id ?? "").map(publicProject);
+    if (actor?.isServerAdmin) return this.db.prepare("SELECT p.*, w.body AS workspace_json,m.role AS membership_role FROM projects p LEFT JOIN project_workspaces w ON w.project_id=p.id LEFT JOIN memberships m ON m.project_id = p.id AND m.user_id = ? AND m.status = 'active' WHERE p.status != 'deleted' ORDER BY p.name").all(actor.user.id).map(publicProject);
+    return this.db.prepare("SELECT p.*,w.body AS workspace_json,m.role AS membership_role FROM projects p LEFT JOIN project_workspaces w ON w.project_id=p.id JOIN memberships m ON m.project_id = p.id WHERE m.user_id = ? AND m.status = 'active' AND p.status != 'deleted' ORDER BY p.name").all(actor?.user?.id ?? "").map(publicProject);
   }
 
   permissionCatalog() {
@@ -379,7 +385,7 @@ export class CollaborationStore extends EventEmitter {
     return result;
   }
 
-  createProject({ id, name } = {}, actor) {
+  createProject({ id, name, workspace = { kind: "managed" } } = {}, actor) {
     this.ensureReady();
     if (!actor?.isServerAdmin) throw new AppError("FORBIDDEN", "只有 s-admin 可以创建项目。", { status: 403 });
     const projectId = String(id ?? `project_${randomUUID().replaceAll("-", "")}`).trim();
@@ -390,8 +396,9 @@ export class CollaborationStore extends EventEmitter {
     const timestamp = nowIso();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const projectRoot = this.projectRootFactory ? this.projectRootFactory(projectId) : this.defaultProject.root;
+      const projectRoot = workspace.kind === "local" ? workspace.directory : this.projectRootFactory ? this.projectRootFactory(projectId) : this.defaultProject.root;
       this.db.prepare("INSERT INTO projects (id, name, root, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)").run(projectId, projectName, String(projectRoot), timestamp, timestamp);
+      this.db.prepare("INSERT INTO project_workspaces VALUES(?,?)").run(projectId, JSON.stringify({ ...workspace, ...(workspace.kind === "managed" ? { directory: projectRoot } : {}), revision: 1 }));
       this.db.prepare("INSERT INTO memberships (project_id, user_id, role, status, created_at, updated_at) VALUES (?, ?, 'p-admin', 'active', ?, ?)").run(projectId, actor.user.id, timestamp, timestamp);
       this.db.exec("COMMIT");
     } catch (error) {
@@ -399,6 +406,22 @@ export class CollaborationStore extends EventEmitter {
       throw error;
     }
     this.audit(projectId, actor.user.id, actor.user.id, "project.created", { projectId });
+    return publicProject(this.projectById(projectId));
+  }
+  updateProjectWorkspace(projectId, workspace, expectedRevision, actor) {
+    this.ensureReady();
+    if (!actor?.isServerAdmin) throw new AppError("FORBIDDEN", "只有服务器管理员可以关联项目工作目录。", { status: 403 });
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const project = this.requireProject(actor, projectId);
+      if (project.workspace.revision !== expectedRevision) throw new AppError("PROJECT_WORKSPACE_CONFLICT", "项目工作目录已更新，请重新读取后再保存。", { status: 409 });
+      const root = workspace.kind === "local" ? workspace.directory : this.projectRootFactory ? this.projectRootFactory(projectId) : project.root;
+      const value = { ...workspace, ...(workspace.kind === "managed" ? { directory: root } : {}), revision: expectedRevision + 1 };
+      this.db.prepare("UPDATE projects SET root=?,updated_at=? WHERE id=?").run(root, nowIso(), projectId);
+      this.db.prepare("INSERT INTO project_workspaces VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET body=excluded.body").run(projectId, JSON.stringify(value));
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    this.audit(projectId, actor.user.id, actor.user.id, "project.workspaceChanged", { kind: workspace.kind });
     return publicProject(this.projectById(projectId));
   }
 
