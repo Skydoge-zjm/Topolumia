@@ -8,7 +8,11 @@ const pair = z.object({
 });
 const metric = z.object({
   key: z.string(),
-  value: z.number(),
+  // Protobuf JSON encodes nonfinite doubles as these strings, not JSON numbers.
+  value: z.union([
+    z.number(),
+    z.enum(["NaN", "Infinity", "-Infinity"]).transform(value => ({ dtype: "float64" as const, value })),
+  ]),
   step: z.number().optional(),
   timestamp: z.number().optional(),
 });

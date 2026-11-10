@@ -128,7 +128,7 @@ export type StoredAsset = {
   createdAt: string; createdBy?: string; role?: string; previewKey?: string; diagnostic?: string;
   sheetNames?: string[]; defaultSheet?: string; availableRows?: number; contentVersion?: string;
   compiled?: { state: string; pdf?: string | null; image?: string | null; error?: string | null } | null;
-  recordManifests?: Record<string, { checksum: string; sourceIds: string[] }>;
+  recordManifests?: Record<string, { checksum: string; sourceIds: string[]; parserRevision?: number }>;
   tableSheetFacts?: Record<string, { checksum: string; rowCount: number }>;
 };
 export type ExportTarget =

@@ -16,6 +16,8 @@ import type {
   ExperimentSeries,
 } from "../../../domain/research/experiment-records.js";
 
+export const RECORD_INDEX_REVISION = 3;
+
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 function status(value: unknown): ImportedExperimentRun["status"] {
@@ -39,7 +41,11 @@ export function readHistoryJson(input: unknown, fallbackId: string, fallbackLabe
   const runs: unknown[] = Array.isArray(data.runs) ? data.runs : [Array.isArray(input) ? { history: input } : data];
   return runs.map((value, index) => {
     const run = object(value), series = new Map<string, ExperimentSeries>();
-    const events: RecordRichEvent[] = Array.isArray(run.events) ? run.events.map(item => recordRichEventSchema.parse(item)) : [];
+    const sourceId = String(run.sourceId ?? run.id ?? run.runId ?? run.run_id ?? object(run.run).id ?? fallbackId + (runs.length > 1 ? ":" + index : ""));
+    const events: RecordRichEvent[] = Array.isArray(run.events) ? run.events.map((item, seq) => {
+      const event = object(item);
+      return recordRichEventSchema.parse({ ...event, seq: event.seq ?? seq, sourceRunId: event.sourceRunId ?? sourceId });
+    }) : [];
     const add = (key: string, x: unknown, y: unknown, xKey: string, timestamp?: unknown) => {
       if (key.startsWith("_") || !finite(x) || !finite(y)) return;
       const identity = JSON.stringify([key, xKey]);
@@ -67,12 +73,18 @@ export function readHistoryJson(input: unknown, fallbackId: string, fallbackLabe
       for (const [key, values] of Object.entries(object(history))) if (Array.isArray(values)) {
         for (const [pointIndex, value] of values.entries()) {
           const point = object(value), x = point.step ?? point.x;
-          add(key, finite(x) ? x : pointIndex, finite(value) ? value : point.value ?? point.y, finite(x) ? "step" : "recordIndex", point.timestamp);
+          add(key, finite(x) ? x : pointIndex, finite(value) ? value : point.value ?? point.y, finite(x) ? "step" : "recordIndex", point.timestamp ?? point.wall_time);
         }
       }
     }
+    for (const [seq, event] of events.entries()) {
+      event.seq ??= seq;
+      event.sourceRunId ??= sourceId;
+    }
+    for (const [kind, value] of [["config", run.config ?? run.params], ["summary", run.summary]] as const)
+      if (value && typeof value === "object") events.push({ kind, sourceRunId: sourceId, seq: events.length, data: { update: z.json().parse(value), remove: [] } });
     return {
-      sourceId: String(run.sourceId ?? run.id ?? run.run_id ?? object(run.run).id ?? fallbackId + (runs.length > 1 ? ":" + index : "")),
+      sourceId,
       label: String(run.label ?? run.name ?? object(run.run).name ?? (runs.length === 1 ? fallbackLabel : fallbackLabel + " " + (index + 1))),
       status: status(run.status ?? run.state),
       ...(typeof (run.status ?? run.state) === "string" ? { originalStatus: String(run.status ?? run.state) } : {}),
@@ -117,7 +129,7 @@ export class ExperimentRecordReader {
       this.c.assets.root,
       "derived",
       asset.id.slice(6),
-      "experiment-record-v2",
+      "experiment-record-v" + RECORD_INDEX_REVISION,
       provider + ".json",
     );
   }
@@ -235,14 +247,14 @@ export class ExperimentRecordReader {
           fail("EXPERIMENT_RECORD_INVALID", "实验记录包含无效数值。", 422);
     }
     const value = {
-      schemaVersion: "experiment-record-index.v2",
+      schemaVersion: "experiment-record-index.v" + RECORD_INDEX_REVISION,
       provider,
       assetId: asset.id,
       checksum: asset.checksum,
       contentVersion: versionHash({
         checksum: asset.checksum,
         provider,
-        parser: 2,
+        parser: RECORD_INDEX_REVISION,
       }),
       runs,
     };

@@ -3,7 +3,7 @@ import type { resolveInvocation } from "../../../lib/command.js";
 type CommandInvocation = Awaited<ReturnType<typeof resolveInvocation>>;
 import type { CuratorMaterialization, CuratorTrace } from "../../../services/topology/curator-types.js";
 import * as z from "zod/v4";
-const execEventSchema = z.looseObject({ type: z.string(), thread_id: z.string().optional(), message: z.string().optional(), error: z.looseObject({ message: z.string().optional() }).optional(), usage: z.unknown().optional(), item: z.looseObject({ id: z.string().optional(), type: z.string(), text: z.string().optional(), command: z.string().optional(), aggregated_output: z.string().optional(), exit_code: z.number().optional(), status: z.string().optional() }).optional() });
+const execEventSchema = z.looseObject({ type: z.string(), thread_id: z.string().optional(), message: z.string().optional(), error: z.looseObject({ message: z.string().optional() }).optional(), usage: z.unknown().optional(), item: z.looseObject({ id: z.string().optional(), type: z.string(), text: z.string().optional(), command: z.string().optional(), aggregated_output: z.string().optional(), exit_code: z.number().nullish(), status: z.string().optional() }).optional() });
 export interface CommandExecution { id: string | null; command: string; output: string; exitCode?: number; status?: string }
 export interface CodexExecution { threadId: string | null; usage: unknown; agentMessages: string[]; commandExecutions: CommandExecution[]; protocolEvents: unknown[]; stderr: string }
 import { spawn } from "node:child_process";
@@ -141,7 +141,7 @@ export class CodexExecClient {
         id: event.item.id ?? null,
         command: event.item.command ?? "",
         output: event.item.aggregated_output ?? "",
-        exitCode: event.item.exit_code,
+        exitCode: event.item.exit_code ?? undefined,
         status: event.item.status,
       });
     }

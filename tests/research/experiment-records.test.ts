@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { Readable } from "node:stream";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ResearchCommandService } from "../../src/services/research/research-command-service.js";
@@ -77,6 +77,40 @@ async function fixture(t) {
   };
   return { c, actor, create, upload, add };
 }
+
+test("split JSON exports retain metadata, wall times and run identity through indexed reads and rebuilding", async t => {
+  const { c, actor, create, upload, add } = await fixture(t);
+  const config = { optimizer: { name: "AdamW" }, seeds: [13, 42] };
+  const summary = { outcome: "completed", bestLoss: 0.25 };
+  const first = await upload("part-one.json", JSON.stringify({ runId: "shared-training-run", name: "Training", params: config, summary, scalars: { loss: [{ step: 0, value: 1, wall_time: 1234 }] } }));
+  const second = await upload("part-two.json", JSON.stringify({ runId: "shared-training-run", name: "Training", scalars: { loss: [{ step: 1, value: 0.25, wall_time: 2345 }] } }));
+  const assets = [first.id, second.id];
+  // A previous parser's derived cache must not override the preserved JSON original.
+  const oldIndex = path.join(c.assets.root, "derived", first.id.slice(6), "experiment-record-v2", "wandb.json");
+  await mkdir(path.dirname(oldIndex), { recursive: true });
+  await writeFile(oldIndex, JSON.stringify({ schemaVersion: "experiment-record-index.v2", provider: "wandb", assetId: first.id, checksum: first.checksum, contentVersion: "previous-parser", runs: [{ sourceId: first.id, label: "Training", status: "unknown", series: [{ key: "loss", xKey: "step", points: [{ x: 0, y: 1 }] }], events: [] }] }));
+  const stored = c.assets.assert(first.id, actor);
+  c.store.put("assets", first.id, { ...stored, recordManifests: { wandb: { checksum: first.checksum, sourceIds: [first.id] } } });
+  const inspected = await c.records.inspect("wandb", assets, actor);
+  assert.equal(inspected.runs.length, 1);
+  assert.equal(inspected.runs[0].sourceId, "shared-training-run");
+  assert.deepEqual(inspected.runs[0].assetIds, assets);
+  const node = create("experiment", "Split JSON history");
+  const block = add(node.id, { title: "Training records", type: "experimentRecord", payload: { provider: "wandb", runs: inspected.runs.map(({ metrics, ...run }) => run) }, representations: assets.map(assetId => ({ kind: "asset", assetId, role: "source" })) });
+  const input = { nodeId: node.id, blockId: block.id, runId: block.payload.runs[0].runId, maxChars: 16000 };
+  const exact = () => c.records.read({ ...input, mode: "series", metric: "loss", xKey: "step" }, actor);
+  const expected = [{ x: 0, y: 1, timestamp: 1234 }, { x: 1, y: 0.25, timestamp: 2345 }];
+  assert.deepEqual((await exact()).data.points, expected);
+  const configuration = await c.records.read({ ...input, mode: "events", eventKind: "config" }, actor);
+  const summaries = await c.records.read({ ...input, mode: "events", eventKind: "summary" }, actor);
+  assert.deepEqual(configuration.data.items.map(item => item.event.data), [{ update: config, remove: [] }]);
+  assert.deepEqual(summaries.data.items.map(item => item.event.data), [{ update: summary, remove: [] }]);
+  for (const assetId of assets) await unlink(c.records.indexPath(c.assets.assert(assetId, actor), "wandb"));
+  const rebuilt = await c.records.inspect("wandb", assets, actor);
+  assert.equal(rebuilt.runs.length, 1);
+  assert.equal(rebuilt.runs[0].sourceId, "shared-training-run");
+  assert.deepEqual((await exact()).data.points, expected);
+});
 
 test("exact metric reads distinguish identical names on different axes", async t => {
   const { c, actor, create, upload, add } = await fixture(t), node = create("experiment", "Mixed axes");

@@ -6,6 +6,7 @@ import type * as z from "zod/v4";
 import { experimentPatchSchema } from "../../../domain/research/experiment-records.js";
 import { AppError, asAppError } from "../../../lib/errors.js";
 import { ExperimentRecordImporter } from "./record-importer.js";
+import { RECORD_INDEX_REVISION } from "./record-reader.js";
 import { fail } from "../../../domain/research/access.js";
 import { nodeRef, sameObject } from "../../../domain/research/object-ref.js";
 import { versionHash } from "../../../lib/hash.js";
@@ -110,7 +111,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         const asset = this.c.assets.assert(id, actor),
           manifest = asset.recordManifests?.[payload.provider];
         const sourceIds =
-          manifest?.checksum === asset.checksum
+          manifest?.checksum === asset.checksum && manifest.parserRevision === RECORD_INDEX_REVISION
             ? manifest.sourceIds
             : this.index(id, payload.provider, actor).runs.map(
                 (item) => item.sourceId,

@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { recordRichEventSchema } from "./record-reader.js";
+import { recordRichEventSchema, RECORD_INDEX_REVISION } from "./record-reader.js";
 import { Worker } from "node:worker_threads";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -48,7 +48,7 @@ export class ExperimentRecordImporter {
       this.c.assets.root,
       "derived",
       asset.id.slice(6),
-      "experiment-record-v2",
+      "experiment-record-v" + RECORD_INDEX_REVISION,
       provider + ".json",
     );
   }
@@ -206,7 +206,8 @@ export class ExperimentRecordImporter {
       const current = this.c.store.get("assets", assetId);
       if (
         current &&
-        current.recordManifests?.[provider]?.checksum !== index.checksum
+        (current.recordManifests?.[provider]?.checksum !== index.checksum ||
+          current.recordManifests?.[provider]?.parserRevision !== RECORD_INDEX_REVISION)
       )
         this.c.store.put("assets", assetId, {
           ...current,
@@ -215,6 +216,7 @@ export class ExperimentRecordImporter {
             [provider]: {
               checksum: index.checksum,
               sourceIds: index.runs.map((run) => run.sourceId),
+              parserRevision: RECORD_INDEX_REVISION,
             },
           },
         });

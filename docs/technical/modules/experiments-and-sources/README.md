@@ -14,7 +14,9 @@
 
 [ExperimentRecordImporter](../../../../src/services/research/experiments/record-importer.ts) 支持归档的 .wandb、TensorBoard event 和 JSON/JSONL。上传字节沿用[资产生命周期](../content-blocks/file-lifecycle.md)，不可变原件和派生索引分开；原件改变或缺失报告错误。配置、命令、YAML、日志、最终表格继续使用普通内容块。
 
-每项目惰性创建一个[后台解析线程](../../../../src/services/research/experiments/record-worker.ts)，处理静态解析、采样和表格范围。主线程只接收小目录或请求范围。同资产任务合并；后台数值缓存按序列化体积计费 64 MiB，主线程目录缓存最多 256 项、8 MiB。超过缓存额度仍可读取，不代表整个进程堆内存受此上限约束。静态派生目录为 experiment-record-v2，避免复用旧提取语义的缓存。
+每项目惰性创建一个[后台解析线程](../../../../src/services/research/experiments/record-worker.ts)，处理静态解析、采样和表格范围。主线程只接收小目录或请求范围。同资产任务合并；后台数值缓存按序列化体积计费 64 MiB，主线程目录缓存最多 256 项、8 MiB。超过缓存额度仍可读取，不代表整个进程堆内存受此上限约束。静态派生目录为 experiment-record-v3，按当前解析语义重建索引，保留原件。
+
+JSON 导出保留 sourceId/id/runId/run_id 的运行身份、config/params 与完整 summary 事件；缺省事件序号和来源身份由原始运行补齐。按指标组织的观察支持 timestamp 与 wall_time，重复和回退坐标不改变原生时间。
 
 [Python 静态读取器](../../../../scripts/runtime/experiment-record-parser.py) 与采集器复用[原生适配器](../../../../scripts/runtime/topolumia_collector/adapters.py)。W&B 容器读取保留[上游 MIT 声明](../../../../scripts/runtime/wandb_record_reader.py)；TensorBoard 使用原生 Event protobuf 和官方 CRC 实现读取 TFRecord 完整边界。静态读取器由 experimentRecords.pythonCommand 指定，依赖见[读取器依赖](../../../../requirements/experiment-record-readers.txt)。JSON 导入不要求 Python。
 
@@ -22,7 +24,7 @@
 
 ### MLflow 服务导入
 
-[MLflow 读取器](../../../../src/services/research/experiments/mlflow-reader.ts)读取实验目录、运行元数据、全部指标历史分页和产物目录，保留原生观察顺序、重复和回退 step。配置的实验 ID 或名称约束导入范围；目录超过配置上限、分页游标重复或任一请求失败均明确报错，不返回静默截断的成功结果。
+[MLflow 读取器](../../../../src/services/research/experiments/mlflow-reader.ts)读取实验目录、运行元数据、全部指标历史分页和产物目录，保留原生观察顺序、重复和回退 step。Protobuf JSON 中的 NaN、Infinity、-Infinity 字符串在读取边界解码为 float64 类型值，准确读取保留这些观察，画布只绘制有限值。配置的实验 ID 或名称约束导入范围；目录超过配置上限、分页游标重复或任一请求失败均明确报错，不返回静默截断的成功结果。
 
 项目管理者在训练记录页选择“从 MLflow 导入”，服务连接沿用工具与环境中的 MLflow 配置。GET /api/research/experiments/mlflow/catalog 返回可选运行，POST /api/research/experiments/mlflow/import 接收 runIds。[导入服务](../../../../src/services/research/experiments/mlflow-importer.ts)先读完整个选择，再在同一个 SQLite 事务中保存项目来源和统一事件；参数、标签、摘要、原生运行元数据、全部标量和产物清单进入同一持久记录模型。产物保留外部目录元数据，文件内容仍需按原生服务的访问方式取得；不把未下载的产物标为本机附件。Agent 与采集凭据不能导入或浏览服务目录。
 

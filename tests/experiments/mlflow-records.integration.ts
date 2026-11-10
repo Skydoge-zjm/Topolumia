@@ -49,6 +49,8 @@ test("native MLflow SDK and REST records import into persistent research records
   const generated = await execute(python, ["-c", `
 import json, pathlib, sys
 from mlflow.tracking import MlflowClient
+from mlflow.entities import Metric
+from mlflow.utils.proto_json_utils import message_to_json
 root = pathlib.Path(sys.argv[1]).resolve()
 tracking = "sqlite:///" + (root / "native.sqlite").as_posix()
 artifacts = (root / "artifacts").as_uri()
@@ -61,10 +63,14 @@ artifact_file.write_bytes(b"preserved\\n")
 client.log_artifact(run.info.run_id, str(artifact_file), artifact_path="checkpoints")
 for step, value, timestamp in [(0, 1.0, 1000), (10, 0.5, 2000), (20, 0.25, 3000)]:
     client.log_metric(run.info.run_id, "loss", value, timestamp=timestamp, step=step)
+client.log_metric(run.info.run_id, "nonfinite_loss", 1.0, timestamp=1000, step=0)
+client.log_metric(run.info.run_id, "nonfinite_loss", float("nan"), timestamp=2000, step=1)
 client.set_terminated(run.info.run_id)
-print(json.dumps({"trackingUri":tracking,"artifactRoot":artifacts,"runId":run.info.run_id}))
+wire_values = [json.loads(message_to_json(Metric("loss", value, 1234, 0).to_proto()))["value"] for value in [float("nan"), float("inf"), float("-inf")]]
+print(json.dumps({"trackingUri":tracking,"artifactRoot":artifacts,"runId":run.info.run_id,"nonfiniteWireValues":wire_values}))
 `, root], { timeout: 30000, windowsHide: true, maxBuffer: 1024 * 1024 });
   const fixture = JSON.parse(generated.stdout.trim().split(/\r?\n/).at(-1)!);
+  assert.deepEqual(fixture.nonfiniteWireValues, ["NaN", "Infinity", "-Infinity"]);
   const port = await availablePort(), baseUrl = `http://127.0.0.1:${port}`;
   native = spawn(python, ["-m", "mlflow", "server", "--backend-store-uri", fixture.trackingUri, "--default-artifact-root", fixture.artifactRoot, "--host", "127.0.0.1", "--port", String(port), "--workers", "1"], { cwd: mvpRoot, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   let diagnostics = "";
@@ -100,6 +106,8 @@ print(json.dumps({"trackingUri":tracking,"artifactRoot":artifacts,"runId":run.in
   const selected = commands.projectRecords.assign({ runs: [available.items[0].projectSource], nodeName: "Imported SDK run" }, actor);
   const points = await commands.records.read({ mode: "series", ...selected, runId: available.items[0].projectSource.runId, metric: "loss", maxChars: 16000 }, actor);
   assert.deepEqual(points.data.points, [{ x: 0, y: 1, timestamp: 1000 }, { x: 10, y: .5, timestamp: 2000 }, { x: 20, y: .25, timestamp: 3000 }]);
+  const nonfinite = await commands.records.read({ mode: "series", ...selected, runId: available.items[0].projectSource.runId, metric: "nonfinite_loss", maxChars: 16000 }, actor);
+  assert.deepEqual(nonfinite.data.points, [{ x: 0, y: 1, timestamp: 1000 }, { x: 1, y: { dtype: "float64", value: "NaN" }, timestamp: 2000 }]);
   const facts = await commands.records.read({ mode: "events", ...selected, eventKind: "config", maxChars: 16000 }, actor);
   assert.deepEqual(facts.data.items[0].event.data?.parameters, [{ key: "seed", value: "42" }]);
   const files=await commands.records.read({mode:"events",...selected,eventKind:"file",limit:100,maxChars:16000},actor);

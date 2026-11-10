@@ -33,10 +33,11 @@ const nativeArtifacts = [
   { path: "checkpoints/deep", is_dir: true },
   { path: "checkpoints/deep/config.json", is_dir: false, file_size: 17 },
 ];
+type WirePoint = { key: string; step: number; value: number | "NaN" | "Infinity" | "-Infinity"; timestamp: number };
 
 /** Only the remote MLflow REST peer is simulated; the importer and SQLite are real. */
 async function mlflowPeer(t: TestContext) {
-  const state = { points: structuredClone(nativePoints), failHistory: false, failRun: "", failArtifactRun: "", repeatCursor: false, authorization: "" };
+  const state = { points: structuredClone(nativePoints) as WirePoint[], failHistory: false, failRun: "", failArtifactRun: "", repeatCursor: false, authorization: "" };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url!, "http://mlflow.test");
     state.authorization = String(request.headers.authorization ?? "");
@@ -52,7 +53,7 @@ async function mlflowPeer(t: TestContext) {
       const body = JSON.parse(Buffer.concat(chunks).toString());
       if (body.experiment_ids?.[0] !== "9") return send({ runs: [] });
       const second = body.page_token === "runs-2";
-      return send({ runs: [{ info: { run_id: second ? "other-run" : "native-run", experiment_id: "9", run_name: second ? "Other" : "Training", status: "FINISHED" }, data: { metrics: [], params: [], tags: [] } }], ...(!second || state.repeatCursor ? { next_page_token: "runs-2" } : {}) });
+      return send({ runs: [{ info: { run_id: second ? "other-run" : "native-run", experiment_id: "9", run_name: second ? "Other" : "Training", status: "FINISHED" }, data: { metrics: second ? [nativePoints[0]] : [state.points.at(-1)], params: [], tags: [] } }], ...(!second || state.repeatCursor ? { next_page_token: "runs-2" } : {}) });
     }
     if (url.pathname.endsWith("/runs/get")) return send({ run: {
       info: { run_id: url.searchParams.get("run_id"), experiment_id: url.searchParams.get("run_id") === "foreign-run" ? "10" : "9", run_name: "Training", status: "FINISHED", artifact_uri: "s3://research/native-run", start_time: 1000, end_time: 5000 },
@@ -134,6 +135,38 @@ test("MLflow reader rejects cursor loops and run limits instead of reporting a c
   state.repeatCursor = false;
   config.mlflow.maxRuns = 1;
   await assert.rejects(reader.listRuns("9"), { code: "MLFLOW_RUN_LIMIT" });
+});
+
+test("MLflow protobuf nonfinite metrics keep the catalog readable and retain exact values after restart", async t => {
+  const peer = await mlflowPeer(t), saved = await persistentRecords(t);
+  peer.state.points = [
+    nativePoints[0],
+    { key: "loss", step: 1, value: "NaN", timestamp: 2000 },
+    { key: "loss", step: 2, value: "Infinity", timestamp: 3000 },
+    { key: "loss", step: 3, value: "-Infinity", timestamp: 4000 },
+  ];
+  const importer = new MlflowRecordImporter(saved.commands, peer.config);
+  assert.deepEqual((await importer.catalog(saved.actor)).runs.map(run => run.runId), ["native-run", "other-run"]);
+  const native = await importer.reader.readRun("native-run");
+  assert.deepEqual(native.history.loss.map(point => point.value), [1, { dtype: "float64", value: "NaN" }, { dtype: "float64", value: "Infinity" }, { dtype: "float64", value: "-Infinity" }]);
+  await importer.import({ runIds: ["native-run"] }, saved.actor);
+  await peer.stop();
+  const c = await saved.restart();
+  const run = c.projectRecords.directory(saved.actor).items[0];
+  const selected = c.projectRecords.assign({ runs: [run.projectSource], nodeName: "Nonfinite observations" }, saved.actor);
+  const input = { ...selected, runId: run.projectSource.runId, maxChars: 16000 };
+  const values = await c.records.read({ ...input, mode: "series", metric: "loss", xKey: "step" }, saved.actor);
+  assert.equal(values.data.pointCount, 4);
+  assert.deepEqual(values.data.points, [
+    { x: 0, y: 1, timestamp: 1000 },
+    { x: 1, y: { dtype: "float64", value: "NaN" }, timestamp: 2000 },
+    { x: 2, y: { dtype: "float64", value: "Infinity" }, timestamp: 3000 },
+    { x: 3, y: { dtype: "float64", value: "-Infinity" }, timestamp: 4000 },
+  ]);
+  const summary = await c.records.read({ ...input, mode: "events", eventKind: "summary" }, saved.actor);
+  assert.deepEqual(summary.data.items[0].event.data.metrics, [{ key: "loss", step: 3, value: { dtype: "float64", value: "-Infinity" }, timestamp: 4000 }]);
+  const plot = await c.records.plot({ nodeId: selected.nodeId, blockId: selected.blockId }, saved.actor);
+  assert.deepEqual(plot.series[0].points, [{ x: 0, y: 1, timestamp: 1000 }]);
 });
 
 test("MLflow imports survive restart, remain idempotent and create distinct immutable upstream versions", async t => {
