@@ -2,6 +2,10 @@ import path from "node:path";
 import { readFile, mkdir, rename, writeFile, realpath } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import * as z from "zod/v4";
+import type { AppConfig } from "../../config.js";
+import type { CommandRunner } from "../../lib/command.js";
+import type { UserSettings } from "../platform/user-settings-store.js";
+import type { ResearchComponent, ResearchInspection, ProbeResult } from "./environment-types.js";
 import { AppError } from "../../lib/errors.js";
 import {
   ResearchEnvironmentProbes,
@@ -31,16 +35,28 @@ const ids = [
   "cuda",
   "nvidia",
 ];
-const samePath = (a, b) =>
+const samePath = (a: string, b: string) =>
   process.platform === "win32"
     ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
     : path.resolve(a) === path.resolve(b);
-const hash = (value) =>
+const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
 
 export class ResearchEnvironmentService {
-  constructor({ config, settings, applySettings, commandRunner, includeHost = true }) {
-    Object.assign(this, { config, settings, applySettings, commandRunner });
+  config: AppConfig;
+  settings: { filePath: string; update: (patch: unknown) => Promise<{ settings: UserSettings }> };
+  applySettings: (settings: UserSettings) => Promise<unknown>;
+  commandRunner: CommandRunner;
+  includeHost: boolean;
+  revision = 0;
+  pending: Promise<void> | null = null;
+  tasks = new Set<Promise<void>>();
+  persistence = Promise.resolve();
+  file: string;
+  key = "";
+  state: Pick<ResearchInspection, "status" | "checkedAt" | "startedAt" | "components"> = { status: "idle", checkedAt: null, startedAt: null, components: [] };
+  constructor({ config, settings, applySettings, commandRunner, includeHost = true }: { config: AppConfig; settings: ResearchEnvironmentService["settings"]; applySettings: ResearchEnvironmentService["applySettings"]; commandRunner: CommandRunner; includeHost?: boolean }) {
+    this.config = config; this.settings = settings; this.applySettings = applySettings; this.commandRunner = commandRunner;
     this.includeHost = includeHost;
     this.revision = 0;
     this.pending = null;
@@ -86,7 +102,7 @@ export class ResearchEnvironmentService {
         saved.fingerprint === this.key &&
         saved.status === "completed" &&
         Array.isArray(saved.components) &&
-        saved.components.every((c) => ids.includes(c.id))
+        saved.components.every((c: { id: string }) => ids.includes(c.id))
       ) {
         this.state = {
           status: saved.status,
@@ -100,7 +116,7 @@ export class ResearchEnvironmentService {
     }
   }
 
-  view() {
+  view(): ResearchInspection {
     this.synchronize();
     return {
       schemaVersion: "research-environment.v1",
@@ -118,7 +134,7 @@ export class ResearchEnvironmentService {
     };
   }
 
-  probes(config = this.config) {
+  probes(config: AppConfig = this.config) {
     return new ResearchEnvironmentProbes(config, (...args) =>
       this.commandRunner(...args),
     );
@@ -129,7 +145,7 @@ export class ResearchEnvironmentService {
     await Promise.allSettled([...this.tasks, this.persistence]);
   }
 
-  async adopt(report) {
+  async adopt(report: ResearchInspection | null | undefined) {
     if (!report || report.status !== "completed" || report.fingerprint !== this.fingerprint() || report.stale) return false;
     this.revision++;
     this.key = this.fingerprint();
@@ -155,7 +171,7 @@ export class ResearchEnvironmentService {
     await this.persistence;
   }
 
-  async select(input, { report = null } = {}) {
+  async select(input: unknown, { report = null }: { report?: ResearchInspection | null } = {}) {
     const parsed = selectionSchema.safeParse(input);
     if (!parsed.success)
       throw new AppError(
@@ -164,7 +180,6 @@ export class ResearchEnvironmentService {
         { status: 422 },
       );
     const selection = {
-      kind: parsed.data.kind,
       prefix: "",
       pythonCommand: "python",
       ...parsed.data,
@@ -242,7 +257,7 @@ export class ResearchEnvironmentService {
     if (!(await this.adopt(report))) this.start();
   }
 
-  start(componentId = null) {
+  start(componentId: string | null = null) {
     this.synchronize();
     if (componentId && (!ids.includes(componentId) || (!this.includeHost && componentId === "nvidia")))
       throw new AppError("RESEARCH_COMPONENT_INVALID", "未知的科研组件。", {
@@ -276,7 +291,7 @@ export class ResearchEnvironmentService {
     };
     const current = () =>
       this.revision === revision && this.key === this.fingerprint();
-    const update = (id, result) => {
+    const update = (id: string, result: Partial<ResearchComponent>) => {
       if (!current()) return;
       const index = this.state.components.findIndex((c) => c.id === id);
       this.state.components[index] = {
@@ -286,7 +301,7 @@ export class ResearchEnvironmentService {
       };
     };
     const execute = async () => {
-      let metadata;
+      let metadata: ProbeResult | undefined;
       try {
         metadata = await probes.python("packages", 20000);
         if (metadata.status !== "ready" || !metadata.python?.executable)
@@ -329,7 +344,7 @@ export class ResearchEnvironmentService {
             detail: "所选环境无法完成 Python 组件检测。",
           });
       }
-      const jobs = [];
+      const jobs: Array<() => Promise<void>> = [];
       if (requested.includes("nvidia"))
         jobs.push(async () => {
           update("nvidia", { status: "checking" });
@@ -374,7 +389,7 @@ export class ResearchEnvironmentService {
               });
               return;
             }
-            const prefix = metadata.python.prefix;
+            const prefix = metadata!.python!.prefix;
             const paths = this.config.remoteExecution ? path.posix : path;
             const relative = paths.relative(prefix, executable);
             update("cuda", {
@@ -382,7 +397,7 @@ export class ResearchEnvironmentService {
               ...parseNvccVersion(result.stdout),
               location: executable,
               origin:
-                ["conda", "venv"].includes(metadata.python.kind) &&
+                ["conda", "venv"].includes(metadata!.python!.kind) &&
                 relative &&
                 !relative.startsWith("..") &&
                 !paths.isAbsolute(relative)
@@ -404,7 +419,7 @@ export class ResearchEnvironmentService {
               const result = await probes.python(id, 20000);
               update(id, {
                 ...result,
-                version: result.version ?? metadata.packages[id],
+                version: result.version ?? metadata!.packages![id],
               });
             } catch {
               update(id, {
@@ -417,7 +432,7 @@ export class ResearchEnvironmentService {
       // Bound simultaneous framework imports and GPU initialization.
       await Promise.all(
         [0, 1].map(async () => {
-          while (jobs.length && current()) await jobs.shift()();
+          while (jobs.length && current()) await jobs.shift()!();
         }),
       );
       if (!current()) return;

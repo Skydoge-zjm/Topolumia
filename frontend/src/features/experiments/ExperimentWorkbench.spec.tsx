@@ -5,7 +5,7 @@ import { ObjectContentWorkspace } from "@/features/topology/details/ObjectConten
 import type { ContentBlock } from "@/features/topology/details/ContentBlockRenderer";
 
 const owner = { kind: "node" as const, id: "node:experiment" };
-const record: ContentBlock = { id: "block:record", title: "Record", type: "experimentRecord", review: "unreviewed", revision: 3, order: 0, payload: { provider: "wandb", runs: [{ sourceId: "source-a", runId: "run:one", label: "Run", status: "succeeded", assetIds: [], ref: "wandb:run:source-a" }, { sourceId: "source-b", runId: "run:one", label: "Run", status: "succeeded", assetIds: [], ref: "wandb:run:source-b" }] }, representations: [], sourceRefs: [] };
+const record: ContentBlock = { id: "block:record", title: "Record", type: "experimentRecord", review: "unreviewed", revision: 3, order: 0, payload: { provider: "wandb", runs: [{ sourceId: "source-a", runId: "run:one", label: "Run", status: "succeeded", assetIds: ["asset:source-a"] }, { sourceId: "source-b", runId: "run:one", label: "Run", status: "succeeded", assetIds: ["asset:source-b"] }] }, representations: [{kind:"asset",assetId:"asset:source-a",role:"source"},{kind:"asset",assetId:"asset:source-b",role:"source"}], sourceRefs: [] };
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 

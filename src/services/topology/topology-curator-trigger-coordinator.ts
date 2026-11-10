@@ -1,5 +1,17 @@
 import { AppError } from "../../lib/errors.js";
 import { versionHash, compactId } from "../../lib/hash.js";
+import * as z from "zod/v4";
+import type { ResearchTopology, SourceSnapshot } from "../../domain/research/types.js";
+import type { ResearchState, ResearchEvent } from "../research/research-state.js";
+import type { TopologyService } from "./topology-service.js";
+import type { TopologyCuratorService } from "./topology-curator.js";
+import type { CuratorAutomation, CuratorEnvelope, CuratorTriggerRecord, CuratorTriggerStatus, TopologyCuratorResult } from "./curator-types.js";
+const contextSchema = z.looseObject({ entryContext: z.unknown().optional(), workingContext: z.record(z.string(), z.unknown()).nullable().optional(), focus: z.unknown().optional(), continuityContext: z.unknown().optional(), operation: z.unknown().optional() });
+const triggerInputSchema = z.looseObject({ schemaVersion: z.string().optional(), mode: z.string().nullable().optional(), cause: z.string().nullable().optional(), nodeIds: z.unknown().optional(), edgeIds: z.unknown().optional(), sourceRefs: z.unknown().optional(), eventIds: z.unknown().optional(), workingContext: z.record(z.string(), z.unknown()).nullable().optional(), context: contextSchema.nullable().optional(), sessionId: z.unknown().optional(), requestedAt: z.string().nullable().optional(), baseTopologyVersion: z.string().nullable().optional(), sourceStateVersion: z.string().nullable().optional(), entryContext: z.unknown().optional(), focus: z.unknown().optional(), continuityContext: z.unknown().optional(), operation: z.unknown().optional(), locale: z.string().nullable().optional(), bypassDedup: z.boolean().optional(), force: z.boolean().optional() });
+function triggerInput(value: unknown) { const result = triggerInputSchema.safeParse(value); if (!result.success) throw new AppError("CURATOR_TRIGGER_INVALID", "B 触发信封格式无效。", {status:422}); return result.data; }
+type CuratorSettings = { curator?: { model?: string; reasoningEffort?: string; automation?: Partial<CuratorAutomation> }; automation?: Partial<CuratorAutomation> };
+type CoordinatorOptions = { topologyCurator: TopologyCuratorService; topologyService: TopologyService; state: ResearchState; getSettings?: () => CuratorSettings; now?: () => Date | string | number; maxHistory?: number };
+type ResponseExtra = { deduplicated?: boolean; requiresConfirmation?: boolean; triggerId?: string; reason?: string; suggestionId?: string };
 
 const MODES = new Set(["manual", "suggested", "background"]);
 const CAUSES = new Set([
@@ -13,7 +25,7 @@ const CAUSES = new Set([
   "formal_state_request",
 ]);
 const EVENT_TYPES = new Set(["agentMessage", "toolCall", "toolResult", "humanResearchMove"]);
-const AUTO_CAUSES = Object.freeze({
+const AUTO_CAUSES: Readonly<Record<string, keyof CuratorAutomation>> = Object.freeze({
   session_checkpoint: "triggerOnSessionCheckpoint",
   experiment_delta: "triggerOnExperimentDelta",
   source_delta: "triggerOnSourceDelta",
@@ -22,17 +34,17 @@ const AUTO_CAUSES = Object.freeze({
   topology_changed: "triggerOnTopologyChanged",
 });
 
-function clone(value) {
-  return value === undefined ? undefined : structuredClone(value);
+function clone<T>(value: T): T {
+  return structuredClone(value);
 }
 
-function clockMs(now) {
+function clockMs(now: () => Date | string | number) {
   const value = now();
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date.getTime() : Date.now();
 }
 
-function arrayOfStrings(value, field, max, maxLength = 240) {
+function arrayOfStrings(value: unknown, field: string, max: number, maxLength = 240): string[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || value.length > max) {
     throw new AppError("CURATOR_TRIGGER_INVALID", `${field} 必须是最多 ${max} 项的数组。`, { status: 422, detail: { field, max } });
@@ -47,7 +59,7 @@ function arrayOfStrings(value, field, max, maxLength = 240) {
   return result;
 }
 
-function objectOrNull(value, field) {
+function objectOrNull(value: unknown, field: string): Record<string, unknown> | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new AppError("CURATOR_TRIGGER_INVALID", `${field} 必须是对象。`, { status: 422, detail: { field } });
@@ -59,10 +71,10 @@ function objectOrNull(value, field) {
   if (serialized.length > 8_000) {
     throw new AppError("CURATOR_TRIGGER_INVALID", `${field} 超过 8000 字符上限。`, { status: 422, detail: { field } });
   }
-  return clone(value);
+  return clone(value as Record<string, unknown>);
 }
 
-function boundedValue(value, field, max = 8_000) {
+function boundedValue(value: unknown, field: string, max = 8_000) {
   if (value === undefined || value === null) return null;
   if (typeof value === "string") {
     if (value.length > max) throw new AppError("CURATOR_TRIGGER_INVALID", `${field} 超过长度上限。`, { status: 422, detail: { field, max } });
@@ -71,7 +83,7 @@ function boundedValue(value, field, max = 8_000) {
   return objectOrNull(value, field);
 }
 
-function resultSummary(result) {
+function resultSummary(result: TopologyCuratorResult | null) {
   if (!result) return null;
   return {
     disposition: result.disposition ?? null,
@@ -82,18 +94,17 @@ function resultSummary(result) {
   };
 }
 
-function errorSummary(error) {
-  return error ? {
-    code: error.code ?? "INTERNAL_ERROR",
-    message: error.message ?? String(error),
-    retryable: Boolean(error.retryable),
-  } : null;
+function errorSummary(error: unknown): CuratorTriggerRecord["error"] {
+  if (!error) return null;
+  const object = typeof error === "object" ? error as Record<string, unknown> : {};
+  return { code: String(object.code ?? "INTERNAL_ERROR"), message: String(object.message ?? error), retryable: Boolean(object.retryable) };
 }
 
 export const CURATOR_TRIGGER_SCHEMA_VERSION = "topology-curator-trigger.v1";
 export const CURATOR_TRIGGER_RESULT_SCHEMA_VERSION = "topology-curator-trigger-result.v1";
 
-export function normalizeBTriggerEnvelope(input = {}, { topology, snapshot, now = () => new Date() } = {}) {
+export function normalizeBTriggerEnvelope(value: unknown = {}, { topology, snapshot, now = () => new Date() }: {topology?: ResearchTopology | null; snapshot?: SourceSnapshot | null; now?: () => Date | string | number} = {}): CuratorEnvelope {
+  const input = triggerInput(value);
   if (!topology || typeof topology !== "object") {
     throw new AppError("TOPOLOGY_REQUIRED", "需要当前正式拓扑才能触发 B。", { status: 409 });
   }
@@ -111,12 +122,8 @@ export function normalizeBTriggerEnvelope(input = {}, { topology, snapshot, now 
   const topologyEdgeIds = new Set((topology?.edges ?? []).map((edge) => edge.id));
   const sourceRefs = new Set([
     ...(snapshot?.git?.ref ? [snapshot.git.ref] : []),
-    ...(snapshot?.mlflow?.runs ?? []).map((item) => item.ref),
-    ...(snapshot?.experiments?.wandb?.runs ?? []).map((item) => item.ref),
-    ...(snapshot?.experiments?.tensorboard?.runs ?? []).map((item) => item.ref),
-    ...(snapshot?.experiments?.simulation?.runs ?? []).map((item) => item.ref),
     ...(snapshot?.files?.files ?? []).map((item) => item.ref),
-    ...(topology?.nodes ?? []).flatMap((node) => [node.sourceRef, ...(node.data?.sourceRefs ?? [])]),
+    ...(topology?.nodes ?? []).flatMap((node) => [node.sourceRef, ...(Array.isArray(node.data.sourceRefs) ? node.data.sourceRefs.filter((ref): ref is string => typeof ref === "string") : [])]),
     ...(topology?.edges ?? []).map((edge) => edge.sourceRef),
   ].filter(Boolean));
   const nodeIds = arrayOfStrings(input.nodeIds ?? input.workingContext?.nodeIds, "nodeIds", 80, 240);
@@ -206,6 +213,12 @@ export function normalizeBTriggerEnvelope(input = {}, { topology, snapshot, now 
 }
 
 export class TopologyCuratorTriggerCoordinator {
+  topologyCurator: TopologyCuratorService; topologyService: TopologyService; state: ResearchState;
+  getSettings: NonNullable<CoordinatorOptions["getSettings"]>; now: NonNullable<CoordinatorOptions["now"]>; maxHistory: number;
+  inFlight: { id: string; fingerprint: string; queued?: boolean } | null;
+  records = new Map<string, CuratorTriggerRecord>(); history: CuratorTriggerRecord[] = []; consumedEventIds = new Set<string>();
+  lastActivityAt: number; idleTimer: ReturnType<typeof setInterval> | null; started: boolean; status: string;
+  lastRecord: CuratorTriggerRecord | null; cooldownUntil: string | null; settings: CuratorAutomation;
   constructor({
     topologyCurator,
     topologyService,
@@ -213,7 +226,7 @@ export class TopologyCuratorTriggerCoordinator {
     getSettings = () => ({}),
     now = () => new Date(),
     maxHistory = 40,
-  } = {}) {
+  }: CoordinatorOptions) {
     if (!topologyCurator || !topologyService || !state) throw new TypeError("TopologyCuratorTriggerCoordinator requires curator, topology service, and state");
     this.topologyCurator = topologyCurator;
     this.topologyService = topologyService;
@@ -231,6 +244,7 @@ export class TopologyCuratorTriggerCoordinator {
     this.status = "idle";
     this.lastRecord = null;
     this.cooldownUntil = null;
+    this.settings = this.#automationSettings(this.getSettings());
     this.updateState();
   }
 
@@ -270,7 +284,7 @@ export class TopologyCuratorTriggerCoordinator {
     this.updateState();
   }
 
-  statusView() {
+  statusView(): CuratorTriggerStatus {
     if (this.status === "cooldown" && this.cooldownUntil && new Date(this.cooldownUntil).getTime() <= clockMs(this.now)) {
       this.cooldownUntil = null;
       this.status = "idle";
@@ -290,7 +304,8 @@ export class TopologyCuratorTriggerCoordinator {
     };
   }
 
-  async trigger(input = {}) {
+  async trigger(value: unknown = {}) {
+    const input = triggerInput(value);
     const runtimeSettings = this.getSettings();
     this.updateSettings(runtimeSettings);
     const bypassDedup = input.bypassDedup === true || input.force === true;
@@ -347,7 +362,7 @@ export class TopologyCuratorTriggerCoordinator {
       this.updateState();
       return this.response("cooldown", envelope, fingerprint, null, { reason: "cooldown" });
     }
-    const record = {
+    const record: CuratorTriggerRecord = {
       id: compactId("curator_trigger"),
       fingerprint,
       envelope,
@@ -382,7 +397,8 @@ export class TopologyCuratorTriggerCoordinator {
     return this.response(record.status, envelope, fingerprint, result, { triggerId: record.id });
   }
 
-  async consider(cause, input = {}) {
+  async consider(cause: string, value: unknown = {}) {
+    const input = triggerInput(value);
     this.updateSettings(this.getSettings());
     if (!AUTO_CAUSES[cause]) return this.skip({ cause }, null, "cause is not automatic", { update: false });
     const settingKey = AUTO_CAUSES[cause];
@@ -409,7 +425,7 @@ export class TopologyCuratorTriggerCoordinator {
       .map((event) => event.id);
   }
 
-  invalidatePatch(patchId) {
+  invalidatePatch(patchId: string | null | undefined) {
     if (!patchId) return;
     for (const [fingerprint, record] of this.records.entries()) {
       if (record.result?.patch?.id !== patchId) continue;
@@ -429,7 +445,7 @@ export class TopologyCuratorTriggerCoordinator {
     this.updateState();
   }
 
-  selectEvents(envelope, { pendingOnly = false } = {}) {
+  selectEvents(envelope: Partial<CuratorEnvelope>, { pendingOnly = false } = {}) {
     let events = (this.state.agentEvents ?? []).filter((event) => EVENT_TYPES.has(event.type));
     if (pendingOnly) events = events.filter((event) => !this.consumedEventIds.has(event.id));
     if (envelope.eventIds?.length) {
@@ -440,7 +456,7 @@ export class TopologyCuratorTriggerCoordinator {
     return events.slice(-120);
   }
 
-  async #run(record, selectedEvents) {
+  async #run(record: CuratorTriggerRecord, selectedEvents: ResearchEvent[]) {
     this.inFlight = { id: record.id, fingerprint: record.fingerprint };
     this.status = "running";
     record.status = "running";
@@ -539,7 +555,7 @@ export class TopologyCuratorTriggerCoordinator {
     }
   }
 
-  response(status, envelope, fingerprint, result, extra = {}) {
+  response(status: string, envelope: Partial<CuratorEnvelope>, fingerprint: string | null, result: TopologyCuratorResult | null, extra: ResponseExtra = {}) {
     return {
       schemaVersion: CURATOR_TRIGGER_RESULT_SCHEMA_VERSION,
       status,
@@ -552,13 +568,13 @@ export class TopologyCuratorTriggerCoordinator {
     };
   }
 
-  skip(envelope, fingerprint, reason, { update = true } = {}) {
+  skip(envelope: Partial<CuratorEnvelope>, fingerprint: string | null, reason: string, { update = true } = {}) {
     if (update) this.status = "skipped";
     this.updateState();
     return this.response("skipped", envelope, fingerprint, null, { reason });
   }
 
-  remember(record) {
+  remember(record: CuratorTriggerRecord) {
     const copy = clone(record);
     delete copy.result;
     this.records.set(record.fingerprint, record);
@@ -568,13 +584,13 @@ export class TopologyCuratorTriggerCoordinator {
     this.lastRecord = copy;
   }
 
-  highValueCause(cause) {
+  highValueCause(cause: string) {
     return ["experiment_delta", "source_delta", "continuity_break", "topology_changed"].includes(cause);
   }
 
-  #automationSettings(settings) {
+  #automationSettings(settings: CuratorSettings): CuratorAutomation {
     const automation = settings?.curator?.automation ?? settings?.automation ?? {};
-    const numeric = (value, fallback, minimum) => {
+    const numeric = (value: unknown, fallback: number, minimum: number) => {
       const parsed = Number(value);
       return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback;
     };

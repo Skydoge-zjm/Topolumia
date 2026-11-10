@@ -1,3 +1,12 @@
+import { DatabaseSync, type StatementSync, type SQLInputValue } from "node:sqlite";
+import type { Readable } from "node:stream";
+import type { ResearchCommandService } from "../research-command-service.js";
+import type { ResearchActor } from "../../../domain/research/types.js";
+import type { RecordBatch, RecordEvent } from "../../../domain/research/record-ingestion.js";
+import { experimentRecordPayloadSchema, normalizeRunStatus } from "../../../domain/research/experiment-records.js";
+import { nodeRef } from "../../../domain/research/object-ref.js";
+import type { RecordStorageTarget, LiveRecordRun, RecordNumber, RecordLine, RecordSnapshot, RecordPointRange, RecordExactPoint } from "../../../domain/research/record-types.js";
+import { sqlProjection } from "../../../lib/sqlite-query.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, open, rename, unlink, stat } from "node:fs/promises";
 import path from "node:path";
@@ -9,14 +18,22 @@ import {
 } from "../../../domain/research/record-ingestion.js";
 import { versionHash, sha256 } from "../../../lib/hash.js";
 
+
+type LedgerRow = { body: string; digest: string; watermark: number; count: number; metric: string; axis: string; chunk: number; end_ordinal: number; ordinal: number; id: string; createdAt: string; size: number; hash: string; text: string; total: number; updated_at: string; first_watermark: number; cursor: number; run: string; block: string; chars: number; preview: string; kind: string; key: string; source_body: string; run_body: string; sourceRunId: string; assigned: number };
+type LedgerPoint = { ordinal: number; x: RecordNumber; y: RecordNumber; timestamp?: number };
+type PointSummary = { first: LedgerPoint; last: LedgerPoint; min: LedgerPoint; max: LedgerPoint };
+type PendingSummary = { args: SQLInputValue[]; summary: PointSummary; endOrdinal?: number; watermark?: number };
+type CollectorGrant = { id: string; blockId: string; projectId: string; userId: string; expiresAt: string; revoked: boolean; label?: string; provider?: string; sourcePath?: string };
+type StreamState = { id: string; provider: string; streamId: string; writerId: string; generation: string; sourceInfo?: RecordBatch["sourceInfo"]; lastSequence: number; updatedAt: string; grantId?: string };
+
 /** SQLite's FULL transaction is the durable ledger and query index in one commit.
  * No second append log / database commit window, and no node revisions per batch.
  */
 export class RecordIngestionService {
-  c;
-  db;
-  statements = new Map<string, any>();
-  constructor(c) {
+  c: ResearchCommandService;
+  db: DatabaseSync;
+  statements = new Map<string, StatementSync>();
+  constructor(c: ResearchCommandService) {
     this.c = c;
     this.db = c.store.db;
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -35,21 +52,21 @@ export class RecordIngestionService {
       CREATE TABLE IF NOT EXISTS record_attachment_refs(project TEXT,block TEXT,hash TEXT,first_watermark INTEGER,PRIMARY KEY(project,block,hash));
       CREATE TABLE IF NOT EXISTS record_run_attachment_refs(project TEXT,block TEXT,run TEXT,hash TEXT,first_watermark INTEGER,PRIMARY KEY(project,block,run,hash));`);
   }
-  sql(sql) {
+  sql<Row extends object = LedgerRow>(sql: string) {
     let statement = this.statements.get(sql);
     if (!statement) {
       statement = this.db.prepare(sql);
       this.statements.set(sql, statement);
     }
-    return statement;
+    return sqlProjection<Row>(statement);
   }
-  args(blockId) {
+  args(blockId: string): [string, string] {
     return [this.c.projectId, blockId];
   }
-  block(blockId, actor, write = false) {
+  block(blockId: string, actor: ResearchActor, write = false): RecordStorageTarget {
     const source = this.c.projectRecords?.get(blockId);
     this.c.check(actor, write ? source ? "project.manageSettings" : "research.applyChange" : "research.view");
-    const block = source ? { id: source.id, type: "experimentRecord", owner: { kind: "project", id: this.c.projectId }, payload: { provider: source.provider, runs: [] }, lifecycle: "active" } : this.c.store.get("blocks", blockId);
+    const block = source ? { id: source.id, title: source.directory, revision: 1, order: 0, representations: [], sourceRefs: [], review: "unreviewed" as const, type: "experimentRecord" as const, owner: { kind: "project" as const, id: this.c.projectId }, payload: { provider: source.provider, runs: [] }, lifecycle: "active" as const } : this.c.store.get("blocks", blockId);
     if (
       !block ||
       block.type !== "experimentRecord" ||
@@ -58,7 +75,7 @@ export class RecordIngestionService {
     )
       fail("CONTENT_BLOCK_NOT_FOUND", "实验记录块不可用。", 404);
     const node = source ? null : write
-      ? this.c.objects.get(block.owner)
+      ? this.c.objects.get(nodeRef(block.owner.id))
       : this.c.store.get("nodes", block.owner.id);
     if (!source && node?.kind !== "experiment")
       fail("NODE_NOT_EXPERIMENT", "记录块需要属于实验节点。", 422);
@@ -68,22 +85,24 @@ export class RecordIngestionService {
       const row = this.sql(
         "SELECT body FROM record_grants WHERE project=? AND id=?",
       ).get(this.c.projectId, actor.collectorGrant.id);
-      const grant = row && JSON.parse(row.body);
+      const grant = row ? JSON.parse(row.body) as CollectorGrant : null;
       if (!grant || grant.revoked || Date.parse(grant.expiresAt) <= Date.now())
         fail("COLLECTOR_CREDENTIAL_INVALID", "采集凭据已过期或撤销。", 401);
       if (source && !source.enabled) fail("COLLECTION_PAUSED", "该来源已暂停采集。", 403);
     }
     if (actor.collectorGrant && actor.collectorGrant.blockId !== blockId)
       fail("INGESTION_SCOPE_MISMATCH", "采集凭据仅可写入绑定记录块。", 403);
-    return block;
+    return { ...block, type: "experimentRecord", payload: experimentRecordPayloadSchema.parse(block.payload) };
   }
   grant(
-    blockId,
-    actor,
+    blockId: string,
+    actor: ResearchActor,
     ttl = 30 * 86400,
     metadata: { label?: string; provider?: string; sourcePath?: string } = {},
   ) {
     this.block(blockId, actor, true);
+    if (this.c.projectRecords.get(blockId)?.mode === "import")
+      fail("RECORD_SOURCE_IMMUTABLE", "导入版本不可追加采集，请重新导入上游记录。", 409);
     if (actor.isAgent || actor.collectorGrant)
       fail("FORBIDDEN", "采集授权需要研究者操作。", 403);
     const token = "topolumia_rec_" + randomBytes(32).toString("base64url"),
@@ -92,7 +111,7 @@ export class RecordIngestionService {
       id,
       blockId,
       projectId: this.c.projectId,
-      userId: actor.user.id,
+      userId: actor.user!.id,
       expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
       revoked: false,
       ...metadata,
@@ -105,11 +124,11 @@ export class RecordIngestionService {
     );
     return { ...grant, token, capabilities: recordIngestionCapabilities };
   }
-  authenticate(token, resolveUser) {
+  authenticate(token: string, resolveUser: (userId: string, projectId: string) => ResearchActor | null): ResearchActor {
     const row = this.sql(
       "SELECT body FROM record_grants WHERE project=? AND digest=?",
     ).get(this.c.projectId, sha256(token));
-    const grant = row && JSON.parse(row.body);
+    const grant = row ? JSON.parse(row.body) as CollectorGrant : null;
     if (!grant || grant.revoked || Date.parse(grant.expiresAt) <= Date.now())
       fail("COLLECTOR_CREDENTIAL_INVALID", "采集凭据已过期或撤销。", 401);
     const actor = resolveUser(grant.userId, this.c.projectId);
@@ -122,7 +141,7 @@ export class RecordIngestionService {
         resolveUser(grant.userId, this.c.projectId),
     };
   }
-  changeGrant(blockId, id, action, actor) {
+  changeGrant(blockId: string, id: string, action: string, actor: ResearchActor) {
     this.block(blockId, actor, true);
     if (actor.isAgent || actor.collectorGrant)
       fail("FORBIDDEN", "采集授权需要研究者操作。", 403);
@@ -145,14 +164,14 @@ export class RecordIngestionService {
     );
     return value;
   }
-  watermark(blockId) {
+  watermark(blockId: string): number {
     return (
       this.sql(
         "SELECT watermark FROM record_states WHERE project=? AND block=?",
       ).get(...this.args(blockId))?.watermark ?? 0
     );
   }
-  runId(blockId, provider, streamId, sourceRunId) {
+  runId(blockId: string, provider: string, streamId: string, sourceRunId: string): string {
     return (
       "run:" +
       sha256(JSON.stringify([blockId, provider, streamId, sourceRunId])).slice(
@@ -161,7 +180,7 @@ export class RecordIngestionService {
       )
     );
   }
-  receive(blockId, input, actor) {
+  receive(blockId: string, input: unknown, actor: ResearchActor) {
     this.block(blockId, actor, true);
     const parsed = recordBatchSchema.safeParse(input);
     if (!parsed.success)
@@ -187,14 +206,14 @@ export class RecordIngestionService {
         accepted = 0,
         duplicate = 0;
       const now = new Date().toISOString(),
-        summaries = new Map<string, any>();
+        summaries = new Map<string, PendingSummary>();
       const streamId = sha256(
         JSON.stringify([batch.streamId, batch.writerId, batch.generation]),
       );
       const previousRow = this.sql(
         "SELECT body FROM record_streams WHERE project=? AND block=? AND id=?",
       ).get(...this.args(blockId), streamId);
-      const previous = previousRow ? JSON.parse(previousRow.body) : null;
+      const previous = previousRow ? JSON.parse(previousRow.body) as StreamState : null;
       if (previous && previous.provider !== batch.provider)
         fail("INGESTION_SOURCE_CONFLICT", "同一写入流不能变更记录工具。", 409);
       let lastSequence = previous?.lastSequence ?? -1;
@@ -287,11 +306,11 @@ export class RecordIngestionService {
     });
   }
   projectEvent(
-    blockId,
-    batch,
-    event,
-    watermark,
-    summaries = new Map<string, any>(),
+    blockId: string,
+    batch: RecordBatch,
+    event: RecordEvent,
+    watermark: number,
+    summaries = new Map<string, PendingSummary>(),
   ) {
     const id = this.runId(
         blockId,
@@ -307,8 +326,8 @@ export class RecordIngestionService {
     const stored = this.sql(
       "SELECT body FROM record_live_runs WHERE project=? AND block=? AND id=?",
     ).get(...this.args(blockId), id);
-    const run = stored
-      ? JSON.parse(stored.body)
+    const run: LiveRecordRun = stored
+      ? JSON.parse(stored.body) as LiveRecordRun
       : {
           id,
           label: event.sourceRunId,
@@ -351,7 +370,7 @@ export class RecordIngestionService {
         "unknown",
       ].includes(String(event.data.status))
     )
-      run.status = event.data.status;
+      run.status = normalizeRunStatus(event.data.status);
     if (!stored || stored.body !== JSON.stringify(run))
       this.sql(
         "INSERT INTO record_live_runs VALUES(?,?,?,?,?,?) ON CONFLICT(project,block,id) DO UPDATE SET body=excluded.body",
@@ -360,7 +379,7 @@ export class RecordIngestionService {
         id,
         sourceKey,
         JSON.stringify(run),
-        run.firstWatermark,
+        run.firstWatermark ?? watermark,
       );
     if (event.kind === "scalar") {
       const metricArgs = [...this.args(blockId), id, event.key, event.xKey];
@@ -404,7 +423,7 @@ export class RecordIngestionService {
       const summary =
         pending?.summary ??
         (row
-          ? JSON.parse(row.body)
+          ? JSON.parse(row.body) as PointSummary
           : { first: point, last: point, min: point, max: point });
       pending ??= { args: [...metricArgs, chunk], summary };
       pending.endOrdinal = count;
@@ -431,13 +450,13 @@ export class RecordIngestionService {
         this.sql("INSERT OR IGNORE INTO record_run_attachment_refs VALUES(?,?,?,?,?)").run(...this.args(blockId), id, hash, watermark);
       }
   }
-  flushSummaries(summaries) {
+  flushSummaries(summaries: Map<string, PendingSummary>) {
     for (const { args, endOrdinal, watermark, summary } of summaries.values())
       this.sql(
         "INSERT INTO record_sample_chunks VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(project,block,run,metric,axis,chunk) DO UPDATE SET end_ordinal=excluded.end_ordinal,watermark=excluded.watermark,body=excluded.body",
-      ).run(...args, endOrdinal, watermark, JSON.stringify(summary));
+      ).run(...args, endOrdinal!, watermark!, JSON.stringify(summary));
   }
-  rebuild(blockId, actor) {
+  rebuild(blockId: string, actor: ResearchActor) {
     this.block(blockId, actor);
     this.c.check(actor, "research.applyChange");
     return this.c.store.transaction(() => {
@@ -453,7 +472,7 @@ export class RecordIngestionService {
           ...this.args(blockId),
         );
       let count = 0;
-      const summaries = new Map<string, any>();
+      const summaries = new Map<string, PendingSummary>();
       for (const row of this.sql(
         "SELECT watermark,body FROM record_events WHERE project=? AND block=? ORDER BY watermark",
       ).iterate(...this.args(blockId))) {
@@ -471,15 +490,15 @@ export class RecordIngestionService {
       return { replayed: count, watermark: this.watermark(blockId) };
     });
   }
-  runs(blockId, watermark = this.watermark(blockId)) {
+  runs(blockId: string, watermark = this.watermark(blockId)): LiveRecordRun[] {
     // Snapshots retain this directory, independent of subsequent lifecycle updates.
     return this.sql(
       "SELECT id,body FROM record_live_runs WHERE project=? AND block=? AND first_watermark<=? ORDER BY first_watermark",
     )
       .all(...this.args(blockId), watermark)
-      .map((row) => ({ ...JSON.parse(row.body), blockId }));
+      .map((row) => ({ ...JSON.parse(row.body) as LiveRecordRun, blockId }));
   }
-  metrics(blockId, runId, watermark = this.watermark(blockId)) {
+  metrics(blockId: string, runId: string, watermark = this.watermark(blockId)): RecordLine[] {
     return this.sql(
       "SELECT metric,axis,count FROM record_metrics WHERE project=? AND block=? AND run=? AND first_watermark<=? ORDER BY metric,axis",
     )
@@ -496,7 +515,7 @@ export class RecordIngestionService {
                 row.metric,
                 row.axis,
                 watermark,
-              ).count;
+              )?.count ?? 0;
         return {
           key: row.metric,
           xKey: row.axis,
@@ -514,7 +533,7 @@ export class RecordIngestionService {
         };
       });
   }
-  points(blockId, runId, key, axis, selection, watermark) {
+  points(blockId: string, runId: string, key: string, axis: string, selection: RecordPointRange, watermark: number): { points: RecordExactPoint[]; pointCount: number } {
     const args = [...this.args(blockId), runId, key, axis],
       clause = "project=? AND block=? AND run=? AND metric=? AND axis=?";
     const count =
@@ -536,8 +555,8 @@ export class RecordIngestionService {
           pointCount: count,
         };
       const buckets = Math.max(1, Math.floor(selection.maxPoints / 4));
-      const grouped = new Map<number, any>();
-      const append = (point) => {
+      const grouped = new Map<number, PointSummary>();
+      const append = (point: LedgerPoint) => {
         const bucket = Math.floor((point.ordinal * buckets) / count);
         const summary = grouped.get(bucket) ?? {
           first: point,
@@ -566,7 +585,7 @@ export class RecordIngestionService {
           ).iterate(...args, row.chunk * 128, count, watermark))
             append({ ordinal: raw.ordinal, ...JSON.parse(raw.body) });
         } else {
-          const summary = JSON.parse(row.body);
+          const summary = JSON.parse(row.body) as PointSummary;
           for (const point of [
             summary.first,
             summary.min,
@@ -576,7 +595,7 @@ export class RecordIngestionService {
             append(point);
         }
       }
-      const chosen = new Map<number, any>();
+      const chosen = new Map<number, LedgerPoint>();
       for (const summary of grouped.values())
         for (const point of [
           summary.first,
@@ -603,12 +622,12 @@ export class RecordIngestionService {
       pointCount: count,
     };
   }
-  pendingAttachments(blockId) {
+  pendingAttachments(blockId: string): number {
     return this.sql(
       "SELECT count(*) AS count FROM record_attachment_refs r WHERE project=? AND block=? AND NOT EXISTS(SELECT 1 FROM record_blobs b WHERE b.project=r.project AND b.block=r.block AND b.hash=r.hash)",
-    ).get(...this.args(blockId)).count;
+    ).get(...this.args(blockId))?.count ?? 0;
   }
-  version(blockId, actor) {
+  version(blockId: string, actor: ResearchActor) {
     const block = this.block(blockId, actor);
     if (this.c.projectRecords.bindings(block).length) return { blockId, ...this.c.projectRecords.version(block) };
     const state = this.sql(
@@ -621,7 +640,7 @@ export class RecordIngestionService {
       updatedAt: state?.updated_at ?? null,
     };
   }
-  status(blockId, actor) {
+  status(blockId: string, actor: ResearchActor) {
     const block = this.block(blockId, actor);
     const state = this.sql(
       "SELECT watermark,updated_at FROM record_states WHERE project=? AND block=?",
@@ -657,16 +676,19 @@ export class RecordIngestionService {
       capabilities: recordIngestionCapabilities,
     };
   }
-  snapshot(blockId, actor) {
+  snapshot(blockId: string, actor: ResearchActor): RecordSnapshot {
     const block = this.block(blockId, actor),
       watermark = this.watermark(blockId);
-    const value = {
+    if (block.owner.kind !== "node" || !block.recordCollection) fail("INGESTION_SCOPE_MISMATCH", "请先选择实验记录块。", 422);
+    const node = this.c.store.get("nodes", block.owner.id);
+    if (!node) fail("NODE_NOT_EXPERIMENT", "实验节点不存在。", 404);
+    const value: RecordSnapshot = {
       id: "snapshot:" + randomUUID(),
       projectId: this.c.projectId,
       blockId,
       nodeId: block.owner.id,
-      node: this.c.store.get("nodes", block.owner.id),
-      block,
+      node,
+      block: { ...block, owner: nodeRef(node.id), recordCollection: block.recordCollection },
       watermark,
       blockRevision: block.revision,
       recordCollection: block.recordCollection,
@@ -690,12 +712,12 @@ export class RecordIngestionService {
     );
     return value;
   }
-  getSnapshot(id, actor) {
+  getSnapshot(id: string, actor: ResearchActor): RecordSnapshot {
     const row = this.sql(
       "SELECT body FROM record_snapshots WHERE project=? AND id=?",
     ).get(this.c.projectId, id);
     if (!row) fail("SNAPSHOT_NOT_FOUND", "分析快照不存在。", 404);
-    const snapshot = JSON.parse(row.body);
+    const snapshot = JSON.parse(row.body) as RecordSnapshot;
     this.c.check(actor, "research.view");
     const current = this.c.store.get("blocks", snapshot.blockId);
     if (
@@ -707,12 +729,12 @@ export class RecordIngestionService {
     return snapshot;
   }
   eventText(
-    blockId,
-    watermark,
-    actor,
+    blockId: string,
+    watermark: number,
+    actor: ResearchActor,
     offset = 0,
     length = 4000,
-    snapshotId = undefined,
+    snapshotId: string | undefined = undefined,
   ) {
     const snapshot = snapshotId ? this.getSnapshot(snapshotId, actor) : null;
     if (!snapshot) this.block(blockId, actor);
@@ -749,15 +771,15 @@ export class RecordIngestionService {
     };
   }
   events(
-    blockId,
-    actor,
+    blockId: string,
+    actor: ResearchActor,
     {
       after = 0,
       limit = 100,
       snapshotId = undefined,
       runId = undefined,
       kind = undefined,
-    }: any = {},
+    }: { after?: number; limit?: number; snapshotId?: string; runId?: string; kind?: string } = {},
   ) {
     if (!snapshotId) this.block(blockId, actor);
     if (
@@ -808,12 +830,12 @@ export class RecordIngestionService {
             tool: "read_experiment",
             mode: "events",
             nodeId:
-              snapshot?.nodeId ?? this.c.store.get("blocks", blockId).owner.id,
+              snapshot?.nodeId ?? this.c.store.get("blocks", blockId)!.owner.id,
             blockId,
             snapshotId,
             eventWatermark: row.watermark,
           },
-          attachments: (event.data?.attachments ?? []).map((attachment) => ({
+          attachments: (event.data?.attachments ?? []).map((attachment: { sha256: string; name?: string }) => ({
             ...attachment,
             downloadHint: {
               tool: "transfer_asset",
@@ -829,16 +851,16 @@ export class RecordIngestionService {
         };
       }),
       watermark,
-      nextAfter: rows.length === limit ? rows.at(-1).watermark : null,
+      nextAfter: rows.length === limit ? rows.at(-1)!.watermark : null,
       snapshotId,
     };
   }
-  blobPath(blockId, hash) {
+  blobPath(blockId: string, hash: string): string {
     if (!/^[a-f0-9]{64}$/.test(hash))
       fail("ATTACHMENT_INVALID", "无效的附件标识。", 422);
     return path.join(this.c.assets.root, "record-blobs", sha256(blockId), hash);
   }
-  async uploadAttachment(blockId, hash, stream, actor) {
+  async uploadAttachment(blockId: string, hash: string, stream: Readable, actor: ResearchActor) {
     this.block(blockId, actor, true);
     const file = this.blobPath(blockId, hash);
     await mkdir(path.dirname(file), { recursive: true });

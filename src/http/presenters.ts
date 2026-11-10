@@ -1,7 +1,10 @@
+import type { RuntimeProject } from "../application/project-runtime.js";
+import type { ResearchState } from "../services/research/research-state.js";
+import type { TopologyService } from "../services/topology/topology-service.js";
 import { AppError } from "../lib/errors.js";
 
 
-export function publicProjectForApi(project) {
+export function publicProjectForApi(project: RuntimeProject | null | undefined) {
   if (!project) return null;
   return {
     id: project.id,
@@ -16,7 +19,7 @@ export function publicProjectForApi(project) {
   };
 }
 
-export function agentContextFromRequest(state, topologyService, body) {
+export function agentContextFromRequest(state: ResearchState, topologyService: TopologyService, body: Record<string, unknown>) {
   const formalNodes = state.topology?.nodes ?? [];
   const nodeById = new Map(formalNodes.map((node) => [node.id, node]));
   const formalEdges = state.topology?.edges ?? [];
@@ -59,7 +62,7 @@ export function agentContextFromRequest(state, topologyService, body) {
   const allowedSourceRefs = new Set([
     ...topologyService.sourceIndex(state.snapshot).map((item) => item.ref),
     ...formalNodes.map((item) => item.sourceRef).filter(Boolean),
-    ...formalNodes.flatMap((item) => item.data?.sourceRefs ?? []),
+    ...formalNodes.flatMap((item) => Array.isArray(item.data.sourceRefs) ? item.data.sourceRefs.filter((ref): ref is string => typeof ref === "string") : []),
     ...formalEdges.map((item) => item.sourceRef).filter(Boolean),
   ]);
   const sourceRefs = [
@@ -85,7 +88,7 @@ export function agentContextFromRequest(state, topologyService, body) {
     sourceStateVersion: state.snapshot?.stateVersion ?? null,
     nodeIds,
     nodes: nodeIds.map((id) => {
-      const node = nodeById.get(id);
+      const node = nodeById.get(id)!;
       return {
         id: node.id,
         kind: node.kind,
@@ -99,7 +102,7 @@ export function agentContextFromRequest(state, topologyService, body) {
     }),
     edgeIds,
     edges: edgeIds.map((id) => {
-      const edge = edgeById.get(id);
+      const edge = edgeById.get(id)!;
       return {
         id: edge.id,
         from: edge.from,

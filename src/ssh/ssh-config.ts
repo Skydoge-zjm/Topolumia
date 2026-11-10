@@ -2,15 +2,16 @@ import os from "node:os";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { runCommand } from "../lib/command.js";
+import { runCommand, type CommandRunner } from "../lib/command.js";
 import { AppError } from "../lib/errors.js";
 
 export const aliasPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
-export const fingerprint = (key) =>
+export type SshTarget = { host: string; user: string; port: number; hostKeyAlias?: string | null; knownHostsFiles?: string[] };
+export const fingerprint = (key: string | Buffer) =>
   `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/, "")}`;
-export const quotePosix = (value) =>
+export const quotePosix = (value: unknown) =>
   `'${String(value).replace(/'/g, `'"'"'`)}'`;
-export function expandLocalPath(value, target = {}) {
+export function expandLocalPath(value: string, target: Partial<SshTarget> = {}) {
   return String(value)
     .replace(/^~(?=[/\\]|$)/, os.homedir())
     .replace(/%d/g, os.homedir())
@@ -35,9 +36,9 @@ export async function sshAliases() {
   ].sort();
 }
 export async function resolveSshAlias(
-  alias,
-  overrides = {},
-  commandRunner = runCommand,
+  alias: string,
+  overrides: { port?: number; user?: string } = {},
+  commandRunner: CommandRunner = runCommand,
 ) {
   if (!aliasPattern.test(alias))
     throw new AppError("SSH_ALIAS_INVALID", "SSH 别名格式无效。", {
@@ -59,13 +60,13 @@ export async function resolveSshAlias(
       "无法读取本机 SSH 配置，请检查 OpenSSH 客户端和别名。",
       { status: 422 },
     );
-  const values = new Map();
+  const values = new Map<string, string[]>();
   for (const line of result.stdout.split(/\r?\n/)) {
     const match = line.match(/^(\S+)\s+(.*)$/);
     if (!match) continue;
     const key = match[1].toLowerCase();
     if (!values.has(key)) values.set(key, []);
-    values.get(key).push(match[2].trim());
+    values.get(key)!.push(match[2].trim());
   }
   const target = {
     host: values.get("hostname")?.[0] ?? alias,
@@ -84,8 +85,8 @@ export async function resolveSshAlias(
       values.get("identityagent")?.[0] === "none"
         ? null
         : values.get("identityagent")?.[0] &&
-            values.get("identityagent")[0] !== "SSH_AUTH_SOCK"
-          ? expandLocalPath(values.get("identityagent")[0], target)
+            values.get("identityagent")![0] !== "SSH_AUTH_SOCK"
+          ? expandLocalPath(values.get("identityagent")![0], target)
           : (process.env.SSH_AUTH_SOCK ??
             (process.platform === "win32"
               ? "\\\\.\\pipe\\openssh-ssh-agent"
@@ -99,17 +100,17 @@ export async function resolveSshAlias(
       .map((file) => expandLocalPath(file.replace(/^"|"$/g, ""), target)),
     hostKeyAlias: values.get("hostkeyalias")?.[0] ?? null,
     proxyJump:
-      values.get("proxyjump")?.[0] && values.get("proxyjump")[0] !== "none"
-        ? values.get("proxyjump")[0]
+      values.get("proxyjump")?.[0] && values.get("proxyjump")![0] !== "none"
+        ? values.get("proxyjump")![0]
         : null,
     proxyCommand:
       values.get("proxycommand")?.[0] &&
-      values.get("proxycommand")[0] !== "none"
-        ? values.get("proxycommand")[0]
+      values.get("proxycommand")![0] !== "none"
+        ? values.get("proxycommand")![0]
         : null,
   };
 }
-export async function knownHostKeys(target, commandRunner = runCommand) {
+export async function knownHostKeys(target: SshTarget, commandRunner: CommandRunner = runCommand) {
   const name =
     target.hostKeyAlias && target.hostKeyAlias !== "none"
       ? target.hostKeyAlias

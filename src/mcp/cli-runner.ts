@@ -1,17 +1,26 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ResearchMcpBinding } from "../domain/agents/agent-types.js";
+import { cliMessageSchema, wireErrorSchema, type ResearchClientError } from "../client/research-response.js";
+import type * as z from "zod/v4";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { bundledRoot } from "../config.js";
 import { CLI_CONTRACT } from "../domain/research/research-mcp-contract.js";
 import { redactAgentSecrets } from "../agent/redact-secrets.js";
 
-export function executionError(code, message, detail = {}) {
+export interface CliExecution { pid?: number; durationMs: number; exitCode: number | null }
+export interface CliRunResult { data: z.infer<typeof cliMessageSchema>; execution: CliExecution }
+export interface CliRunnerOptions { entrypoint?: string; timeoutMs?: number; stdoutLimit?: number; stderrLimit?: number }
+export function executionError(code: string, message: string, detail: Partial<ResearchClientError> = {}) {
   return Object.assign(new Error(message), { code, ...detail });
 }
 const allowedEnvironment =
   /^(?:PATH|PATHEXT|SYSTEMROOT|WINDIR|TEMP|TMP|TMPDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
 export class ResearchCliRunner {
-  constructor(binding, options = {}) {
+  binding: Pick<ResearchMcpBinding, "env" | "cwd">;
+  entrypoint: string; timeoutMs: number; stdoutLimit: number; stderrLimit: number;
+  children: Set<ChildProcessWithoutNullStreams>; closed: boolean;
+  constructor(binding: Pick<ResearchMcpBinding, "env" | "cwd">, options: CliRunnerOptions = {}) {
     this.binding = binding;
     this.entrypoint =
       options.entrypoint ?? path.join(bundledRoot, "src/cli.js");
@@ -30,7 +39,7 @@ export class ResearchCliRunner {
       );
     return result.data;
   }
-  async run(args, input, { signal, requestId = randomUUID(), timeoutMs = this.timeoutMs } = {}) {
+  async run(args: string[], input?: unknown, { signal, requestId = randomUUID(), timeoutMs = this.timeoutMs }: { signal?: AbortSignal; requestId?: string; timeoutMs?: number } = {}): Promise<CliRunResult> {
     if (this.closed || signal?.aborted)
       throw executionError("MCP_CANCELLED", "科研调用已取消。", {
         outcome: "cancelled",
@@ -47,10 +56,10 @@ export class ResearchCliRunner {
       ...this.binding.env,
       TOPOLUMIA_REQUEST_ID: requestId,
     };
-    return new Promise((resolve, reject) => {
+    return new Promise<CliRunResult>((resolve, reject) => {
       let stdout = Buffer.alloc(0),
         stderr = Buffer.alloc(0),
-        failure = null;
+        failure: ResearchClientError | null = null;
       const started = Date.now();
       const child = spawn(process.execPath, [this.entrypoint, ...args], {
         cwd: this.binding.cwd,
@@ -60,8 +69,8 @@ export class ResearchCliRunner {
         stdio: ["pipe", "pipe", "pipe"],
       });
       this.children.add(child);
-      let escalation;
-      const stop = (error) => {
+      let escalation: ReturnType<typeof setTimeout> | undefined;
+      const stop = (error: ResearchClientError) => {
         if (failure) return;
         failure = error;
         child.kill();
@@ -110,9 +119,11 @@ export class ResearchCliRunner {
         };
         if (failure) return reject(Object.assign(failure, { execution }));
         if (exitCode !== 0) {
-          let error;
+          let error: z.infer<typeof wireErrorSchema> | undefined;
           try {
-            error = JSON.parse(stderr.toString("utf8")).error;
+            const envelope: unknown = JSON.parse(stderr.toString("utf8"));
+            const parsed = wireErrorSchema.safeParse(envelope && typeof envelope === "object" && "error" in envelope ? envelope.error : undefined);
+            if (parsed.success) error = parsed.data;
           } catch {
             /* Do not expose raw diagnostics. */
           }
@@ -131,14 +142,7 @@ export class ResearchCliRunner {
           );
         }
         try {
-          const data = JSON.parse(stdout.toString("utf8"));
-          if (
-            !data ||
-            typeof data !== "object" ||
-            Array.isArray(data) ||
-            typeof data.schemaVersion !== "string"
-          )
-            throw new Error();
+          const data = cliMessageSchema.parse(JSON.parse(stdout.toString("utf8")));
           resolve({ data, execution });
         } catch {
           reject(
@@ -159,9 +163,9 @@ export class ResearchCliRunner {
     await Promise.all(
       [...this.children].map(
         (child) =>
-          new Promise((resolve) => {
-            if (child.exitCode !== null) return resolve(null);
-            child.once("close", resolve);
+          new Promise<void>((resolve) => {
+            if (child.exitCode !== null) return resolve();
+            child.once("close", () => resolve());
             child.kill();
             const timer = setTimeout(() => {
               if (child.exitCode === null) child.kill("SIGKILL");

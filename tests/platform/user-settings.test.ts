@@ -20,6 +20,24 @@ async function makeFixture() {
   return { root, config };
 }
 
+test("tool settings persist when the project has no Agent profiles", async () => {
+  const { root, config } = await makeFixture();
+  config.agentSessions.profiles = [];
+  try {
+    const store = new UserSettingsStore({ filePath: config.userSettings.file, config });
+    await store.initialize();
+    await store.update({ sources: { mlflow: { baseUrl: "http://localhost:5000", experimentName: "records" } } });
+    const restored = new UserSettingsStore({ filePath: config.userSettings.file, config });
+    await restored.initialize();
+    assert.equal(restored.settings.sources.mlflow.baseUrl, "http://localhost:5000");
+    assert.equal(restored.settings.sources.mlflow.experimentName, "records");
+    assert.equal(restored.settings.agent.defaultProfileId, "");
+    await assert.rejects(store.update({ agent: { defaultProfileId: "missing" } }), { code: "USER_SETTINGS_INVALID" });
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 test("user settings expose runtime tuning and survive a new store instance", async () => {
   const { root, config } = await makeFixture();
   try {
@@ -28,7 +46,6 @@ test("user settings expose runtime tuning and survive a new store instance", asy
     const defaults = defaultUserSettings(config);
     assert.equal(defaults.agent.profileModels["codex-acp"], "gpt-6-luna");
     assert.equal(defaults.sources.mlflow.maxRuns, 300);
-    assert.equal(defaults.experimentGateway.maxCacheEntries, 256);
     assert.equal(defaults.git.timeoutSeconds, 5);
     assert.equal(defaults.agent.sandbox, "workspace-write");
     assert.equal(defaults.agent.approvalPolicy, "on-request");
@@ -42,9 +59,8 @@ test("user settings expose runtime tuning and survive a new store instance", asy
       sourceRefresh: { enabled: false, foregroundThresholdSeconds: 5 },
       sources: {
         mlflow: { baseUrl: "http://localhost:5000", experimentName: "sr", maxRuns: 40 },
-        tensorboard: { logdir: "logs/tensorboard", maxDepth: 8 },
+        tensorboard: { logdir: "logs/tensorboard", pythonCommand: "python-custom" },
       },
-      experimentGateway: { maxCacheEntries: 64 },
       git: { timeoutSeconds: 12, maxOutputMb: 2 },
     });
     assert.equal(updated.settings.agent.profileModels["codex-acp"], "gpt-5.6-mini");
@@ -60,8 +76,8 @@ test("user settings expose runtime tuning and survive a new store instance", asy
     assert.equal(config.agentSessions.profiles.find(profile => profile.provider === "codex").reasoningEffort, "medium");
     assert.equal(config.sourceRefresh.enabled, false);
     assert.equal(config.mlflow.maxRuns, 40);
-    assert.equal(config.tensorboard.maxDepth, 8);
-    assert.equal(config.experimentGateway.maxCacheEntries, 64);
+    assert.equal(config.tensorboard.logdir, path.join(root, "logs", "tensorboard"));
+    assert.equal(config.tensorboard.pythonCommand, "python-custom");
     assert.equal(config.git.timeoutMs, 12_000);
     assert.equal(config.agentSessions.profiles.find((profile) => profile.provider === "codex").sandbox, "workspace-write");
     assert.equal(config.agentSessions.profiles.find((profile) => profile.provider === "claude").permissionMode, "default");
@@ -70,7 +86,6 @@ test("user settings expose runtime tuning and survive a new store instance", asy
     const restored = new UserSettingsStore({ filePath: config.userSettings.file, config });
     await restored.initialize();
     assert.equal(restored.settings.agent.profileModels["codex-acp"], "gpt-5.6-mini");
-    assert.equal(restored.settings.experimentGateway.maxCacheEntries, 64);
     assert.equal(restored.settings.curator.automation.backgroundMode, "background");
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -114,7 +129,7 @@ test("settings API applies a patch without requiring a config-file edit", async 
     const patch = await fetch(`${app.url}/api/settings`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ settings: { agent: { profileModels: { "codex-acp": "gpt-5.6-mini" }, reasoningEffort: "high" }, experimentGateway: { maxCacheEntries: 64 } } }),
+      body: JSON.stringify({ settings: { agent: { profileModels: { "codex-acp": "gpt-5.6-mini" }, reasoningEffort: "high" } } }),
     });
     assert.equal(patch.status, 200);
     const updated = await patch.json();
@@ -122,7 +137,6 @@ test("settings API applies a patch without requiring a config-file edit", async 
     assert.equal(updated.settings.agent.reasoningEffort, "high");
     assert.equal(app.config.agentSessions.profiles.find(profile => profile.provider === "codex").model, "gpt-5.6-mini");
     assert.equal(app.config.agentSessions.profiles.find((profile) => profile.provider === "codex").reasoningEffort, "high");
-    assert.equal(app.registry.experiments.options.maxCacheEntries, 64);
     assert.equal(initial.settings.sources.mlflow.experimentName, "diffusion-sr-reproduction");
   } finally {
     app?.sourceRefresh?.stop();

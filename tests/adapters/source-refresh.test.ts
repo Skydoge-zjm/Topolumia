@@ -11,7 +11,6 @@ function sourceSnapshot(stateVersion, observedAt = "2026-08-18T12:00:00.000Z") {
     observedAt,
     git: null,
     files: null,
-    mlflow: null,
     sourceErrors: [],
   };
 }

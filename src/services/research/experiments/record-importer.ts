@@ -1,30 +1,35 @@
+import * as z from "zod/v4";
+import { recordRichEventSchema } from "./record-reader.js";
 import { Worker } from "node:worker_threads";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import type { ResearchCommandService } from "../research-command-service.js";
+import type { ResearchActor, StoredAsset, IndexedTable } from "../../../domain/research/types.js";
+import type { RecordProvider, RecordManifest, RecordImporterOptions, RecordWorkerInput, RecordLine, RecordPointRange, RecordPoint, RecordExactPoint, RecordRichEvent } from "../../../domain/research/record-types.js";
 import { fail } from "../../../domain/research/access.js";
 export { readHistoryJson } from "./record-reader.js";
 
 /** Only small directories and requested point ranges cross the worker boundary. */
 export class ExperimentRecordImporter {
-  constructor(c, options: any = {}) {
+  constructor(c: ResearchCommandService, options: RecordImporterOptions = {}) {
     this.c = c;
     this.options = options;
   }
-  c;
-  options;
+  c: ResearchCommandService;
+  options: RecordImporterOptions;
   worker: Worker | null = null;
   requests = new Map<
     number,
-    { resolve: (value: any) => void; reject: (error: any) => void }
+    { resolve: (value: unknown) => void; reject: (error: unknown) => void }
   >();
   nextRequest = 0;
-  pending = new Map<string, Promise<any>>();
-  indexes = new Map<string, any>();
+  pending = new Map<string, Promise<RecordManifest>>();
+  indexes = new Map<string, { value: RecordManifest; bytes: number }>();
   indexBytes = 0;
   closed = false;
   closing: Promise<void> | null = null;
-  remember(key, index) {
+  remember(key: string, index: RecordManifest) {
     const bytes = Buffer.byteLength(JSON.stringify(index));
     if (bytes > 8 * 1024 * 1024) return;
     const previous = this.indexes.get(key);
@@ -33,12 +38,12 @@ export class ExperimentRecordImporter {
     this.indexes.set(key, { value: index, bytes });
     this.indexBytes += bytes;
     while (this.indexBytes > 8 * 1024 * 1024 || this.indexes.size > 256) {
-      const first = this.indexes.keys().next().value;
-      this.indexBytes -= this.indexes.get(first).bytes;
+      const first = this.indexes.keys().next().value!;
+      this.indexBytes -= this.indexes.get(first)!.bytes;
       this.indexes.delete(first);
     }
   }
-  indexPath(asset, provider) {
+  indexPath(asset: StoredAsset, provider: RecordProvider) {
     return path.join(
       this.c.assets.root,
       "derived",
@@ -47,10 +52,10 @@ export class ExperimentRecordImporter {
       provider + ".json",
     );
   }
-  eventsPath(asset, provider) {
+  eventsPath(asset: StoredAsset, provider: RecordProvider) {
     return this.indexPath(asset, provider) + ".events.json";
   }
-  async staticEvents(assetId, provider, actor) {
+  async staticEvents(assetId: string, provider: RecordProvider, actor: ResearchActor): Promise<{ sourceId: string; events: RecordRichEvent[] }[]> {
     const asset = this.c.assets.assert(assetId, actor);
     await this.indexed(assetId, provider, actor);
     let file = this.eventsPath(asset, provider);
@@ -64,18 +69,22 @@ export class ExperimentRecordImporter {
     }
     if (!existsSync(file)) return [];
     const text = await readFile(file, "utf8");
-    const value = JSON.parse(text);
+    const value = z.object({ checksum: z.string(), provider: z.enum(["wandb", "tensorboard", "mlflow"]), runs: z.array(z.object({ sourceId: z.string(), events: z.array(recordRichEventSchema) })).default([]) }).parse(JSON.parse(text) as unknown);
     if (value.checksum !== asset.checksum || value.provider !== provider)
       fail("EXPERIMENT_RECORD_CHANGED", "实验记录事件索引与原文件不一致。", 409);
     return value.runs ?? [];
   }
-  task(input) {
+  task(input: Extract<RecordWorkerInput, { action: "ensure" }>): Promise<RecordManifest>;
+  task(input: Extract<RecordWorkerInput, { action: "select" }>): Promise<{ points: RecordPoint[]; pointCount: number }[]>;
+  task(input: Extract<RecordWorkerInput, { action: "table" }>): Promise<IndexedTable>;
+  task(input: Extract<RecordWorkerInput, { action: "close" }>): Promise<null>;
+  task(input: RecordWorkerInput): Promise<unknown> {
     if (this.closed)
       return Promise.reject(new Error("Experiment records closed"));
     if (!this.worker) {
       const worker = new Worker(new URL("./record-worker.js", import.meta.url));
       this.worker = worker;
-      worker.on("message", ({ id, value, error }) => {
+      worker.on("message", ({ id, value, error }: { id: number; value: unknown; error?: { message: string; code?: string; status?: number } }) => {
         const request = this.requests.get(id);
         if (!request) return;
         this.requests.delete(id);
@@ -89,7 +98,7 @@ export class ExperimentRecordImporter {
         else request.resolve(value);
         if (!this.requests.size) worker.unref();
       });
-      const failed = (error) => {
+      const failed = (error: Error) => {
         if (this.worker !== worker) return;
         this.worker = null;
         for (const request of this.requests.values()) request.reject(error);
@@ -107,7 +116,7 @@ export class ExperimentRecordImporter {
       "python";
     const id = ++this.nextRequest;
     this.worker.ref();
-    return new Promise<any>((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       this.requests.set(id, { resolve, reject });
       try {
         this.worker!.postMessage({
@@ -123,7 +132,7 @@ export class ExperimentRecordImporter {
       }
     });
   }
-  index(assetId, provider, actor) {
+  index(assetId: string, provider: RecordProvider, actor: ResearchActor): RecordManifest {
     const asset = this.c.assets.assert(assetId, actor);
     const file = this.indexPath(asset, provider);
     if (!existsSync(this.c.assets.file(asset)))
@@ -142,7 +151,7 @@ export class ExperimentRecordImporter {
       fail("EXPERIMENT_RECORD_CHANGED", "实验记录索引与原文件不一致。", 409);
     return index;
   }
-  async indexed(assetId, provider, actor) {
+  async indexed(assetId: string, provider: RecordProvider, actor: ResearchActor): Promise<RecordManifest> {
     const asset = this.c.assets.assert(assetId, actor);
     if (!existsSync(this.c.assets.file(asset)))
       fail("ASSET_UNAVAILABLE", "实验记录原文件不可用。", 404);
@@ -167,11 +176,11 @@ export class ExperimentRecordImporter {
           })
           .finally(() => this.pending.delete(key)),
       );
-    return this.pending.get(key);
+    return this.pending.get(key)!;
   }
-  async inspect(provider, assetIds, actor) {
+  async inspect(provider: RecordProvider, assetIds: string[], actor: ResearchActor) {
     this.c.check(actor, "research.view");
-    const merged = new Map<string, any>(), diagnostics: any[] = [];
+    const merged = new Map<string, { sourceId: string; label: string; status: string; assetIds: string[]; metrics: { key: string; xKey: string; pointCount: number }[] }>(), diagnostics: { sourceId: string; assetId: string; key?: string; missingDependencies?: string[] }[] = [];
     for (const assetId of [...new Set<string>(assetIds)]) {
       const index = await this.indexed(assetId, provider, actor);
       for (const run of index.runs) {
@@ -212,9 +221,9 @@ export class ExperimentRecordImporter {
     }
     return { provider, runs: [...merged.values()], diagnostics: diagnostics.slice(0, 5), omittedDiagnosticCount: Math.max(0, diagnostics.length - 5) };
   }
-  async selectPoints(lines, selection, actor) {
+  async selectPoints(lines: RecordLine[], selection: RecordPointRange, actor: ResearchActor): Promise<{ points: (RecordPoint | RecordExactPoint)[]; pointCount: number }[]> {
     // Recheck every requested asset at the caller boundary, including cache hits.
-    const assets = new Map<string, any>();
+    const assets = new Map<string, StoredAsset & { file: string }>();
     for (const line of lines)
       for (const segment of line.segments)
         if (segment.assetId && !assets.has(segment.assetId)) {
@@ -235,7 +244,7 @@ export class ExperimentRecordImporter {
       })),
     });
   }
-  close() {
+  close(): Promise<void> {
     if (this.closing) return this.closing;
     // Queue shutdown behind accepted work and reject new submissions immediately.
     const worker = this.worker;

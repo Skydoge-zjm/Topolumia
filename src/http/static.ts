@@ -8,19 +8,23 @@ import path from "node:path";
 import { AppError } from "../lib/errors.js";
 import { mimeTypes } from "../lib/http.js";
 import { isPathInside } from "../adapters/sources/filesystem-adapter.js";
+import type { Stats } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 const compressBr = promisify(brotliCompress), compressGzip = promisify(gzip);
-const files = new Map();
+type EncodedFile = { body: Buffer; etag: string };
+type FileEntry = { version: string; bytes: number; variants: Map<string, Promise<EncodedFile>> };
+const files = new Map<string, FileEntry>();
 let cachedBytes = 0;
-const tagged = body => ({ body, etag: `"${createHash("sha256").update(body).digest("base64url")}"` });
+const tagged = (body: Buffer): EncodedFile => ({ body, etag: `"${createHash("sha256").update(body).digest("base64url")}"` });
 function trimCache() {
   while (cachedBytes > 32 * 1024 * 1024 || files.size > 256) {
-    const first = files.keys().next().value;
-    cachedBytes -= files.get(first).bytes;
+    const first = files.keys().next().value!;
+    cachedBytes -= files.get(first)!.bytes;
     files.delete(first);
   }
 }
-function quality(header, encoding) {
+function quality(header: string | string[] | undefined, encoding: string): number {
   const values = new Map(String(header ?? "").split(",").filter(Boolean).map(part => {
     const [name, ...parameters] = part.trim().toLowerCase().split(";");
     const parameter = parameters.find(value => value.trim().startsWith("q="));
@@ -29,30 +33,30 @@ function quality(header, encoding) {
   }));
   return values.get(encoding) ?? (encoding === "identity" ? (values.get("*") === 0 ? 0 : 1) : values.get("*") ?? 0);
 }
-async function representation(filePath, info, encoding) {
+async function representation(filePath: string, info: Stats, encoding: string): Promise<EncodedFile> {
   const version = `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
   let entry = files.get(filePath);
   if (!entry || entry.version !== version) {
     const body = await readFile(filePath);
-    if (files.has(filePath)) { cachedBytes -= files.get(filePath).bytes; files.delete(filePath); }
+    if (files.has(filePath)) { cachedBytes -= files.get(filePath)!.bytes; files.delete(filePath); }
     entry = { version, bytes: body.length, variants: new Map([["identity", Promise.resolve(tagged(body))]]) };
     files.set(filePath, entry);
     cachedBytes += entry.bytes;
     trimCache();
   } else { files.delete(filePath); files.set(filePath, entry); }
   if (!entry.variants.has(encoding)) {
-    const pending = entry.variants.get("identity").then(({ body }) => encoding === "br"
+    const pending = entry.variants.get("identity")!.then(({ body }) => encoding === "br"
       ? compressBr(body, { params: { [constants.BROTLI_PARAM_QUALITY]: 4 } })
       : compressGzip(body)).then(body => {
-        if (files.get(filePath) === entry) { entry.bytes += body.length; cachedBytes += body.length; trimCache(); }
+        if (entry && files.get(filePath) === entry) { entry.bytes += body.length; cachedBytes += body.length; trimCache(); }
         return tagged(body);
       });
     entry.variants.set(encoding, pending);
   }
-  return entry.variants.get(encoding);
+  return entry.variants.get(encoding)!;
 }
 
-export function securityHeaders(contentType) {
+export function securityHeaders(contentType: string) {
   return {
     "content-type": contentType,
     "cache-control": "no-cache",
@@ -65,10 +69,10 @@ export function securityHeaders(contentType) {
 }
 
 export async function sendStatic(
-  request,
-  response,
-  publicRoot,
-  pathname,
+  request: IncomingMessage,
+  response: ServerResponse,
+  publicRoot: string,
+  pathname: string,
 ) {
   let requested;
   try {
@@ -112,13 +116,13 @@ export async function sendStatic(
   const noneMatch = request.headers["if-none-match"];
   const unchanged = noneMatch !== undefined
     ? String(noneMatch).split(",").some(tag => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === etag)
-    : Number.isFinite(Date.parse(request.headers["if-modified-since"])) && Math.floor(fileStat.mtimeMs / 1000) * 1000 <= Date.parse(request.headers["if-modified-since"]);
+    : Number.isFinite(Date.parse(request.headers["if-modified-since"] ?? "")) && Math.floor(fileStat.mtimeMs / 1000) * 1000 <= Date.parse(request.headers["if-modified-since"] ?? "");
   if (unchanged) { response.writeHead(304, headers); response.end(); return; }
   response.writeHead(200, { ...headers, "content-length": body.length });
   response.end(request.method === "HEAD" ? null : body);
 }
 
-export function sendSvg(response, content) {
+export function sendSvg(response: ServerResponse, content: string) {
   const body = Buffer.from(String(content ?? ""), "utf8");
   response.writeHead(200, {
     ...securityHeaders("image/svg+xml"),

@@ -1,3 +1,4 @@
+import type { AgentProfile } from "../../domain/agents/agent-types.js";
 import { access, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,12 +9,12 @@ import { codexConfigurationArgs } from "./configuration/native-format.js";
 const WRAPPER_VERSION = "0.1.0";
 const WRAPPER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
 
-function parseVersion(value) {
+function parseVersion(value: unknown) {
   const match = String(value ?? "").match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/);
   return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
 }
 
-function compareVersions(left, right) {
+function compareVersions(left: string | null, right: string | null) {
   const a = String(left ?? "0.0.0").split(".").map(Number);
   const b = String(right ?? "0.0.0").split(".").map(Number);
   for (let index = 0; index < 3; index += 1) {
@@ -22,7 +23,7 @@ function compareVersions(left, right) {
   return 0;
 }
 
-async function commandExists(command) {
+async function commandExists(command: string) {
   if (!command) return false;
   if (command === "node") return true;
   if (path.isAbsolute(command) || command.includes("/") || command.includes("\\")) {
@@ -38,7 +39,7 @@ async function commandExists(command) {
   return result.ok && result.stdout.trim().length > 0;
 }
 
-async function probeAuth(profile) {
+async function probeAuth(profile: AgentProfile) {
   const probe = profile.authProbe;
   if (!probe) return { required: false, status: "not-required", reason: "auth_probe_not_configured" };
   const nativeArgs = profile.provider === "codex" ? codexConfigurationArgs(profile.nativeConfig) : profile.provider === "claude" && profile.nativeConfigFile ? ["--settings", profile.nativeConfigFile] : [];
@@ -82,18 +83,26 @@ async function codexProviderDoesNotRequireOpenAiAuth() {
   }
 }
 
-function wrapperIdFor(profile) {
+function wrapperIdFor(profile: AgentProfile) {
   const id = String(profile?.managedWrapper ?? "").trim();
   return WRAPPER_ID_PATTERN.test(id) ? id : null;
 }
 
+export interface RuntimeProbe {
+  availability: string; reason?: string;
+  capabilities?: string[];
+  runtime: { command: string; args?: string[]; available: boolean; installRequired?: boolean; version?: string | null };
+  auth?: { required: boolean; status: string; reason?: string; method?: string | null; provider?: string | null };
+  wrapper?: { mode: string; id?: string; version?: string; transport?: string; installRequired: boolean; available: boolean; entry?: string; runtimeCommand?: string; runtimeArgs?: string[] };
+}
 export class ManagedWrapperRegistry {
-  constructor({ root }) {
+  root: string; probeCache = new Map<string, RuntimeProbe>();
+  constructor({ root }: { root: string }) {
     this.root = root;
-    this.probeCache = new Map();
+
   }
 
-  descriptor(profile) {
+  descriptor(profile: AgentProfile) {
     const id = wrapperIdFor(profile);
     if (!id) return null;
     return {
@@ -108,13 +117,13 @@ export class ManagedWrapperRegistry {
     };
   }
 
-  async probe(profile, { refresh = false } = {}) {
+  async probe(profile: AgentProfile, { refresh = false } = {}): Promise<RuntimeProbe> {
     const cacheKey = profile.id;
-    if (!refresh && this.probeCache.has(cacheKey)) return this.probeCache.get(cacheKey);
+    if (!refresh && this.probeCache.has(cacheKey)) return this.probeCache.get(cacheKey)!;
     const descriptor = this.descriptor(profile);
     if (!descriptor) {
       const available = await commandExists(profile.command);
-      const result = {
+      const result: RuntimeProbe = {
         availability: available ? "ready" : "needs-runtime",
         reason: available ? "native_runtime_ready" : "runtime_not_found",
         wrapper: { mode: "native", installRequired: !available, available },
@@ -160,7 +169,7 @@ export class ManagedWrapperRegistry {
       wrapperAvailable = false;
     }
     if (!wrapperAvailable) {
-      const result = {
+      const result: RuntimeProbe = {
         availability: "unavailable",
         reason: "bundled_wrapper_missing",
         wrapper: { ...descriptor, entry: undefined, available: false },
@@ -171,7 +180,7 @@ export class ManagedWrapperRegistry {
     }
 
     const runtimeAvailable = await commandExists(descriptor.runtimeCommand);
-    const result = {
+    const result: RuntimeProbe = {
       availability: runtimeAvailable ? "ready" : "needs-runtime",
       reason: runtimeAvailable ? "bundled_wrapper_ready" : "runtime_not_found",
       capabilities: profile.capabilities ?? [],
@@ -187,7 +196,7 @@ export class ManagedWrapperRegistry {
     return result;
   }
 
-  invocation(profile) {
+  invocation(profile: AgentProfile) {
     const descriptor = this.descriptor(profile);
     if (!descriptor) return { command: profile.command, args: [...(profile.args ?? [])] };
     return {
@@ -204,7 +213,7 @@ export class ManagedWrapperRegistry {
     };
   }
 
-  clear(profileId = null) {
+  clear(profileId: string | null = null) {
     if (profileId) this.probeCache.delete(profileId);
     else this.probeCache.clear();
   }

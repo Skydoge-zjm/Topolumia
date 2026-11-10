@@ -1,20 +1,21 @@
+import type { RouteContext } from "../../route-context.js";
 import { AppError } from "../../../lib/errors.js";
-import { readJson, sendJson } from "../../../lib/http.js";
+import { readJsonObject, sendJson } from "../../../lib/http.js";
 import { requirePermission } from "../../../services/research/research-command-service.js";
 import { revision } from "../../../domain/research/workspace-input.js";
 import * as z from "zod/v4";
-async function bodyObject(request) {
-  const body = await readJson(request);
+async function bodyObject(request: RouteContext["request"]) {
+  const body = await readJsonObject(request);
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError("RESEARCH_INPUT_INVALID", "请求内容必须是对象。", { status: 422 });
   return body;
 }
-const decode = value => { try { return decodeURIComponent(value); } catch { throw new AppError("RESEARCH_ID_INVALID", "对象标识无效。", { status: 422 }); } };
-const expectedRevision = value => {
+const decode = (value: string) => { try { return decodeURIComponent(value); } catch { throw new AppError("RESEARCH_ID_INVALID", "对象标识无效。", { status: 422 }); } };
+const expectedRevision = (value: unknown) => {
   const result = revision.safeParse(value);
   if (!result.success) throw new AppError("RESEARCH_REVISION_REQUIRED", "请提供当前内容版本。", { status: 422 });
   return result.data;
 };
-export async function handleNotebookRoutes({ request, response, pathname, url, requestRuntime: runtime, requestActor: actor }) {
+export async function handleNotebookRoutes({ request, response, pathname, url, requestRuntime: runtime, requestActor: actor }: RouteContext) {
   if (pathname === "/api/research-history" && request.method === "GET") {
     requirePermission(actor, "research.view");
     sendJson(response, 200, runtime.history.list({ query: url.searchParams.get("q") ?? "", category: url.searchParams.get("category") ?? "", actor: url.searchParams.get("actor") ?? "", outcome: url.searchParams.get("outcome") ?? "",
@@ -25,7 +26,7 @@ export async function handleNotebookRoutes({ request, response, pathname, url, r
     requirePermission(actor, "research.view");
     const event = runtime.history.get(decode(history[1]));
     const liveObjects = event.changes.filter(change => {
-      if (change.subject.type === "node") return runtime.state.topology.nodes.some(node => node.id === change.subject.id);
+      if (change.subject.type === "node") return runtime.state.topology?.nodes.some(node => node.id === change.subject.id);
       if (change.subject.type === "group") { try { runtime.researchCommands.groups.get(change.subject.id); return true; } catch { return false; } }
       if (change.subject.type !== "record") return false;
       try { runtime.notebook.get(change.subject.type, change.subject.id); return true; } catch { return false; }

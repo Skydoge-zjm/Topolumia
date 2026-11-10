@@ -20,6 +20,16 @@
 
 静态导入同时写入与持续接收共用语义的 `experiment-record-events.v1` 事件索引；W&B/TensorBoard 的配置、摘要、媒体、分布、文件、生命周期和未知扩展可通过同一个 `read_experiment events` 查询。事件正文过大时返回预览和精确范围 readHint，原生附件仍独立下载；旧索引首次访问富事件时会在后台解析器中补建该事件索引。
 
+### MLflow 服务导入
+
+[MLflow 读取器](../../../../src/services/research/experiments/mlflow-reader.ts)读取实验目录、运行元数据、全部指标历史分页和产物目录，保留原生观察顺序、重复和回退 step。配置的实验 ID 或名称约束导入范围；目录超过配置上限、分页游标重复或任一请求失败均明确报错，不返回静默截断的成功结果。
+
+项目管理者在训练记录页选择“从 MLflow 导入”，服务连接沿用工具与环境中的 MLflow 配置。GET /api/research/experiments/mlflow/catalog 返回可选运行，POST /api/research/experiments/mlflow/import 接收 runIds。[导入服务](../../../../src/services/research/experiments/mlflow-importer.ts)先读完整个选择，再在同一个 SQLite 事务中保存项目来源和统一事件；参数、标签、摘要、原生运行元数据、全部标量和产物清单进入同一持久记录模型。产物保留外部目录元数据，文件内容仍需按原生服务的访问方式取得；不把未下载的产物标为本机附件。Agent 与采集凭据不能导入或浏览服务目录。
+
+相同原始内容重复导入幂等；上游内容变化产生新的不可变项目来源版本，已有记录块和快照继续引用原版本。导入后可按同一训练记录目录选择、归入实验、读取准确数据和固定快照，后续读取不依赖 MLflow 在线。MLflow 能力为读取导入，不向上游写入训练结果。
+
+实验查询统一使用持久项目来源或资产原件；不再维护服务快照网关、内存 metric store、模拟训练 overlay 或独立服务曲线采样。Git 与文件来源刷新只更新相应来源索引。单独的历史 run 引用不提供记录数据，新建记录块必须选择持久来源或实际原文件。
+
 ### 当前格式范围与已知缺口
 
 W&B 按 _type 子树排除图片宽高、表格行数等元数据，自定义 metric/通配定义及 step_sync 决定横轴。commit 与磁盘 flush 不等价，采集只能呈现已落盘记录。TensorBoard 保留全部观察及 session/restart 记录，不自动 purge，不按 step 去重或排序。重复和回退坐标均保留。
@@ -88,8 +98,9 @@ flowchart LR
 
 - [记录回归](../../../../tests/research/experiment-records.test.ts)：独立集合、候选与观察范围、材料历史和跨实验比较。
 - [持续接收回归](../../../../tests/research/record-ingestion.test.ts)：ACK 重试/重启、原始类型、快照、权限、附件、准确范围与采样。
+- [MLflow 持久导入回归](../../../../tests/experiments/mlflow-records.test.ts)与[真实服务集成](../../../../tests/experiments/mlflow-records.integration.ts)：完整分页、幂等、不可变版本、重启、快照、权限和失败原子性。
 - [队列回归](../../../../scripts/testing/test-experiment-collector.py)：半条记录、覆盖代际、确认丢失、恢复和额度计数。
 - [原生导入集成](../../../../tests/research/experiment-records.integration.ts)、[WSL 验证器](../../../../scripts/integration/verify-record-ingestion-wsl.mjs) 与[合成训练](../../../../scripts/integration/simulate-record-server.py)：真实 SDK、训练中增长、远程 HTTP、离线队列、后端重启、类型与附件。
 - [浏览器流程](../../../../frontend/e2e/experiment-records.spec.ts)、[大数据浏览器](../../../../frontend/e2e/experiment-performance.spec.ts) 与[接收性能脚本](../../../../scripts/diagnostics/benchmark-record-ingestion.mjs)：交互、窄屏、离屏释放、稳定视口、准确范围和有界渲染。
 
-测试准备与研究样本范围见[测试指南](../../../playbooks/testing.md#实验生态记录调研)。旧服务连接与模拟 overlay 仍只提供对应来源事实，不作为本接收端的持久权威。
+测试准备与研究样本范围见[测试指南](../../../playbooks/testing.md#实验生态记录调研)。全部运行数据查询使用同一个持久记录模型。

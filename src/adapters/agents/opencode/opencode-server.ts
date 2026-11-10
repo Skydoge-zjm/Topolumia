@@ -1,3 +1,4 @@
+import type { AgentProfile } from "../../../domain/agents/agent-types.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
@@ -10,19 +11,7 @@ import { AppError } from "../../../lib/errors.js";
 import { withoutResearchCredentials } from "../../../agent/research-mcp-binding.js";
 import { mergeNativeConfig } from "../shared/native-config.js";
 
-export interface OpenCodeProfile {
-  id: string;
-  label: string;
-  provider: string;
-  command: string;
-  args?: string[];
-  model?: string;
-  reasoningEffort?: string;
-  approvalPolicy?: string;
-  sandbox?: string;
-  nativeConfig?: Config;
-  nativeConfigFile?: string;
-}
+export type OpenCodeProfile = AgentProfile;
 
 export interface OpenCodeModelOption { id: string; label: string; reasoningEfforts: string[] }
 export interface OpenCodeCatalog { models: OpenCodeModelOption[]; model: string | null; reasoningEfforts: string[] }
@@ -84,13 +73,15 @@ export class OpenCodeServer {
         if (exited) throw new Error("exited");
         try {
           const response = await fetch(`${this.url}/global/health`, { headers, signal: AbortSignal.timeout(700) });
-          if (response.ok && (await response.json()).healthy) break;
+          const health: unknown = response.ok ? await response.json() : null;
+          if (health && typeof health === "object" && "healthy" in health && health.healthy) break;
         } catch { /* Server is still booting. */ }
         await delay(100);
       }
       if (Date.now() >= deadline) throw new Error("timeout");
       this.client = createOpencodeClient({ baseUrl: this.url, directory: cwd, headers, throwOnError: true,
-        fetch: (request) => {
+        fetch: (input, init) => {
+          const request = new Request(input, init);
           // SSE owns its abort signal; ordinary requests have a bounded deadline.
           const isStream = new URL(request.url).pathname === "/event";
           return fetch(request, isStream ? {} : { signal: AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]) });
@@ -130,6 +121,7 @@ export function resolveOpenCodeModelId(models: OpenCodeModelOption[], requested:
 
 export async function readOpenCodeCatalog(client: OpencodeClient, preferred?: string): Promise<OpenCodeCatalog> {
   const [{ data }, { data: config }] = await Promise.all([client.config.providers(), client.config.get()]);
+  if (!data || !config) throw new AppError("OPENCODE_CONFIG_UNAVAILABLE", "OpenCode 未返回有效的 Provider 或模型配置。", { status: 502 });
   const models: OpenCodeModelOption[] = data.providers.flatMap((provider) => Object.values(provider.models)
     .filter((model) => model.status !== "deprecated" && model.capabilities?.input?.text !== false)
     .map((model) => ({ id: `${provider.id}/${model.id}`, label: `${model.name} · ${provider.name}`,
@@ -141,6 +133,6 @@ export async function readOpenCodeCatalog(client: OpencodeClient, preferred?: st
 
 export async function discoverOpenCodeModels(profile: OpenCodeProfile, cwd: string): Promise<OpenCodeCatalog> {
   const server = new OpenCodeServer();
-  try { return await readOpenCodeCatalog(await server.start(profile, cwd), profile.model); }
+  try { return await readOpenCodeCatalog(await server.start(profile, cwd), profile.model ?? undefined); }
   finally { await server.close(); }
 }

@@ -2,47 +2,77 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { appPaths, configurationFiles } from "./lib/app-paths.js";
+import type { AgentProfile } from "./domain/agents/agent-types.js";
+import type { ProjectWorkspace } from "./domain/projects/workspace.js";
+
+export interface AppConfig {
+  applicationPaths: ReturnType<typeof appPaths>;
+  publicRoot: string;
+  server: { host: string; port: number };
+  project: { id: string; name: string; root: string; workspacesRoot: string; workspace?: ProjectWorkspace };
+  remoteExecution?: boolean;
+  sourceRefresh: { enabled: boolean; intervalMs: number; freshForMs: number; foregroundThresholdMs: number };
+  git: { command: string; timeoutMs: number; maxOutputBytes: number };
+  toolCommands: { conda: string; uv: string; nvidia: string; cuda: string };
+  researchEnvironment: { kind: string; prefix: string; pythonCommand: string };
+  filesystem: { roots: string[]; excludedRoots?: string[]; allowedExtensions: string[]; maxFiles: number; maxDepth: number; maxTextBytes: number; excerptChars: number };
+  mlflow: { baseUrl: string; experimentId: string; experimentName: string; tokenEnv: string; timeoutMs: number; pageSize: number; maxRuns: number };
+  wandb: { baseUrl: string; graphqlPath: string; authScheme: string; entity: string; project: string; tokenEnv: string; timeoutMs: number };
+  tensorboard: { logdir: string; pythonCommand: string };
+  experimentRecords: { pythonCommand: string };
+  docker: { command: string; executionEnabled: boolean; healthTimeoutMs: number; runTimeoutMs: number };
+  curator: {
+    enabled: boolean; command: string; model: string; reasoningEffort?: string; timeoutMs: number; maxOutputBytes: number; runtimeRoot: string;
+    maxEvents: number; maxSources: number; maxNodes: number; maxExcerptChars: number;
+    automation: { enabled: boolean; triggerOnSessionCheckpoint: boolean; triggerOnSourceDelta: boolean; triggerOnExperimentDelta: boolean; triggerOnIdle: boolean; triggerOnContinuityBreak: boolean; triggerOnTopologyChanged: boolean; idleSeconds: number; minPendingEvents: number; cooldownSeconds: number; backgroundMode: string };
+  };
+  userSettings: { file: string };
+  collaboration: { databaseFile: string; allowDevIdentity: boolean; adminPassword: string; sessionTtlMs: number };
+  agentSessions: { maxSessions: number; maxEventsPerSession: number; historyFile: string; managedWrappersRoot: string; requestTimeoutMs?: number; profiles: AgentProfile[] };
+}
+export type DeepPartial<T> = T extends readonly (infer Item)[] ? Item[] : T extends object ? { [Key in keyof T]?: DeepPartial<T[Key]> } : T;
 
 const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
 const compiled = path.basename(path.resolve(moduleRoot, "..")) === "dist";
 export const mvpRoot = compiled ? path.resolve(moduleRoot, "../..") : path.resolve(moduleRoot, "..");
 export const bundledRoot = compiled ? path.resolve(moduleRoot, "..") : mvpRoot;
 
-function parseBoolean(value, fallback = false) {
+function parseBoolean(value: unknown, fallback = false): boolean {
   if (value === undefined || value === null || value === "") return fallback;
   return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
 }
 
-function deepMerge(base, override) {
-  if (!override || typeof override !== "object" || Array.isArray(override)) return override ?? base;
-  const result = { ...base };
+function deepMerge<T extends object>(base: T, override: unknown): T {
+  if (!override || typeof override !== "object" || Array.isArray(override)) return base;
+  const result: Record<string, unknown> = Object.fromEntries(Object.entries(base));
   for (const [key, value] of Object.entries(override)) {
     if (value && typeof value === "object" && !Array.isArray(value)) {
-      result[key] = deepMerge(base?.[key] ?? {}, value);
+      const previous = result[key];
+      result[key] = deepMerge(previous && typeof previous === "object" ? previous : {}, value);
     } else {
       result[key] = value;
     }
   }
-  return result;
+  return result as T;
 }
 
-function resolveFromMvp(value) {
+function resolveFromMvp(value: string): string {
   return path.isAbsolute(value) ? value : path.resolve(mvpRoot, value);
 }
 
-async function readOptionalJson(filePath) {
+async function readOptionalJson(filePath: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(filePath, "utf8"));
   } catch (error) {
-    if (error.code === "ENOENT") return {};
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return {};
     throw error;
   }
 }
 
-export async function loadConfig(overrides = {}) {
+export async function loadConfig(overrides: DeepPartial<AppConfig> = {}): Promise<AppConfig> {
   const locations = appPaths();
   const defaultProjectRoot = path.join(locations.workspacesRoot, "research-project");
-  const defaults = {
+  const defaults: AppConfig = {
     applicationPaths: locations,
     publicRoot: path.resolve(mvpRoot, "frontend", "dist"),
     server: {
@@ -60,18 +90,6 @@ export async function loadConfig(overrides = {}) {
       intervalMs: 60_000,
       freshForMs: 15_000,
       foregroundThresholdMs: 30_000,
-    },
-    experimentGateway: {
-      listTtlMs: 15_000,
-      detailTtlMs: 30_000,
-      seriesTtlMs: 30_000,
-      contextTtlMs: 30_000,
-      descriptorTtlMs: 30_000,
-      maxListRuns: 300,
-      maxCacheEntries: 256,
-      maxIngestionRuns: 32,
-      maxIngestionEventsPerRun: 300_000,
-      maxIngestionBatchEvents: 300_000,
     },
     git: {
       command: "git",
@@ -93,7 +111,6 @@ export async function loadConfig(overrides = {}) {
       experimentId: "",
       experimentName: "diffusion-sr-reproduction",
       tokenEnv: "MLFLOW_TRACKING_TOKEN",
-      fixtureFile: path.resolve(bundledRoot, "fixtures/mlflow-runs.json"),
       timeoutMs: 4_000,
       pageSize: 100,
       maxRuns: 300,
@@ -105,19 +122,11 @@ export async function loadConfig(overrides = {}) {
       entity: "local",
       project: "diffusion-sr-reproduction",
       tokenEnv: "WANDB_API_KEY",
-      fixtureFile: path.resolve(bundledRoot, "fixtures/wandb-runs.json"),
       timeoutMs: 4_000,
-      pageSize: 100,
-      maxRuns: 300,
     },
     tensorboard: {
       logdir: "",
-      fixtureFile: path.resolve(bundledRoot, "fixtures/tensorboard-runs.json"),
       pythonCommand: "python",
-      parserScript: path.resolve(mvpRoot, "scripts/runtime/tensorboard-event-parser.py"),
-      parserTimeoutMs: 10_000,
-      maxDepth: 4,
-      maxRuns: 300,
     },
     experimentRecords: { pythonCommand: "python" },
     docker: {
@@ -251,7 +260,6 @@ export async function loadConfig(overrides = {}) {
   config.wandb.baseUrl = process.env.WANDB_API_URL || config.wandb.baseUrl;
   config.tensorboard.logdir = process.env.TENSORBOARD_LOGDIR || config.tensorboard.logdir;
   config.tensorboard.pythonCommand = process.env.TENSORBOARD_PYTHON || config.tensorboard.pythonCommand;
-  config.tensorboard.parserScript = process.env.TENSORBOARD_EVENT_PARSER || config.tensorboard.parserScript;
   config.docker.executionEnabled = parseBoolean(process.env.MVP_ENABLE_DOCKER_RUN, config.docker.executionEnabled);
   config.curator.enabled = parseBoolean(process.env.MVP_ENABLE_REAL_CURATOR, config.curator.enabled);
   config.sourceRefresh.enabled = parseBoolean(process.env.MVP_SOURCE_REFRESH_ENABLED, config.sourceRefresh.enabled);
@@ -262,11 +270,7 @@ export async function loadConfig(overrides = {}) {
   config.filesystem.roots = config.filesystem.roots.map((root) => (
     path.isAbsolute(root) ? root : path.resolve(config.project.root, root)
   ));
-  config.mlflow.fixtureFile = resolveFromMvp(config.mlflow.fixtureFile);
-  config.wandb.fixtureFile = resolveFromMvp(config.wandb.fixtureFile);
-  config.tensorboard.fixtureFile = resolveFromMvp(config.tensorboard.fixtureFile);
   if (config.tensorboard.logdir) config.tensorboard.logdir = resolveFromMvp(config.tensorboard.logdir);
-  config.tensorboard.parserScript = config.tensorboard.parserScript ? resolveFromMvp(config.tensorboard.parserScript) : "";
   config.agentSessions.historyFile = resolveFromMvp(config.agentSessions.historyFile);
   config.agentSessions.managedWrappersRoot = resolveFromMvp(config.agentSessions.managedWrappersRoot);
   config.userSettings.file = resolveFromMvp(config.userSettings.file);

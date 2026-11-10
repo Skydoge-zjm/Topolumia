@@ -47,7 +47,7 @@ export function contentBlockId(payload: Record<string, unknown>): string {
   return String(payload.blockId ?? payload.messageId ?? payload.nativeItemId ?? "default");
 }
 
-export function isRemovedContent(event: ConversationEvent, removal: ConversationEvent): boolean {
+export function isRemovedContent(event: Pick<ConversationEvent, "type" | "payload">, removal: Pick<ConversationEvent, "payload">): boolean {
   if (event.type === "content.removed") return false;
   const payload = event.payload;
   if (removal.payload.agentId && actorKey(payload) !== actorKey(removal.payload)) return false;
@@ -56,7 +56,7 @@ export function isRemovedContent(event: ConversationEvent, removal: Conversation
   return Boolean(id && [payload.blockId, payload.messageId, payload.nativeItemId, payload.toolCallId].includes(id));
 }
 
-export function reasoningStreamKey(event: Pick<ConversationEvent, "id" | "turnId" | "payload">): string {
+export function reasoningStreamKey(event: Pick<ConversationEvent, "turnId" | "payload"> & Partial<Pick<ConversationEvent, "id">>): string {
   const payload = event.payload;
   const identity = payload.reasoningId ?? payload.messageId ?? payload.nativeItemId ?? event.id;
   return `reasoning:${event.turnId ?? "session"}:${actorKey(payload)}:${identity}:${payload.channel ?? "summary"}:${payload.summaryIndex ?? payload.blockIndex ?? 0}`;
@@ -93,7 +93,7 @@ function conversationIndex(events: ConversationEvent[]): ConversationIndex {
   }
   return index;
 }
-export function isConversationContentRemoved(events: ConversationEvent[], event: ConversationEvent): boolean {
+export function isConversationContentRemoved(events: ConversationEvent[], event: Pick<ConversationEvent, "type" | "payload">): boolean {
   return conversationIndex(events).removals.some(removal => isRemovedContent(event, removal));
 }
 function indexConversation<T extends ConversationEvent>(previous: T[], next: T[], index: ConversationIndex, key: string | null, position: number): T[] {

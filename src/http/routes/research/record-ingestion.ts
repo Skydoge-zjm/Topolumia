@@ -1,6 +1,7 @@
+import type { RouteContext } from "../../route-context.js";
 import { createGunzip } from "node:zlib";
 import { createReadStream } from "node:fs";
-import { readJson, sendJson } from "../../../lib/http.js";
+import { readJsonObject, sendJson } from "../../../lib/http.js";
 import { fail } from "../../../domain/research/access.js";
 import { recordIngestionCapabilities } from "../../../domain/research/record-ingestion.js";
 
@@ -11,7 +12,7 @@ export async function handleRecordIngestionRoutes({
   url,
   requestRuntime,
   requestActor,
-}) {
+}: RouteContext) {
   const service = requestRuntime.researchCommands.ingestion;
   const collector = pathname.match(
     /^\/api\/record-ingestion\/([^/]+)\/(capabilities|batches|attachments)(?:\/([a-f0-9]{64}))?$/,
@@ -20,7 +21,7 @@ export async function handleRecordIngestionRoutes({
     /^\/api\/research\/record-blocks\/([^/]+)\/(version|status|events|snapshots|grants)(?:\/([^/]+)\/(revoke|renew))?$/,
   );
   if (!collector && !research) return false;
-  const match = collector ?? research,
+  const match = (collector ?? research)!,
     blockId = decodeURIComponent(match[1]),
     action = match[2],
     actor = requestActor;
@@ -48,7 +49,7 @@ export async function handleRecordIngestionRoutes({
           : request;
       const result = service.receive(
         blockId,
-        await readJson(body, recordIngestionCapabilities.maxBatchBytes),
+        await readJsonObject(body, recordIngestionCapabilities.maxBatchBytes),
         actor,
       );
       sendJson(response, 200, result);
@@ -90,7 +91,7 @@ export async function handleRecordIngestionRoutes({
       return true;
     }
     if (action === "grants" && request.method === "POST") {
-      await readJson(request, 8192);
+      await readJsonObject(request, 8192);
       sendJson(
         response,
         200,
@@ -115,7 +116,7 @@ export async function handleRecordAttachmentRead({
   pathname,
   requestRuntime,
   requestActor,
-}) {
+}: RouteContext) {
   const match = pathname.match(
     /^\/api\/research\/record-blocks\/([^/]+)\/attachments\/([a-f0-9]{64})$/,
   );
@@ -123,7 +124,7 @@ export async function handleRecordAttachmentRead({
   const service = requestRuntime.researchCommands.ingestion,
     blockId = decodeURIComponent(match[1]);
   service.block(blockId, requestActor);
-  const requestUrl = new URL(request.url, "http://localhost");
+  const requestUrl = new URL(request.url ?? "/", "http://localhost");
   const snapshotId = requestUrl.searchParams.get("snapshotId"), snapshot = snapshotId ? service.getSnapshot(snapshotId, requestActor) : null;
   if (snapshot && snapshot.blockId !== blockId) fail("INGESTION_SCOPE_MISMATCH", "快照不属于记录块。", 403);
   const row = requestRuntime.researchCommands.projectRecords.attachment(snapshot?.block ?? service.block(blockId, requestActor), match[2], snapshot);

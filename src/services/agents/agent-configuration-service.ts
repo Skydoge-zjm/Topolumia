@@ -1,3 +1,12 @@
+import type { AppConfig } from "../../config.js";
+import type { AgentProfileRegistry } from "./agent-profile-registry.js";
+import type { NativeAgentConfigStore } from "./configuration/native-config-store.js";
+import type { UserSettingsStore } from "../platform/user-settings-store.js";
+import type { CollaborationStore } from "../platform/collaboration-store.js";
+import type { ResearchActor } from "../../domain/research/types.js";
+import type { OpenCodeCatalog } from "../../adapters/agents/opencode/opencode-server.js";
+interface CheckScope { actor?: ResearchActor; collaboration?: Pick<CollaborationStore, "issueAgentCredential" | "revokeAgentCredential">; baseUrl?: string }
+interface CheckResult { status: string; detail: string; checkedAt?: string | null; recovery: string | null; installed?: boolean | null; version?: string | null; authStatus?: string; resolvedModel?: string | null; catalog?: OpenCodeCatalog; toolCount?: number }
 import { randomUUID } from "node:crypto";
 import * as z from "zod/v4";
 import { buildResearchMcpBinding } from "../../agent/research-mcp-binding.js";
@@ -28,7 +37,12 @@ const unchecked = {
   recovery: null,
 };
 
+interface ConfigurationOptions { config: AppConfig; profileRegistry: AgentProfileRegistry; userSettings: UserSettingsStore; applySettings: (settings: UserSettingsStore["settings"]) => unknown; discoverModels?: typeof discoverOpenCodeModels; nativeConfigs?: NativeAgentConfigStore | null }
 export class AgentConfigurationService {
+  config!: AppConfig; profileRegistry!: AgentProfileRegistry; userSettings!: UserSettingsStore;
+  applySettings!: ConfigurationOptions["applySettings"]; discoverModels!: typeof discoverOpenCodeModels; nativeConfigs!: NativeAgentConfigStore | null;
+  results: Map<string, CheckResult>; catalogs: Map<string, OpenCodeCatalog>; inFlight: Map<string, Promise<void>>;
+  generation: number; configurationQueue: Promise<unknown>;
   constructor({
     config,
     profileRegistry,
@@ -36,7 +50,7 @@ export class AgentConfigurationService {
     applySettings,
     discoverModels = discoverOpenCodeModels,
     nativeConfigs = null,
-  }) {
+  }: ConfigurationOptions) {
     Object.assign(this, {
       config,
       profileRegistry,
@@ -52,7 +66,7 @@ export class AgentConfigurationService {
     this.configurationQueue = Promise.resolve();
   }
 
-  profile(id) {
+  profile(id: string) {
     const profile = this.profileRegistry.profiles.get(id);
     if (!profile)
       throw new AppError("AGENT_PROFILE_NOT_FOUND", "没有找到指定的 Agent。", {
@@ -110,7 +124,7 @@ export class AgentConfigurationService {
     }
   }
 
-  async configure(id, input) {
+  async configure(id: string, input: unknown) {
     this.profile(id);
     const parsed = configurationSchema.safeParse(input);
     if (!parsed.success)
@@ -137,7 +151,7 @@ export class AgentConfigurationService {
       if (model && this.nativeConfigs) {
         const doc = await this.nativeConfigs.read(profile.provider);
         if (doc.error) throw doc.error;
-        await this.nativeConfigs.save(profile.provider, serializeNativeConfig(profile.provider, { ...doc.parsed, model }), doc.revision);
+        await this.nativeConfigs!.save(profile.provider, serializeNativeConfig(profile.provider, { ...doc.parsed, model }), doc.revision);
       }
       const updated = await this.userSettings.update({ agent });
       await this.applySettings(updated.settings);
@@ -149,21 +163,21 @@ export class AgentConfigurationService {
     return pending;
   }
 
-  configurationDocument(id) { return this.nativeConfigs.document(this.profile(id).provider); }
-  async saveConfigurationDocument(id, input) {
+  configurationDocument(id: string) { return this.nativeConfigs!.document(this.profile(id).provider); }
+  async saveConfigurationDocument(id: string, input: unknown) {
     const parsed = z.strictObject({ content: z.string().max(524288), expectedRevision: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).safeParse(input);
     if (!parsed.success) throw new AppError("AGENT_NATIVE_CONFIG_INVALID", "请提供配置正文和当前修订。", { status: 422 });
     const operation = this.configurationQueue.then(async () => {
       const profile = this.profile(id);
       parseNativeConfig(profile.provider, parsed.data.content);
-      const doc = await this.nativeConfigs.save(profile.provider, parsed.data.content, parsed.data.expectedRevision);
+      const doc = await this.nativeConfigs!.save(profile.provider, parsed.data.content, parsed.data.expectedRevision);
       this.profileRegistry.applyUserSettings();
       this.invalidate([...this.profileRegistry.profiles.values()].filter(item => item.provider === profile.provider).map(item => item.id));
       return doc;
     });
     this.configurationQueue = operation.catch(() => {}); return operation;
   }
-  async check(input = {}, scope = {}) {
+  async check(input: unknown = {}, scope: CheckScope = {}) {
     const parsed = checkSchema.safeParse(input);
     if (!parsed.success)
       throw new AppError(
@@ -200,8 +214,8 @@ export class AgentConfigurationService {
     return this.inventory();
   }
 
-  async probe(id, scope = {}) {
-    let runtimeResult = {};
+  async probe(id: string, scope: CheckScope = {}): Promise<CheckResult> {
+    let runtimeResult: Partial<CheckResult> = {};
     try {
       if (id === "@integration") {
         if (!scope.actor || !scope.collaboration || !scope.baseUrl) throw new Error("科研 MCP 检查需要当前用户与项目授权。");
@@ -267,7 +281,7 @@ export class AgentConfigurationService {
       return {
         ...runtimeResult,
         status: "unavailable",
-        detail: String(error.message)
+        detail: String(error instanceof Error ? error.message : error)
           .replace(/rw_agent_[A-Za-z0-9_-]+/g, "[redacted]")
           .slice(0, 260),
         recovery:

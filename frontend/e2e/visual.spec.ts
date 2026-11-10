@@ -18,6 +18,7 @@ async function login(page: Page) {
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page.getByRole("heading", { name: "项目" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: /Research Project/ }).click();
+  await page.getByRole("link", { name: "Agent 会话", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Agent 会话", exact: true })).toBeVisible({ timeout: 10_000 });
   const created = await page.request.post(`${app.app.url}/api/agent-sessions`, {
     data: { profileId: "smoke-codex", title: "视觉回归会话" },

@@ -2,14 +2,16 @@ import os from "node:os";
 import path from "node:path";
 import { readFile, stat, mkdir, writeFile, rename } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { Duplex } from "node:stream";
+import { promisify } from "node:util";
 import { connect as connectTcp } from "node:net";
 import ssh2 from "ssh2";
+import type { Client as SshClient, ClientChannel, SFTPWrapper, AuthenticationType, AnyAuthMethod, TcpConnectionDetails, ServerHostKeyAlgorithm } from "ssh2";
 const { Client, utils } = ssh2;
 import * as z from "zod/v4";
 import { AppError } from "../lib/errors.js";
-import { runCommand } from "../lib/command.js";
+import { runCommand, type CommandRunner, type CommandResult, type CommandOptions } from "../lib/command.js";
 import { bundledRoot } from "../config.js";
 import {
   aliasPattern,
@@ -20,14 +22,14 @@ import {
   resolveSshAlias,
   sshAliases,
 } from "./ssh-config.js";
-import { SshCredentialVault } from "./credential-vault.js";
+import { SshCredentialVault, type SessionCredentials } from "./credential-vault.js";
 
 const text = z
   .string()
   .trim()
   .min(1)
   .max(120)
-  .regex(/^[^\x00-\x1f\x7f]+$/);
+  .refine(value => [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), "不能包含控制字符");
 const profileSchema = z.discriminatedUnion("mode", [
   z.strictObject({
     name: text,
@@ -48,8 +50,26 @@ const profileSchema = z.discriminatedUnion("mode", [
     keepAlive: z.boolean().default(true),
   }),
 ]);
-const shortError = (error) =>
-  error?.code === "ECONNREFUSED"
+export type SshInfo = { status: string; platform: string; user: string; home: string | null; python: string | null; tools: Record<string, string | null> };
+export type ReadySshInfo = SshInfo & {home:string;python:string};
+export type SshProfile = z.infer<typeof profileSchema> & { id: string; revision: number; createdAt: string; updatedAt: string; ciphertext?: string; trust?: { target: string; fingerprint: string; hosts?: Record<string, string> }; lastInfo?: SshInfo };
+type Target = Omit<Awaited<ReturnType<typeof resolveSshAlias>>, "auth"> & { auth: string };
+type Challenge = { kind: string; host: string; port: number; user: string; prompts: { label: string; secret: boolean }[]; title?: string; instructions?: string; fingerprint?: string; previousFingerprints?: string[]; changed?: boolean; canRemember?: boolean };
+export type SshAnswer = { challengeId?: string; trust?: boolean; verified?: boolean; values?: string[]; remember?: boolean };
+export type SshSession = {
+  profile: SshProfile; owner: string; status: string; stage: string | null; error: string | null;
+  challenge: (Challenge & { id: string }) | null; clients: SshClient[]; channels: Set<ClientChannel | SFTPWrapper>;
+  proxies: ChildProcess[]; cancelled: boolean; credentials: SessionCredentials; remember: boolean; info: SshInfo | null;
+  client?: SshClient | null; effective?: Target; reply?: ((answer: SshAnswer) => void) | null; cancelChallenge?: (() => void) | null;
+  connectedAt?: string; storageWarning?: string; hostKeyError?: string; infoTask?: Promise<unknown>; remoteInfoTask?: Promise<ReadySshInfo> | null; task?: Promise<void>;
+};
+type UserConnections = { file: string; profiles: Map<string, SshProfile>; persistence: Promise<void> };
+type ConnectionOptions = { root: string; commandRunner?: CommandRunner; clientFactory?: () => SshClient; vault?: Pick<SshCredentialVault, "available" | "protect" | "reveal"> };
+export type SshRunOptions = CommandOptions & { input?: string; onStdout?: (value: string) => void };
+const errorProperties = (error: unknown): { code?: unknown; message?: string; level?: unknown } => error && typeof error === "object" ? error : {};
+const shortError = (value: unknown) => {
+  const error = errorProperties(value);
+  return error?.code === "ECONNREFUSED"
     ? "SSH 连接被拒绝，请检查地址、端口和 SSH 服务。"
     : error?.code === "ENOTFOUND"
       ? "无法解析 SSH 主机地址。"
@@ -59,31 +79,40 @@ const shortError = (error) =>
             error?.level === "client-authentication"
           ? "SSH 认证失败，请检查登录用户、密钥或密码。"
           : "SSH 连接未完成，请检查配置后重试。";
-const cleanPrompt = (value) =>
-  String(value ?? "")
-    .replace(/[\x00-\x1f\x7f]/g, " ")
+};
+const cleanPrompt = (value: unknown) =>
+  Array.from(String(value ?? ""), char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? " " : char).join("")
     .slice(0, 1200);
 
 export class SshConnectionService {
+  root: string;
+  commandRunner: CommandRunner;
+  clientFactory: () => SshClient;
+  vault: NonNullable<ConnectionOptions["vault"]>;
+  users = new Map<string, Promise<UserConnections>>();
+  sessions = new Map<string, SshSession>();
+  tasks = new Set<Promise<void>>();
+  listeners = new Set<(owner: string, id: string, kind: string) => void>();
+  closed = false;
   constructor({
     root,
     commandRunner = runCommand,
     clientFactory = () => new Client(),
     vault = new SshCredentialVault(),
-  }) {
-    Object.assign(this, { root, commandRunner, clientFactory, vault });
+  }: ConnectionOptions) {
+    this.root = root; this.commandRunner = commandRunner; this.clientFactory = clientFactory; this.vault = vault;
     this.users = new Map();
     this.sessions = new Map();
     this.tasks = new Set();
     this.listeners = new Set();
   }
-  userKey(owner) {
+  userKey(owner: string) {
     return createHash("sha256")
       .update(String(owner))
       .digest("hex")
       .slice(0, 32);
   }
-  async user(owner) {
+  async user(owner: string): Promise<UserConnections> {
     if (!owner)
       throw new AppError("SSH_LOGIN_REQUIRED", "请先登录。", { status: 401 });
     if (!this.users.has(owner))
@@ -95,7 +124,7 @@ export class SshConnectionService {
             this.userKey(owner),
             "connections.json",
           );
-          let profiles = [];
+          let profiles: SshProfile[] = [];
           try {
             const raw = await readFile(file, "utf8");
             if (raw.length < 1048576) profiles = JSON.parse(raw).profiles ?? [];
@@ -113,9 +142,9 @@ export class SshConnectionService {
           };
         })(),
       );
-    return this.users.get(owner);
+    return this.users.get(owner)!;
   }
-  async persist(owner) {
+  async persist(owner: string) {
     const user = await this.user(owner);
     const snapshot = JSON.stringify({
       schemaVersion: "ssh-profiles.v1",
@@ -131,7 +160,7 @@ export class SshConnectionService {
       });
     await user.persistence;
   }
-  async profile(owner, id) {
+  async profile(owner: string, id: string) {
     const profile = (await this.user(owner)).profiles.get(id);
     if (!profile)
       throw new AppError(
@@ -141,10 +170,10 @@ export class SshConnectionService {
       );
     return profile;
   }
-  sessionKey(owner, id) {
+  sessionKey(owner: string, id: string) {
     return `${owner}:${id}`;
   }
-  publicProfile(profile, session = null) {
+  publicProfile(profile: SshProfile, session: SshSession | null | undefined = null) {
     const { ciphertext, trust, ...configuration } = profile;
     return {
       ...configuration,
@@ -169,7 +198,7 @@ export class SshConnectionService {
         : null,
     };
   }
-  async list(owner) {
+  async list(owner: string) {
     const user = await this.user(owner);
     return {
       connections: [...user.profiles.values()].map((p) =>
@@ -184,7 +213,7 @@ export class SshConnectionService {
   aliases() {
     return sshAliases();
   }
-  async resolve(alias) {
+  async resolve(alias: string) {
     const target = await resolveSshAlias(alias, {}, this.commandRunner);
     return {
       alias,
@@ -195,7 +224,7 @@ export class SshConnectionService {
       authentication: "system-ssh-config",
     };
   }
-  async save(owner, input, id = null) {
+  async save(owner: string, input: unknown, id: string | null = null) {
     const parsed = profileSchema.safeParse(input);
     if (
       !parsed.success ||
@@ -217,22 +246,22 @@ export class SshConnectionService {
         { status: 422 },
       );
     if (id) await this.disconnect(owner, id);
-    const profile = {
+    const profile: SshProfile = {
       ...parsed.data,
       id: id ?? randomUUID(),
       revision: (previous?.revision ?? 0) + 1,
       createdAt: previous?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const identity = (value) =>
+    const identity = (value: SshProfile | null) =>
       JSON.stringify([
         value?.mode,
-        value?.alias,
-        value?.host,
-        value?.port,
-        value?.user,
-        value?.auth,
-        value?.keyPath,
+        value?.mode === "alias" ? value.alias : null,
+        value?.mode === "manual" ? value.host : null,
+        value?.mode === "manual" ? value.port : null,
+        value?.mode === "manual" ? value.user : null,
+        value?.mode === "manual" ? value.auth : null,
+        value?.mode === "manual" ? value.keyPath : null,
       ]);
     if (previous && identity(previous) === identity(profile))
       Object.assign(profile, {
@@ -245,7 +274,7 @@ export class SshConnectionService {
     this.notify(owner, profile.id, "updated");
     return this.publicProfile(profile);
   }
-  async remove(owner, id) {
+  async remove(owner: string, id: string) {
     await this.profile(owner, id);
     await this.disconnect(owner, id);
     this.sessions.delete(this.sessionKey(owner, id));
@@ -253,13 +282,13 @@ export class SshConnectionService {
     await this.persist(owner);
     this.notify(owner, id, "removed");
   }
-  async forget(owner, id) {
+  async forget(owner: string, id: string) {
     const p = await this.profile(owner, id);
     delete p.ciphertext;
     await this.persist(owner);
     return this.publicProfile(p, this.sessions.get(this.sessionKey(owner, id)));
   }
-  notify(owner, id, kind) {
+  notify(owner: string, id: string, kind: string) {
     for (const listener of this.listeners) {
       try {
         listener(owner, id, kind);
@@ -268,14 +297,15 @@ export class SshConnectionService {
       }
     }
   }
-  onChange(listener) {
+  onChange(listener: (owner: string, id: string, kind: string) => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-  async target(profile) {
+  async target(profile: SshProfile): Promise<Target> {
     if (profile.mode === "alias")
       return resolveSshAlias(profile.alias, {}, this.commandRunner);
     return {
+      alias: "",
       host: profile.host.replace(/^\[|\]$/g, ""),
       port: profile.port,
       user: profile.user,
@@ -290,16 +320,17 @@ export class SshConnectionService {
       knownHostsFiles: [path.join(os.homedir(), ".ssh", "known_hosts")],
       proxyJump: null,
       proxyCommand: null,
+      hostKeyAlias: null,
     };
   }
-  async challenge(session, detail) {
+  async challenge(session: SshSession, detail: Challenge): Promise<SshAnswer> {
     if (session.cancelled) throw new Error("SSH connection cancelled");
     session.status =
       detail.kind === "host-key" ? "verify_host" : "authentication";
     session.stage = detail.kind === "host-key" ? "verify-host" : "authenticate";
     const id = randomUUID();
     session.challenge = { ...detail, id };
-    return new Promise((resolve, reject) => {
+    return new Promise<SshAnswer>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (session.challenge?.id === id) {
           session.challenge = null;
@@ -322,7 +353,7 @@ export class SshConnectionService {
       };
     });
   }
-  async respond(owner, id, answer) {
+  async respond(owner: string, id: string, answer: SshAnswer) {
     await this.profile(owner, id);
     const session = this.sessions.get(this.sessionKey(owner, id));
     if (
@@ -368,7 +399,7 @@ export class SshConnectionService {
     await new Promise((resolve) => setTimeout(resolve, 0));
     return this.publicProfile(session.profile, session);
   }
-  async connect(owner, id) {
+  async connect(owner: string, id: string) {
     const profile = await this.profile(owner, id);
     if (this.closed) throw new AppError("SSH_SERVICE_CLOSED", "SSH 服务已关闭。", { status: 503 });
     const previous = this.sessions.get(this.sessionKey(owner, id));
@@ -379,7 +410,7 @@ export class SshConnectionService {
       )
     )
       return this.publicProfile(profile, previous);
-    const session = {
+    const session: SshSession = {
       profile,
       owner,
       status: "connecting",
@@ -408,7 +439,7 @@ export class SshConnectionService {
         const target = await this.target(profile);
         this.assertConnecting(session);
         session.effective = target;
-        let sock = null;
+        let sock: Duplex | null = null;
         if (target.proxyJump) {
           const hops = target.proxyJump.split(",");
           if (hops.length > 4) throw new Error("Too many SSH hops");
@@ -420,7 +451,7 @@ export class SshConnectionService {
             if (!match) throw new Error("Unsupported SSH jump configuration");
             const hopTarget = await resolveSshAlias(
               match[2],
-              { user: match[1], port: match[3] },
+              { user: match[1], port: match[3] ? Number(match[3]) : undefined },
               this.commandRunner,
             );
             this.assertConnecting(session);
@@ -436,12 +467,12 @@ export class SshConnectionService {
                 throw new Error("Unsupported SSH jump configuration");
               nextTarget = await resolveSshAlias(
                 parsed[2],
-                { user: parsed[1], port: parsed[3] },
+                { user: parsed[1], port: parsed[3] ? Number(parsed[3]) : undefined },
                 this.commandRunner,
               );
               this.assertConnecting(session);
             }
-            sock = await new Promise((resolve, reject) =>
+            sock = await new Promise<ClientChannel>((resolve, reject) =>
               client.forwardOut(
                 "127.0.0.1",
                 0,
@@ -475,11 +506,14 @@ export class SshConnectionService {
             process.platform === "win32"
               ? ["/d", "/s", "/c", command]
               : ["-c", command],
-            { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] },
+            { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] as const },
           );
           child.on("error", () => {});
           session.proxies.push(child);
-          sock = Duplex.from({ writable: child.stdin, readable: child.stdout });
+          if (!child.stdin || !child.stdout) throw new Error("Proxy process streams unavailable");
+          // Node supports a pair of Node streams; @types/node only declares web pairs.
+          const fromStreams = Duplex.from as unknown as (streams: { writable: NodeJS.WritableStream; readable: NodeJS.ReadableStream }) => Duplex;
+          sock = fromStreams({ writable: child.stdin, readable: child.stdout });
         }
         session.client = await this.openClient(session, target, sock);
         this.assertConnecting(session);
@@ -533,15 +567,15 @@ export class SshConnectionService {
     void task.finally(() => this.tasks.delete(task));
     return this.publicProfile(profile, session);
   }
-  assertConnecting(session) {
+  assertConnecting(session: SshSession) {
     if (this.closed || session.cancelled || this.sessions.get(this.sessionKey(session.owner, session.profile.id)) !== session)
       throw new AppError("SSH_CONNECTION_CANCELLED", "SSH 连接已取消。", { status: 409 });
   }
-  async openClient(session, target, sock) {
+  async openClient(session: SshSession, target: Target, sock: Duplex | null): Promise<SshClient> {
     this.assertConnecting(session);
     const records = await knownHostKeys(target, this.commandRunner);
     this.assertConnecting(session);
-    const keys = [];
+    const keys: { file: string; data: Buffer }[] = [];
     for (const file of target.identityFiles ?? []) {
       try {
         if ((await stat(file)).size <= 524288)
@@ -561,14 +595,14 @@ export class SshConnectionService {
       keyIndex = 0,
       passwordAttempts = 0,
       keyboardAttempts = 0;
-    const method = async (methods, partial) => {
+    const method = async (methods: AuthenticationType[] | null, partial: boolean | null): Promise<AnyAuthMethod | false> => {
       if (session.cancelled) return false;
       if (!triedNone) {
         triedNone = true;
         return { type: "none", username: target.user };
       }
-      const allowed = (name) =>
-        !methods || methods.includes(name === "agent" ? "publickey" : name);
+      const allowed = (name: string) =>
+        !methods || methods.includes((name === "agent" ? "publickey" : name) as AuthenticationType);
       if (
         !partial &&
         ["agent", "system"].includes(target.auth) &&
@@ -606,11 +640,11 @@ export class SshConnectionService {
                 ],
                 canRemember: this.vault.available,
               });
-              const passphrase = response.values[0];
+              const passphrase = response.values?.[0] ?? "";
               parsed = utils.parseKey(candidate.data, passphrase);
               if (!(parsed instanceof Error)) {
                 (credentials.passphrases ??= {})[candidate.file] = passphrase;
-                session.remember ||= response.remember;
+                session.remember ||= response.remember === true;
               }
             }
           }
@@ -647,7 +681,7 @@ export class SshConnectionService {
               })),
               canRemember: false,
             }).then(
-              (answer) => finish(answer.values),
+              (answer) => finish(answer.values ?? []),
               () => finish([]),
             );
           },
@@ -677,8 +711,8 @@ export class SshConnectionService {
           prompts: [{ label: "密码", secret: true }],
           canRemember: this.vault.available,
         });
-        credentials.password = answer.values[0];
-        session.remember ||= answer.remember;
+        credentials.password = answer.values?.[0] ?? "";
+        session.remember ||= answer.remember === true;
         return {
           type: "password",
           username: target.user,
@@ -687,7 +721,7 @@ export class SshConnectionService {
       }
       return false;
     };
-    return new Promise((resolve, reject) => {
+    return new Promise<SshClient>((resolve, reject) => {
       const client = this.clientFactory();
       session.clients.push(client);
       let ready = false;
@@ -740,8 +774,8 @@ export class SshConnectionService {
         agentForward: false,
         algorithms: {
           serverHostKey: [
-            ...new Set([
-              ...preferred,
+            ...new Set<ServerHostKeyAlgorithm>([
+              ...preferred.filter((algorithm): algorithm is ServerHostKeyAlgorithm => ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "rsa-sha2-512", "rsa-sha2-256", "ssh-rsa", "ssh-dss"].includes(algorithm)),
               "ssh-ed25519",
               "ecdsa-sha2-nistp256",
               "ecdsa-sha2-nistp384",
@@ -752,9 +786,11 @@ export class SshConnectionService {
           ],
         },
         authHandler: (methods, partial, callback) => {
-          void method(methods, partial).then(callback, () => callback(false));
+          // ssh2 accepts false to exhaust authentication; @types/ssh2 omits it.
+          const next = callback as (auth: AnyAuthMethod | false) => void;
+          void method(methods, partial).then(next, () => next(false));
         },
-        hostVerifier: (key, callback) => {
+        hostVerifier: (key: Buffer, callback: (accepted: boolean) => void) => {
           const actual = fingerprint(key),
             targetKey = `${target.host}:${target.port}`;
           const trusted = session.profile.trust;
@@ -806,7 +842,7 @@ export class SshConnectionService {
                   };
                   await this.persist(session.owner);
                 }
-                callback(answer.trust);
+                callback(answer.trust === true);
               },
               () => callback(false),
             )
@@ -815,7 +851,7 @@ export class SshConnectionService {
       });
     });
   }
-  async connected(owner, id) {
+  async connected(owner: string, id: string): Promise<SshSession & { client: SshClient }> {
     await this.profile(owner, id);
     const session = this.sessions.get(this.sessionKey(owner, id));
     if (session?.status !== "connected" || !session.client)
@@ -824,12 +860,12 @@ export class SshConnectionService {
         "SSH 主机尚未连接，可重连或查看已有缓存。",
         { status: 409 },
       );
-    return session;
+    return session as SshSession & { client: SshClient };
   }
-  async browseDirectory(owner, id, directory = "", { list = true, offset = 0, query = "" } = {}) {
+  async browseDirectory(owner: string, id: string, directory = "", { list = true, offset = 0, query = "" } = {}) {
     const session = await this.connected(owner, id);
     if (session.infoTask) await session.infoTask;
-    const sftp: any = await new Promise((resolve, reject) => {
+    const sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
       let settled = false;
       const opening = setTimeout(() => { settled = true; reject(new AppError("PROJECT_DIRECTORY_TIMEOUT", "SSH 目录通道打开超时，请重试。", { status: 504 })); }, 10000);
       session.client.sftp((error, channel) => {
@@ -841,21 +877,27 @@ export class SshConnectionService {
     });
     sftp.on("error", () => {});
     session.channels.add(sftp);
-    const call = (method, ...args) => new Promise<any>((resolve, reject) => sftp[method](...args, (error, value) => error ? reject(error) : resolve(value)));
+    const call = {
+      realpath: promisify(sftp.realpath.bind(sftp)),
+      stat: promisify(sftp.stat.bind(sftp)),
+      opendir: promisify(sftp.opendir.bind(sftp)),
+      readdir: promisify(sftp.readdir.bind(sftp)),
+      close: promisify(sftp.close.bind(sftp)),
+    };
     let timer;
     try {
       const task = (async () => {
         const home = session.info?.home || "/";
         const requested = directory === "~" ? home : directory.startsWith("~/") ? path.posix.join(home, directory.slice(2)) : directory || home;
-        const canonical = await call("realpath", requested), info = await call("stat", canonical);
+        const canonical = await call.realpath(requested), info = await call.stat(canonical);
         if (!info.isDirectory()) throw new AppError("PROJECT_DIRECTORY_INVALID", "所选路径不是目录。", { status: 422 });
-        const handle = await call("opendir", canonical), entries = [];
+        const handle = await call.opendir(canonical), entries = [];
         let partial = false, scanned = 0;
         try {
           if (list) while (true) {
             let chunk;
-            try { chunk = await call("readdir", handle); }
-            catch (error) { if (error.code === 1) break; throw error; }
+            try { chunk = await call.readdir(handle); }
+            catch (error) { if (errorProperties(error).code === 1) break; throw error; }
             if (!chunk) break;
             for (const entry of chunk) {
               scanned++;
@@ -863,7 +905,7 @@ export class SshConnectionService {
             }
             if (scanned >= 20000 || entries.length >= 3000) { partial = true; break; }
           }
-        } finally { await call("close", handle); }
+        } finally { await call.close(handle); }
         entries.sort((a, b) => a.name.localeCompare(b.name));
         if (this.sessions.get(this.sessionKey(owner, id)) !== session || session.status !== "connected") throw new AppError("SSH_NOT_CONNECTED", "SSH 连接已变化，请重新选择目录。", { status: 409 });
         return { directory: canonical, parent: canonical === "/" ? null : path.posix.dirname(canonical), entries: entries.slice(offset, offset + 100), total: entries.length, nextOffset: offset + 100 < entries.length ? offset + 100 : null, partial, home, roots: [{ name: session.info?.user || "Home", path: home }, { name: "/", path: "/" }] };
@@ -871,15 +913,16 @@ export class SshConnectionService {
       return await Promise.race([task, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new AppError("PROJECT_DIRECTORY_TIMEOUT", "目录读取超时，请重试或输入更具体的路径。", { status: 504 })), 15000); })]);
     } catch (error) {
       if (error instanceof AppError) throw error;
-      throw new AppError(error.code === 2 ? "PROJECT_DIRECTORY_NOT_FOUND" : "PROJECT_DIRECTORY_UNAVAILABLE", error.code === 2 ? "目录不存在，请检查路径。" : error.code === 3 ? "目录不可访问，请检查 SSH 账号权限。" : "未能读取目录，请检查 SSH 连接后重试。", { status: 422 });
+      const code = errorProperties(error).code;
+      throw new AppError(code === 2 ? "PROJECT_DIRECTORY_NOT_FOUND" : "PROJECT_DIRECTORY_UNAVAILABLE", code === 2 ? "目录不存在，请检查路径。" : code === 3 ? "目录不可访问，请检查 SSH 账号权限。" : "未能读取目录，请检查 SSH 连接后重试。", { status: 422 });
     } finally { clearTimeout(timer); session.channels.delete(sftp); sftp.end(); }
   }
-  async reverseForward(owner, id, localPort, localHost = "127.0.0.1") {
+  async reverseForward(owner: string, id: string, localPort: number, localHost = "127.0.0.1") {
     const session = await this.connected(owner, id), client = session.client;
     const port = await new Promise<number>((resolve, reject) => client.forwardIn("127.0.0.1", 0, (error, port) => error ? reject(error) : resolve(port)));
     let closed = false;
-    const sockets = new Set<any>();
-    const listener = (details, accept, reject) => {
+    const sockets = new Set<Duplex>();
+    const listener = (details: TcpConnectionDetails, accept: () => ClientChannel, reject: () => void) => {
       if (details.destPort !== port) return;
       if (closed || this.sessions.get(this.sessionKey(owner, id)) !== session || session.status !== "connected") { reject(); return; }
       const channel = accept(), socket = connectTcp({ host: localHost, port: localPort });
@@ -890,24 +933,24 @@ export class SshConnectionService {
       socket.pipe(channel).pipe(socket);
     };
     client.on("tcp connection", listener);
-    const close = () => { if (closed) return; closed = true; client.removeListener("tcp connection", listener); for (const socket of sockets) socket.destroy(); try { client.unforwardIn("127.0.0.1", port, () => {}); } catch {} };
+    const close = () => { if (closed) return; closed = true; client.removeListener("tcp connection", listener); for (const socket of sockets) socket.destroy(); try { client.unforwardIn("127.0.0.1", port, () => {}); } catch { /* The SSH connection may already be closed. */ } };
     if (this.sessions.get(this.sessionKey(owner, id)) !== session || session.status !== "connected") { close(); throw new AppError("SSH_NOT_CONNECTED", "SSH 连接已断开。", { status: 409 }); }
     client.once("close", close);
     return { port, close: () => { client.removeListener("close", close); close(); }, session, get active() { return !closed; } };
   }
   async exec(
-    owner,
-    id,
-    statement,
-    { input = "", timeoutMs = 20000, maxOutputBytes = 131072, onStdout = undefined } = {},
+    owner: string,
+    id: string,
+    statement: string,
+    { input = "", timeoutMs = 20000, maxOutputBytes = 131072, onStdout = undefined }: SshRunOptions = {},
   ) {
     const session = await this.connected(owner, id);
-    return new Promise((resolve) => {
+    return new Promise<CommandResult>((resolve) => {
       let output = Buffer.alloc(0),
         errorOutput = Buffer.alloc(0),
         settled = false,
-        stream;
-      const finish = (result) => {
+        stream: ClientChannel | undefined;
+      const finish = (result: Omit<CommandResult, "stdout" | "stderr">) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -918,11 +961,11 @@ export class SshConnectionService {
           ...result,
         });
       };
-      const stop = (result) => {
+      const stop = (result: Omit<CommandResult, "stdout" | "stderr">) => {
         try {
           stream?.signal("TERM");
           stream?.close();
-        } catch {}
+        } catch { /* Output still completes when the remote channel has closed. */ }
         finish(result);
       };
       const timer = setTimeout(
@@ -941,7 +984,7 @@ export class SshConnectionService {
         }
         stream = channel;
         session.channels.add(stream);
-        channel.on("data", (chunk) => {
+        channel.on("data", (chunk: Buffer) => {
           onStdout?.(chunk.toString("utf8"));
           if (output.length + chunk.length > maxOutputBytes)
             stop({ ok: false, outputLimitExceeded: true });
@@ -956,14 +999,14 @@ export class SshConnectionService {
           else errorOutput = Buffer.concat([errorOutput, chunk]);
         });
         channel.once("error", () => finish({ ok: false, code: null }));
-        channel.once("close", (code) =>
+        channel.once("close", (code: number | null) =>
           finish({ ok: code === 0, timedOut: false, code }),
         );
         channel.end(input);
       });
     });
   }
-  async run(owner, id, command, args = [], options = {}) {
+  async run(owner: string, id: string, command: string, args: string[] = [], options: SshRunOptions = {}) {
     const allowed = [
       "PYTHONDONTWRITEBYTECODE",
       "TF_CPP_MIN_LOG_LEVEL",
@@ -973,8 +1016,8 @@ export class SshConnectionService {
     const environment = Object.entries(options.env ?? {})
       .filter(([key]) => allowed.includes(key))
       .map(([key, value]) => `${key}=${value}`);
-    let argv = args.map(String),
-      input = options.input ?? "";
+    const argv = args.map(String);
+    let input = options.input ?? "";
     const probe = path.join(bundledRoot, "scripts", "runtime", "probe-research-python.py");
     const probeIndex = argv.indexOf(probe);
     if (probeIndex >= 0) {
@@ -987,7 +1030,7 @@ export class SshConnectionService {
       input,
     });
   }
-  async basicInfo(owner, id) {
+  async basicInfo(owner: string, id: string) {
     const session = await this.connected(owner, id);
     const result = await this.exec(
       owner,
@@ -1009,7 +1052,7 @@ export class SshConnectionService {
     };
     return session.info;
   }
-  async disconnect(owner, id) {
+  async disconnect(owner: string, id: string) {
     await this.profile(owner, id);
     const session = this.sessions.get(this.sessionKey(owner, id));
     if (session) {
@@ -1018,9 +1061,9 @@ export class SshConnectionService {
       session.challenge = null;
       for (const stream of session.channels) {
         try {
-          stream.signal?.("TERM");
-          stream.close();
-        } catch {}
+          if ("signal" in stream) { stream.signal("TERM"); stream.close(); }
+          else stream.end();
+        } catch { /* Continue releasing the remaining connection resources. */ }
       }
       for (const client of [...session.clients].reverse()) client.end();
       for (const child of session.proxies) child.kill();

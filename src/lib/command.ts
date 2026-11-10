@@ -1,21 +1,43 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import { access } from "node:fs/promises";
 import path from "node:path";
 
-const executableCache = new Map();
+export interface CommandOptions {
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  killTree?: boolean;
+  allowCmdShim?: boolean;
+}
+export interface CommandResult {
+  command?: string;
+  args?: string[];
+  stdout: string;
+  stderr: string;
+  ok: boolean;
+  timedOut?: boolean;
+  outputLimitExceeded?: boolean;
+  code?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error | null;
+}
+export type CommandRunner = (command: string, args: string[], options?: CommandOptions) => Promise<CommandResult>;
+const executableCache = new Map<string, string>();
 
-function spawnCaptured(command, args, options = {}) {
+function spawnCaptured(command: string, args: string[], options: CommandOptions = {}): Promise<CommandResult> {
   const timeoutMs = options.timeoutMs ?? 5_000;
   const maxOutputBytes = options.maxOutputBytes ?? 1_048_576;
 
-  return new Promise((resolve) => {
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
+  return new Promise<CommandResult>((resolve) => {
+    let stdout: Buffer = Buffer.alloc(0);
+    let stderr: Buffer = Buffer.alloc(0);
     let timedOut = false;
     let outputLimitExceeded = false;
     let settled = false;
 
-    let child;
+    let child: ChildProcessByStdio<null, Readable, Readable>;
     const terminate = () => {
       if (options.killTree && process.platform === "win32" && child?.pid) {
         const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
@@ -41,12 +63,12 @@ function spawnCaptured(command, args, options = {}) {
         ok: false,
         code: null,
         signal: null,
-        error,
+        error: error instanceof Error ? error : new Error(String(error)),
       });
       return;
     }
 
-    const append = (target, chunk) => {
+    const append = (target: Buffer, chunk: Buffer): Buffer => {
       const next = Buffer.concat([target, chunk]);
       if (next.length <= maxOutputBytes) return next;
       outputLimitExceeded = true;
@@ -67,7 +89,7 @@ function spawnCaptured(command, args, options = {}) {
     }, timeoutMs);
     timer.unref?.();
 
-    const finish = (result) => {
+    const finish = (result: Pick<CommandResult, "ok" | "code" | "signal" | "error">) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -94,12 +116,13 @@ function spawnCaptured(command, args, options = {}) {
   });
 }
 
-export async function resolveExecutable(command) {
+export async function resolveExecutable(command: string): Promise<string> {
   if (path.isAbsolute(command) || command.includes("/") || command.includes("\\")) {
     return command;
   }
   if (command === "node") return process.execPath;
-  if (executableCache.has(command)) return executableCache.get(command);
+  const cached = executableCache.get(command);
+  if (cached) return cached;
 
   const locator = process.platform === "win32" ? "where.exe" : "which";
   const located = await spawnCaptured(locator, [command], { timeoutMs: 2_000, maxOutputBytes: 32_768 });
@@ -117,7 +140,7 @@ export async function resolveExecutable(command) {
   return resolved;
 }
 
-export async function resolveInvocation(command, args = [], options = {}) {
+export async function resolveInvocation(command: string, args: string[] = [], options: Pick<CommandOptions, "allowCmdShim"> = {}) {
   const executable = await resolveExecutable(command);
   if (process.platform === "win32" && executable.toLowerCase().endsWith("\\codex.cmd")) {
     const script = path.join(path.dirname(executable), "node_modules", "@openai", "codex", "bin", "codex.js");
@@ -142,12 +165,12 @@ export async function resolveInvocation(command, args = [], options = {}) {
   return { executable, args: args.map(String) };
 }
 
-export async function runCommand(command, args = [], options = {}) {
+export async function runCommand(command: string, args: string[] = [], options: CommandOptions = {}): Promise<CommandResult> {
   const invocation = await resolveInvocation(command, args, { allowCmdShim: options.allowCmdShim === true });
   return spawnCaptured(invocation.executable, invocation.args, options);
 }
 
-export function summarizeCommandFailure(result) {
+export function summarizeCommandFailure(result: CommandResult): string {
   if (result.timedOut) return "command timed out";
   if (result.outputLimitExceeded) return "command output exceeded limit";
   if (result.error) return result.error.message;

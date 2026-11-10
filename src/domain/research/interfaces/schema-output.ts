@@ -1,5 +1,5 @@
 /** Omit documentation annotations while retaining schema fields and validation keywords. */
-function stripAnnotations(value) {
+function stripAnnotations(value:unknown):unknown {
   if (Array.isArray(value)) return value.map(stripAnnotations);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
@@ -19,8 +19,8 @@ function stripAnnotations(value) {
   );
 }
 
-export function compactSchemaOutput(value) {
-  const schema = stripAnnotations(value);
+export function compactSchemaOutput(value:object):Record<string,unknown> {
+  const schema = stripAnnotations(value) as Record<string,unknown>;
   if (!schema?.$defs || typeof schema.$defs !== "object") return schema;
   const names = new Map<string, string>();
   const definitions = new Map<string, unknown>();
@@ -35,7 +35,7 @@ export function compactSchemaOutput(value) {
     }
     names.set(name, compactName);
   }
-  const rewrite = (input) => {
+  const rewrite = (input:unknown):unknown => {
     if (Array.isArray(input)) return input.map(rewrite);
     if (!input || typeof input !== "object") return input;
     return Object.fromEntries(
@@ -44,7 +44,7 @@ export function compactSchemaOutput(value) {
         ["const", "enum", "default"].includes(key)
           ? item
           : key === "$ref" && typeof item === "string"
-            ? item.replace(/^#\/\$defs\/([^/]+)/, (prefix, encoded) => {
+            ? item.replace(/^#\/\$defs\/([^/]+)/, (prefix:string, encoded:string) => {
                 const name = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
                 return names.has(name) ? "#/$defs/" + names.get(name) : prefix;
               })
@@ -55,5 +55,5 @@ export function compactSchemaOutput(value) {
   return rewrite({
     ...schema,
     $defs: Object.fromEntries(definitions),
-  });
+  }) as Record<string,unknown>;
 }

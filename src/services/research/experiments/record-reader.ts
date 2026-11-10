@@ -1,6 +1,11 @@
 import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import * as z from "zod/v4";
+import { recordNumberSchema } from "../../../domain/research/record-ingestion.js";
+import type { StoredAsset, ResearchActor } from "../../../domain/research/types.js";
+import type { IndexedRecordRun, RecordRichEvent, RecordIndex, RecordProvider, RecordReaderContext, RecordImporterOptions } from "../../../domain/research/record-types.js";
+export const recordRichEventSchema = z.object({ seq: z.number().int().nonnegative().optional(), kind: z.string(), key: z.string().optional(), sourceRunId: z.string().optional(), data: z.record(z.string(), z.json()).optional() }).passthrough();
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { bundledRoot } from "../../../config.js";
@@ -26,33 +31,16 @@ function status(value: unknown): ImportedExperimentRun["status"] {
           : "unknown";
 }
 
+const object = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 /** Reads exported history without changing metric names or sorting away step resets. */
-export function readHistoryJson(
-  input: unknown,
-  fallbackId: string,
-  fallbackLabel: string,
-): ImportedExperimentRun[] {
-  const data: any = input;
-  const runs = Array.isArray(data?.runs)
-    ? data.runs
-    : [
-        {
-          history: Array.isArray(data)
-            ? data
-            : (data?.history ?? data?.metricHistory ?? data?.scalars),
-          ...(!Array.isArray(data) ? data : {}),
-        },
-      ];
-  return runs.map((run: any, index: number) => {
-    const series = new Map<string, ExperimentSeries>();
-    const events: any[] = Array.isArray(run.events) ? structuredClone(run.events) : [];
-    const add = (
-      key: string,
-      x: unknown,
-      y: unknown,
-      xKey: string,
-      timestamp?: unknown,
-    ) => {
+export function readHistoryJson(input: unknown, fallbackId: string, fallbackLabel: string): IndexedRecordRun[] {
+  const data = object(input);
+  const runs: unknown[] = Array.isArray(data.runs) ? data.runs : [Array.isArray(input) ? { history: input } : data];
+  return runs.map((value, index) => {
+    const run = object(value), series = new Map<string, ExperimentSeries>();
+    const events: RecordRichEvent[] = Array.isArray(run.events) ? run.events.map(item => recordRichEventSchema.parse(item)) : [];
+    const add = (key: string, x: unknown, y: unknown, xKey: string, timestamp?: unknown) => {
       if (key.startsWith("_") || !finite(x) || !finite(y)) return;
       const identity = JSON.stringify([key, xKey]);
       const line = series.get(identity) ?? { key, xKey, points: [] };
@@ -60,101 +48,57 @@ export function readHistoryJson(
       events.push({ kind: "scalar", key, xKey, x, value: y, ...(finite(timestamp) ? { timestamp } : {}) });
       series.set(identity, line);
     };
-    const history =
-      run.history ?? run.metricHistory ?? run.scalars ?? run.series ?? [];
+    const history = run.history ?? run.metricHistory ?? run.scalars ?? run.series ?? [];
     if (Array.isArray(history)) {
-      for (const [rowIndex, row] of history.entries()) {
-        if (row?.key && Array.isArray(row.points)) {
-          for (const [pointIndex, point] of row.points.entries())
-            add(
-              String(row.key),
-              point.x ?? point.step ?? pointIndex,
-              point.y ?? point.value,
-              row.xKey ??
-                (finite(point.x ?? point.step) ? "step" : "recordIndex"),
-              point.timestamp,
-            );
-        } else if (row && typeof row === "object") {
+      for (const [rowIndex, value] of history.entries()) {
+        const row = object(value);
+        if (row.key && Array.isArray(row.points)) {
+          for (const [pointIndex, value] of row.points.entries()) {
+            const point = object(value);
+            add(String(row.key), point.x ?? point.step ?? pointIndex, point.y ?? point.value, String(row.xKey ?? (finite(point.x ?? point.step) ? "step" : "recordIndex")), point.timestamp);
+          }
+        } else {
           const x = row._step ?? row.step ?? row.epoch ?? row.x;
-          const xKey = finite(row._step ?? row.step)
-            ? "step"
-            : finite(row.epoch)
-              ? "epoch"
-              : finite(row.x)
-                ? "x"
-                : "recordIndex";
-          for (const [key, value] of Object.entries(row))
-            if (!["step", "epoch", "x", "timestamp", "time"].includes(key))
-              add(
-                key,
-                finite(x) ? x : rowIndex,
-                value,
-                xKey,
-                row._timestamp ?? row.timestamp,
-              );
+          const xKey = finite(row._step ?? row.step) ? "step" : finite(row.epoch) ? "epoch" : finite(row.x) ? "x" : "recordIndex";
+          for (const [key, value] of Object.entries(row)) if (!["step", "epoch", "x", "timestamp", "time"].includes(key)) add(key, finite(x) ? x : rowIndex, value, xKey, row._timestamp ?? row.timestamp);
         }
       }
-    } else if (history && typeof history === "object") {
-      for (const [key, values] of Object.entries(history))
-        if (Array.isArray(values))
-          for (const [pointIndex, point] of values.entries()) {
-            const x = point?.step ?? point?.x;
-            add(
-              key,
-              finite(x) ? x : pointIndex,
-              finite(point) ? point : (point?.value ?? point?.y),
-              finite(x) ? "step" : "recordIndex",
-              point?.timestamp ?? point?.wall_time,
-            );
-          }
+    } else {
+      for (const [key, values] of Object.entries(object(history))) if (Array.isArray(values)) {
+        for (const [pointIndex, value] of values.entries()) {
+          const point = object(value), x = point.step ?? point.x;
+          add(key, finite(x) ? x : pointIndex, finite(value) ? value : point.value ?? point.y, finite(x) ? "step" : "recordIndex", point.timestamp);
+        }
+      }
     }
-    const sourceId = String(
-      run.sourceId ??
-        run.id ??
-        run.runId ??
-        run.run?.id ??
-        (runs.length === 1 ? fallbackId : fallbackId + ":" + index),
-    );
-    for (const [seq, event] of events.entries()) {
-      event.seq ??= seq;
-      event.sourceRunId ??= sourceId;
-    }
-    for (const [kind, value] of [["config", run.config ?? run.params], ["summary", run.summary]] as const)
-      if (value && typeof value === "object") events.push({ kind, sourceRunId: sourceId, seq: events.length, data: { update: value, remove: [] } });
     return {
-      sourceId,
-      label: String(
-        run.label ??
-          run.name ??
-          run.run?.name ??
-          (runs.length === 1
-            ? fallbackLabel
-            : fallbackLabel + " " + (index + 1)),
-      ),
+      sourceId: String(run.sourceId ?? run.id ?? run.run_id ?? object(run.run).id ?? fallbackId + (runs.length > 1 ? ":" + index : "")),
+      label: String(run.label ?? run.name ?? object(run.run).name ?? (runs.length === 1 ? fallbackLabel : fallbackLabel + " " + (index + 1))),
       status: status(run.status ?? run.state),
-      originalStatus: run.status ?? run.state,
-      series: [...series.values()],
-      events,
-      metrics: Object.fromEntries(
-        Object.entries(run.metrics ?? run.summary ?? {}).filter(([, value]) =>
-          finite(value),
-        ),
-      ),
+      ...(typeof (run.status ?? run.state) === "string" ? { originalStatus: String(run.status ?? run.state) } : {}),
+      series: [...series.values()], events,
+      metrics: Object.fromEntries(Object.entries(object(run.metrics ?? run.summary)).filter((entry): entry is [string, number] => finite(entry[1]))),
     };
   });
 }
 
+const pointSchema = z.object({ x: z.number(), y: z.number(), timestamp: z.number().nullish(), originalX: recordNumberSchema.optional(), originalY: recordNumberSchema.optional(), nonFinite: z.boolean().optional() }).passthrough();
+const parsedRunSchema = z.object({ sourceId: z.string(), label: z.string(), status: z.enum(["queued","running","succeeded","failed","cancelled","unknown"]), originalStatus: z.string().optional(), series: z.array(z.object({ key: z.string(), xKey: z.string(), unit: z.string().optional(), points: z.array(pointSchema) })), events: z.array(recordRichEventSchema).optional(), metrics: z.record(z.string(), z.number()).optional(), nativeSemantics: z.object({ warnings: z.array(z.object({ key: z.string().optional(), missingDependencies: z.array(z.string()).optional() })).optional() }).passthrough().optional() }).passthrough();
+const parsedRunsSchema = z.object({ runs: z.array(parsedRunSchema) });
+const indexSchema = parsedRunsSchema.extend({ schemaVersion: z.string(), provider: z.enum(["wandb","tensorboard","mlflow"]), assetId: z.string(), checksum: z.string(), contentVersion: z.string() });
+export function parseRecordIndex(value: unknown): RecordIndex { return indexSchema.parse(value); }
+
 export class ExperimentRecordReader {
-  constructor(c, options: any = {}) {
+  constructor(c: RecordReaderContext, options: RecordImporterOptions = {}) {
     this.c = c;
     this.options = options;
   }
-  c;
-  options;
-  children = new Set<any>();
-  indexes = new Map<string, { value: any; bytes: number }>();
+  c: RecordReaderContext;
+  options: RecordImporterOptions;
+  children = new Set<ChildProcess>();
+  indexes = new Map<string, { value: RecordIndex; bytes: number }>();
   indexBytes = 0;
-  remember(asset, provider, value, bytes) {
+  remember(asset: StoredAsset, provider: RecordProvider, value: RecordIndex, bytes: number) {
     if (bytes > 64 * 1024 * 1024) return;
     const key = provider + ":" + asset.id + ":" + asset.checksum;
     const previous = this.indexes.get(key);
@@ -163,12 +107,12 @@ export class ExperimentRecordReader {
     this.indexes.set(key, { value, bytes });
     this.indexBytes += bytes;
     while (this.indexBytes > 64 * 1024 * 1024) {
-      const first = this.indexes.keys().next().value;
+      const first = this.indexes.keys().next().value!;
       this.indexBytes -= this.indexes.get(first)!.bytes;
       this.indexes.delete(first);
     }
   }
-  indexPath(asset, provider) {
+  indexPath(asset: StoredAsset, provider: RecordProvider): string {
     return path.join(
       this.c.assets.root,
       "derived",
@@ -177,10 +121,10 @@ export class ExperimentRecordReader {
       provider + ".json",
     );
   }
-  eventsPath(asset, provider) {
+  eventsPath(asset: StoredAsset, provider: RecordProvider): string {
     return this.indexPath(asset, provider) + ".events.json";
   }
-  index(assetId, provider, actor) {
+  index(assetId: string, provider: RecordProvider, actor: ResearchActor): RecordIndex {
     const asset = this.c.assets.assert(assetId, actor),
       file = this.indexPath(asset, provider);
     if (!existsSync(this.c.assets.file(asset)))
@@ -199,16 +143,16 @@ export class ExperimentRecordReader {
       return cached.value;
     }
     const text = readFileSync(file, "utf8"),
-      index = JSON.parse(text);
+      index = parseRecordIndex(JSON.parse(text));
     if (index.checksum !== asset.checksum || index.provider !== provider)
       fail("EXPERIMENT_RECORD_CHANGED", "实验记录索引与原文件不一致。", 409);
     this.remember(asset, provider, index, Buffer.byteLength(text));
     return index;
   }
-  async process(asset, provider) {
+  async process(asset: StoredAsset, provider: RecordProvider): Promise<RecordIndex> {
     const source = this.c.assets.file(asset),
       name = asset.originalName;
-    let runs;
+    let runs: IndexedRecordRun[];
     if (/\.jsonl?$/i.test(name)) {
       const text = await readFile(source, "utf8");
       let input;
@@ -311,7 +255,7 @@ export class ExperimentRecordReader {
     this.remember(asset, provider, value, Buffer.byteLength(text));
     return value;
   }
-  native(provider, file, label) {
+  native(provider: RecordProvider, file: string, label: string): Promise<{ runs: IndexedRecordRun[] }> {
     const configured = this.options.pythonCommand;
     const command =
       (typeof configured === "function" ? configured() : configured) ||
@@ -320,7 +264,7 @@ export class ExperimentRecordReader {
       bundledRoot,
       "scripts/runtime/experiment-record-parser.py",
     );
-    return new Promise<any>((resolve, reject) => {
+    return new Promise<{ runs: IndexedRecordRun[] }>((resolve, reject) => {
       const child = spawn(
         command,
         [script, "--provider", provider, "--file", file, "--label", label],
@@ -340,7 +284,7 @@ export class ExperimentRecordReader {
       this.children.add(child);
       let stdout = "",
         stderr = "",
-        failure;
+        failure: string | undefined;
       const outputChunks: Buffer[] = [];
       let outputBytes = 0;
       const timer = setTimeout(() => {
@@ -379,7 +323,7 @@ export class ExperimentRecordReader {
         }
         try {
           stdout = Buffer.concat(outputChunks, outputBytes).toString("utf8");
-          resolve(JSON.parse(stdout));
+          resolve({ runs: parsedRunsSchema.parse(JSON.parse(stdout)).runs });
         } catch {
           try {
             fail(

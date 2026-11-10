@@ -1,9 +1,10 @@
+import type { RouteContext } from "../route-context.js";
 import { AppError } from "../../lib/errors.js";
-import { readJson, sendJson } from "../../lib/http.js";
+import { readJsonObject, sendJson } from "../../lib/http.js";
 
 import { handleSshRequest } from "../../ssh/ssh-http.js";
 
-export async function handleEnvironmentsRoutes(context) {
+export async function handleEnvironmentsRoutes(context: RouteContext) {
   const {
     request,
     response,
@@ -13,20 +14,23 @@ export async function handleEnvironmentsRoutes(context) {
     requestRuntime,
     sshConnections,
     sshEnvironments,
-  } = context;
+  }: RouteContext = context;
 
+  if (!pathname.startsWith("/api/ssh/") && !pathname.startsWith("/api/tools-environment")) return false;
+  if (!requestActor.user) throw new AppError("AUTH_REQUIRED", "请先登录。", { status: 401 });
   if (
     await handleSshRequest({
       request,
       response,
       pathname,
       runtime: requestRuntime,
-      owner: requestActor?.user.id,
+      owner: requestActor.user.id,
       ssh: sshConnections,
       hub: sshEnvironments,
     })
   )
     return true;
+  const ownerId = requestActor.user.id;
   const sshId = pathname.startsWith("/api/tools-environment")
     ? request.headers["x-rw-ssh-id"]
     : null;
@@ -36,7 +40,7 @@ export async function handleEnvironmentsRoutes(context) {
     });
   const environmentCatalog = async () =>
     sshId
-      ? sshEnvironments.catalog(requestRuntime, requestActor.user.id, sshId)
+      ? sshEnvironments.catalog(requestRuntime, ownerId, sshId)
       : requestRuntime.toolEnvironment.catalog;
   if (pathname === "/api/tools-environment" && request.method === "GET") {
     sendJson(
@@ -45,7 +49,7 @@ export async function handleEnvironmentsRoutes(context) {
       sshId
         ? await sshEnvironments.inventory(
             requestRuntime,
-            requestActor.user.id,
+            ownerId,
             sshId,
           )
         : requestRuntime.toolEnvironment.inventory(),
@@ -79,7 +83,7 @@ export async function handleEnvironmentsRoutes(context) {
     pathname === "/api/tools-environment/catalog/register" &&
     request.method === "POST"
   ) {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     if (
       !body ||
       typeof body !== "object" ||
@@ -125,7 +129,7 @@ export async function handleEnvironmentsRoutes(context) {
       request.method === "POST" &&
       ["check", "activate", "packages/refresh"].includes(action)
     ) {
-      const body = await readJson(request);
+      const body = await readJsonObject(request);
       const allowed = action === "check" ? ["componentId", "refresh"] : [];
       if (
         !body ||
@@ -188,7 +192,7 @@ export async function handleEnvironmentsRoutes(context) {
       response,
       200,
       await requestRuntime.toolEnvironment.selectEnvironment(
-        await readJson(request),
+        await readJsonObject(request),
       ),
     );
     return true;
@@ -201,7 +205,7 @@ export async function handleEnvironmentsRoutes(context) {
       throw new AppError("SSH_USE_CATALOG", "请检测具体的远程环境。", {
         status: 422,
       });
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     if (
       !body ||
       typeof body !== "object" ||
@@ -220,7 +224,7 @@ export async function handleEnvironmentsRoutes(context) {
     pathname === "/api/tools-environment/check" &&
     request.method === "POST"
   ) {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     if (
       body?.toolId !== undefined &&
       (typeof body.toolId !== "string" || !body.toolId.trim())
@@ -238,9 +242,9 @@ export async function handleEnvironmentsRoutes(context) {
       sshId
         ? await sshEnvironments.checkTool(
             requestRuntime,
-            requestActor.user.id,
+            ownerId,
             sshId,
-            body.toolId,
+            body.toolId ?? "",
           )
         : await requestRuntime.toolEnvironment.check(body?.toolId ?? null),
     );
@@ -254,7 +258,7 @@ export async function handleEnvironmentsRoutes(context) {
       throw new AppError("SSH_USE_CATALOG", "请选择具体的远程环境进行检测。", {
         status: 422,
       });
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     if (
       !body ||
       typeof body !== "object" ||
@@ -277,14 +281,14 @@ export async function handleEnvironmentsRoutes(context) {
     /^\/api\/tools-environment\/tools\/([^/]+)$/,
   );
   if (toolConfigurationMatch && request.method === "PATCH") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     sendJson(
       response,
       200,
       sshId
         ? await sshEnvironments.configureTool(
             requestRuntime,
-            requestActor.user.id,
+            ownerId,
             sshId,
             toolConfigurationMatch[1],
             body,

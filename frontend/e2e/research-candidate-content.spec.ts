@@ -77,7 +77,9 @@ test("reading results persist after review; node deletion protects and reloads r
     await page.getByRole("button",{name:"确认删除",exact:true}).click();
     await expect(page).toHaveURL(/#\/records\/history\//);
     expect(f.runtime.researchCommands.store.get("nodes",nodeId).deleted).toBe(true);
-    expect(f.runtime.researchCommands.store.all("blocks").filter(block=>block.nodeId===nodeId).every(block=>block.lifecycle==="archived")).toBe(true);
+    const archivedBlocks=f.runtime.researchCommands.store.all("blocks").filter(block=>block.owner.kind==="node"&&block.owner.id===nodeId);
+    expect(archivedBlocks.length).toBeGreaterThan(0);
+    expect(archivedBlocks.every(block=>block.lifecycle==="archived")).toBe(true);
     expect(f.runtime.state.topology.nodes.some(node=>node.id===nodeId)).toBe(false);
   } finally { await cleanup!(); }
 });

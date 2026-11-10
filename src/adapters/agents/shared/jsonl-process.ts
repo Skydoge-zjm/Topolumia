@@ -1,11 +1,21 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import { resolveInvocation } from "../../../lib/command.js";
 import { withoutResearchCredentials } from "../../../agent/research-mcp-binding.js";
 import { errorFromMessage } from "./agent-driver.js";
 
-export class JsonlProcess {
-  constructor({ command, args = [], cwd, env, label, onMessage, onClose, requestTimeoutMs = 300_000 } = {}) {
+export interface ProcessCloseDetail { code?: number | null; signal?: NodeJS.Signals | null; error?: unknown; expected?: boolean; stderr?: string }
+export interface JsonlOptions<T> { command: string; args?: string[]; cwd?: string; env?: Record<string, string>; label?: string; onMessage?: (message: T) => void; onClose?: (detail: ProcessCloseDetail) => void; requestTimeoutMs?: number }
+interface PendingRequest { method: string; resolve: (value: unknown) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }
+export class JsonlProcess<TMessage = Record<string, unknown>> {
+  command: string; args: string[]; cwd?: string; env?: Record<string, string>; label: string;
+  onMessage: (message: TMessage) => void; onClose: (detail: ProcessCloseDetail) => void;
+  requestTimeoutMs: number; pending = new Map<number, PendingRequest>(); requestId = 0; stderr = "";
+  closed = false; expectedClose = false; exited = false; inputBlocked = false; inputEnded = false;
+  writeQueue: { text: string; end: boolean }[] = [];
+  child!: ChildProcessWithoutNullStreams; reader?: readline.Interface;
+  invocation?: Awaited<ReturnType<typeof resolveInvocation>>; stopPromise?: Promise<void>;
+  constructor({ command, args = [], cwd, env, label, onMessage, onClose, requestTimeoutMs = 300_000 }: JsonlOptions<TMessage>) {
     this.command = command;
     this.args = args;
     this.cwd = cwd;
@@ -14,7 +24,7 @@ export class JsonlProcess {
     this.onMessage = onMessage ?? (() => {});
     this.onClose = onClose ?? (() => {});
     this.requestTimeoutMs = requestTimeoutMs;
-    this.pending = new Map();
+    this.pending = new Map<number, PendingRequest>();
     this.requestId = 0;
     this.stderr = "";
     this.closed = false;
@@ -39,19 +49,19 @@ export class JsonlProcess {
     } catch (error) {
       throw errorFromMessage("AGENT_PROCESS_START_FAILED", `无法启动 ${this.label}。`, {
         command: this.command,
-        reason: error.message,
+        reason: error instanceof Error ? error.message : String(error),
       }, 503);
     }
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const onSpawn = () => {
         this.child.off("error", onError);
         resolve();
       };
-      const onError = (error) => {
+      const onError = (error: Error) => {
         this.child.off("spawn", onSpawn);
         reject(errorFromMessage("AGENT_PROCESS_START_FAILED", `无法启动 ${this.label}。`, {
           command: this.command,
-          reason: error.message,
+          reason: error instanceof Error ? error.message : String(error),
         }, 503));
       };
       this.child.once("spawn", onSpawn);
@@ -69,11 +79,11 @@ export class JsonlProcess {
     return this;
   }
 
-  send(message) {
+  send(message: unknown) {
     this.sendText(`${JSON.stringify(message)}\n`);
   }
 
-  sendText(text, { end = false } = {}) {
+  sendText(text: string, { end = false } = {}) {
     if (this.closed || this.inputEnded || !this.child?.stdin?.writable) {
       throw errorFromMessage("AGENT_PROCESS_CLOSED", `${this.label} 进程已经关闭。`, {}, 409);
     }
@@ -84,7 +94,7 @@ export class JsonlProcess {
 
   #flushInput() {
     while (!this.closed && !this.inputBlocked && this.writeQueue.length) {
-      const { text, end } = this.writeQueue.shift();
+      const { text, end } = this.writeQueue.shift()!;
       try {
         this.inputBlocked = !this.child.stdin.write(text, "utf8", (error) => { if (error) this.#inputFailed(error); });
         if (end) this.child.stdin.end();
@@ -92,21 +102,21 @@ export class JsonlProcess {
     }
   }
 
-  #inputFailed(error) {
+  #inputFailed(error: unknown) {
     this.#processEnded({ error });
     void this.kill();
   }
 
-  request(method, params = {}, timeoutMs = this.requestTimeoutMs) {
+  request<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = this.requestTimeoutMs): Promise<T> {
     if (this.closed) return Promise.reject(errorFromMessage("AGENT_PROCESS_CLOSED", `${this.label} 进程已经关闭。`, {}, 409));
     const id = ++this.requestId;
-    return new Promise((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(errorFromMessage("AGENT_REQUEST_TIMEOUT", `${this.label} 请求 ${method} 超时。`, { method }, 504));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { method, resolve, reject, timer });
+      this.pending.set(id, { method, resolve: value => resolve(value as T), reject, timer });
       try {
         this.send({ id, method, params });
       } catch (error) {
@@ -117,11 +127,11 @@ export class JsonlProcess {
     });
   }
 
-  notify(method, params = {}) {
+  notify(method: string, params: Record<string, unknown> = {}) {
     this.send({ method, params });
   }
 
-  kill() {
+  kill(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     if (!this.child?.pid || this.exited) return Promise.resolve();
     this.expectedClose = true;
@@ -141,37 +151,37 @@ export class JsonlProcess {
     return this.stopPromise;
   }
 
-  #onLine(line) {
+  #onLine(line: string) {
     if (!line.trim() || this.closed) return;
-    let message;
+    let value: unknown;
     try {
-      message = JSON.parse(line);
+      value = JSON.parse(line);
     } catch (error) {
-      this.onMessage({
-        type: "provider.event",
-        payload: { kind: "protocol-error", detail: error.message, line: line.slice(0, 500) },
-      });
+      this.onMessage({ type: "provider.event", payload: { kind: "protocol-error", detail: error instanceof Error ? error.message : String(error), line: line.slice(0, 500) } } as TMessage);
       return;
     }
-    if (!message?.method && message?.id !== undefined && message?.id !== null && this.pending.has(message.id)) {
-      const pending = this.pending.get(message.id);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const message = value as Record<string, unknown>;
+    if (!message.method && typeof message.id === "number" && this.pending.has(message.id)) {
+      const pending = this.pending.get(message.id)!;
       this.pending.delete(message.id);
       clearTimeout(pending.timer);
       if (message.error) {
-        pending.reject(errorFromMessage("AGENT_REMOTE_ERROR", message.error.message ?? `${this.label} request failed.`, {
+        const error = typeof message.error === "object" ? message.error as Record<string, unknown> : {};
+        pending.reject(errorFromMessage("AGENT_REMOTE_ERROR", typeof error.message === "string" ? error.message : `${this.label} request failed.`, {
           method: pending.method,
-          code: message.error.code,
-          data: message.error.data,
+          code: error.code,
+          data: error.data,
         }));
       } else {
         pending.resolve(message.result);
       }
       return;
     }
-    this.onMessage(message);
+    this.onMessage(message as TMessage);
   }
 
-  #processEnded(detail) {
+  #processEnded(detail: ProcessCloseDetail) {
     if (this.closed) return;
     this.closed = true;
     this.writeQueue.length = 0;

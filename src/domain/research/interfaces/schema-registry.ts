@@ -14,14 +14,14 @@ const payloads = {
   code: { language: "python", code: "print(0)" },
   chart: { chartType: "line", dataBlockId: "block:source-data", config: {} }, file: { label: "Source file" },
 };
-export const schemaRegistry = {
+export const schemaRegistry:Record<string,Record<string,{schema:z.ZodType;example:unknown}>> = {
   nodeCore: Object.fromEntries(researchNodeKinds.map(kind => [kind, {
     schema: coreSchema(kind), example: kind === "paper" ? { nodeName: "Example", paperTitle: "An Example Research Paper" } : { nodeName: "Example" },
   }])),
   groupCore: { group: {schema:groupCoreSchema,example:{nodeName:"Ablation experiments"}} },
   contentBlock: Object.fromEntries(Object.entries(payloadSchemas).map(([type, payload]) => [type, {
     schema: contentBlockInput.extend({ type: z.literal(type), payload: payload.optional() }),
-    example: { title: "Example", type, payload: payloads[type], ...(["image", "document", "spreadsheet", "file", "experimentRecord"].includes(type) ? { representations: [{ kind: "asset", assetId: type === "experimentRecord" ? "asset:inspected-record" : "asset:uploaded-file", role: "source" }] } : {}) },
+    example: { title: "Example", type, payload: payloads[type as keyof typeof payloads], ...(["image", "document", "spreadsheet", "file", "experimentRecord"].includes(type) ? { representations: [{ kind: "asset", assetId: type === "experimentRecord" ? "asset:inspected-record" : "asset:uploaded-file", role: "source" }] } : {}) },
   }])),
   proposal: { create: { schema: createProposalSchema, example: proposalExamples.create }, edit: { schema: reviseProposalSchema, example: proposalExamples.edit } },
 };

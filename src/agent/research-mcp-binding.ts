@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { bundledRoot } from "../config.js";
 import { snapshotSkillBundle } from "./skill-bundle.js";
+import type { ResearchMcpBinding } from "../domain/agents/agent-types.js";
 
 export function buildResearchMcpBinding({
   baseUrl,
@@ -12,7 +13,7 @@ export function buildResearchMcpBinding({
   runtimeInstanceId = randomUUID(),
   researchSessionId = runtimeInstanceId,
   dataRoot = path.join(cwd, ".topolumia-skills"),
-}) {
+}: { baseUrl: string; projectId: string; sessionToken: string; cwd: string; runtimeInstanceId?: string; researchSessionId?: string; dataRoot?: string }): ResearchMcpBinding {
   const transferRoot = path.join(cwd, ".topolumia-transfer", runtimeInstanceId);
   mkdirSync(path.join(transferRoot,"out"),{recursive:true});
   mkdirSync(path.join(transferRoot,"in"),{recursive:true});
@@ -53,7 +54,7 @@ export function withoutResearchCredentials(environment = process.env) {
     ),
   );
 }
-export function codexMcpConfig(binding) {
+export function codexMcpConfig(binding: ResearchMcpBinding) {
   return {
     command: binding.command,
     args: binding.args,

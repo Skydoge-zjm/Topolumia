@@ -1,3 +1,10 @@
+import { isRecordBlock } from "../../../domain/research/record-types.js";
+import type { RecordBlock, RecordProvider, RecordSelection, RecordReadScope, RecordLine, RecordSource, RecordPointRange, LiveRecordRun, RecordReadInput, RecordPlotInput, RecordTableInput, RecordEventItem } from "../../../domain/research/record-types.js";
+import type { ResearchActor, StoredNode, StoredBlock, ResearchView, PayloadMap, Representation, JsonValue } from "../../../domain/research/types.js";
+import type { ExperimentMaterialLink } from "../../../domain/research/experiment-records.js";
+import type * as z from "zod/v4";
+import { experimentPatchSchema } from "../../../domain/research/experiment-records.js";
+import { AppError, asAppError } from "../../../lib/errors.js";
 import { ExperimentRecordImporter } from "./record-importer.js";
 import { fail } from "../../../domain/research/access.js";
 import { nodeRef, sameObject } from "../../../domain/research/object-ref.js";
@@ -6,7 +13,7 @@ import { recordNumber } from "../../../domain/research/record-ingestion.js";
 import { experimentMetricId, type ExperimentMetricSelection } from "../../../domain/research/experiment-records.js";
 
 export class ExperimentRecordService extends ExperimentRecordImporter {
-  async prepareMaterialSelections(patch, actor) {
+  async prepareMaterialSelections(patch: z.infer<typeof experimentPatchSchema>, actor: ResearchActor) {
     for (const link of patch?.addLinks ?? [])
       if (link.selection.kind === "assetRow") {
         const table = await this.c.assets.values(
@@ -22,7 +29,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
           link.selection.sheet = table.sheetName;
       }
   }
-  list(actor) {
+  list(actor: ResearchActor) {
     this.c.check(actor, "research.view");
     return {
       items: this.c.nodes
@@ -43,10 +50,10 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     };
   }
   experiment(
-    nodeId,
-    actor,
-    candidateId = undefined,
-    candidateSnapshot = undefined,
+    nodeId: string,
+    actor: ResearchActor,
+    candidateId: string | undefined = undefined,
+    candidateSnapshot: ResearchView | undefined = undefined,
   ) {
     this.c.check(actor, "research.view");
     const snapshot = candidateId
@@ -69,7 +76,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       ),
     };
   }
-  validatePayload(payload, representations, actor) {
+  validatePayload(payload: PayloadMap["experimentRecord"], representations: Representation[], actor: ResearchActor) {
     const assets = new Set(
       representations
         .filter((rep) => rep.kind === "asset")
@@ -85,7 +92,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         );
       seen.add(run.sourceId);
       if (run.projectSource) { this.c.projectRecords.validateEntry(run, payload.provider); continue; }
-      if (!run.assetIds.length && !run.ref)
+      if (!run.assetIds.length)
         fail(
           "EXPERIMENT_RECORD_SOURCE_REQUIRED",
           "实验记录需要原文件或已接入的运行来源。",
@@ -114,22 +121,23 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     }
     this.c.projectRecords.validateRules(payload.followSources, payload.provider);
   }
-  material(node, link, blocks) {
+  material(node: Pick<StoredNode, "id">, link: ExperimentMaterialLink, blocks: StoredBlock[]) {
     const current = blocks.find((block) => block.id === link.blockId);
     const block =
       current?.revision === link.blockRevision
         ? current
         : this.c.store.get("versions", link.blockId + ":" + link.blockRevision);
-    if (!block || !sameObject(block.owner, nodeRef(node.id)))
+    if (!block || !("type" in block) || !sameObject(block.owner, nodeRef(node.id)))
       return { ...link, available: false };
-    let item;
-    if (["asset", "assetRow"].includes(link.selection.kind))
+    let item: Representation | JsonValue | undefined;
+    const selection = link.selection;
+    if (selection.kind === "asset" || selection.kind === "assetRow")
       item = block.representations.find(
-        (rep) => rep.kind === "asset" && rep.assetId === link.selection.assetId,
+        (rep) => rep.kind === "asset" && rep.assetId === selection.assetId,
       );
     if (link.selection.kind === "row")
       item = block.payload?.rows?.[link.selection.rowIndex];
-    const readHint: any = {
+    const readHint: Record<string, unknown> = {
       tool: "read_blocks",
       mode: "read",
       owner: nodeRef(node.id),
@@ -188,28 +196,28 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       ...(preview !== undefined ? { item: preview } : {}),
     };
   }
-  collectionRunCount(block) {
+  collectionRunCount(block: Pick<StoredBlock, "id" | "payload" | "recordCollection">) {
     return this.collectionRuns(block).length;
   }
-  collectionRuns(block, liveRuns = this.c.ingestion.runs(block.id), includeProject = true) {
+  collectionRuns(block: Pick<StoredBlock, "id" | "payload" | "recordCollection">, liveRuns: LiveRecordRun[] = this.c.ingestion.runs(block.id), includeProject = true): LiveRecordRun[] {
     if (includeProject) liveRuns = [...liveRuns, ...this.c.projectRecords.runs(block)];
-    const runs = new Map<string, any>(liveRuns.map(run => [run.id, run]));
+    const runs = new Map<string, LiveRecordRun>(liveRuns.map(run => [run.id, run]));
     for (const run of block.recordCollection?.runs ?? []) {
       const live = runs.get(run.id);
       if (run.projectSource && !live) continue;
       const overlay = live && Array.isArray(run.metadataFields) ? { id: run.id, sources: run.sources, ...Object.fromEntries(run.metadataFields.map(key => [key, run[key]])) } : run;
-      runs.set(run.id, { ...live, ...overlay });
+      runs.set(run.id, { ...run, ...live, ...overlay });
     }
     return [...runs.values()];
   }
-  overview(nodeId, actor, candidateId = undefined, blockId = undefined) {
+  overview(nodeId: string, actor: ResearchActor, candidateId: string | undefined = undefined, blockId: string | undefined = undefined) {
     const { node, blocks } = this.experiment(nodeId, actor, candidateId);
-    const recordBlocks = blocks.filter(
+    const recordBlocks = blocks.filter(isRecordBlock).filter(
       (block) => block.type === "experimentRecord" && (!blockId || block.id === blockId),
     );
     if (blockId && !recordBlocks.length) fail("CONTENT_BLOCK_NOT_FOUND", "实验记录块不存在。", 404);
     const collections = recordBlocks.map(block => ({ ...block.recordCollection, blockId: block.id, title: block.title }));
-    const recordsByRun = new Map<string, any[]>();
+    const recordsByRun = new Map<string, (PayloadMap["experimentRecord"]["runs"][number] & { blockId: string; blockRevision: number; title: string; provider: RecordProvider })[]>();
     for (const block of recordBlocks)
       for (const entry of block.payload.runs ?? []) {
         const records = recordsByRun.get(JSON.stringify([block.id, entry.runId])) ?? [];
@@ -227,7 +235,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       blockId,
       revision: blockId ? collections[0].revision : node.revision,
       collections,
-      runs: collections.flatMap(collection => this.collectionRuns(recordBlocks.find(block => block.id === collection.blockId)).map(run => ({ ...run, blockId: collection.blockId, collectionId: collection.id }))).map((run) => ({
+      runs: collections.flatMap(collection => this.collectionRuns(recordBlocks.find(block => block.id === collection.blockId)!).map(run => ({ ...run, blockId: collection.blockId, collectionId: collection.id }))).map((run) => ({
         ...run,
         records: recordsByRun.get(JSON.stringify([run.blockId, run.id])) ?? [],
         readHint: {
@@ -244,19 +252,13 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     };
   }
   async runSeries(
-    selection,
-    actor,
-    candidateId = undefined,
-    blockId = undefined,
-    blockRevision = undefined,
+    selection: RecordSelection,
+    actor: ResearchActor,
+    candidateId: string | undefined = undefined,
+    blockId: string | undefined = undefined,
+    blockRevision: number | undefined = undefined,
     allowPartial = false,
-    scope: {
-      views?: Map<string, any>;
-      metricKeys?: string[];
-      indices?: Map<string, Promise<any>>;
-      entries?: Map<string, Map<string, { block: any; entry: any }[]>>;
-      candidateSnapshot?: any;
-    } = {},
+    scope: RecordReadScope = {},
   ) {
     blockId ??= selection.blockId;
     const pinned = selection.snapshotId ? this.c.ingestion.getSnapshot(selection.snapshotId, actor) : null;
@@ -291,10 +293,11 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     if (matches.length > 1) fail("EXPERIMENT_RUN_AMBIGUOUS", "请选择记录块。", 422);
     const run = matches[0];
     if (!run) fail("EXPERIMENT_RUN_NOT_FOUND", "执行记录不属于所选实验。", 404);
-    const lines = new Map(),
+    const lines = new Map<string, RecordLine>(),
       sources = new Set(),
-      warnings: any[] = [];
-    const unavailable = (error, source) => {
+      warnings: { nodeId: string; runId: string; code: string; message: string; blockId?: string; assetId?: string; ref?: string }[] = [];
+    const unavailable = (cause: unknown, source: { assetId?: string; ref?: string }) => {
+      const error = cause instanceof AppError ? cause : cause instanceof Error && "code" in cause && typeof cause.code === "string" ? new AppError(cause.code, cause.message, { status: "status" in cause && typeof cause.status === "number" ? cause.status : 500, cause }) : asAppError(cause);
       if (!allowPartial || error.status === 403) throw error;
       warnings.push({
         nodeId: node.id,
@@ -304,7 +307,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         message: String(error.message ?? "实验记录不可用。").slice(0, 500),
       });
     };
-    const append = (line, source) => {
+    const append = (line: { key: string; xKey?: string; unit?: string; pointCount?: number; points?: { x: number; y: number }[] }, source: RecordSource & { provider?: RecordProvider }) => {
       if (scope.metricKeys?.length && !scope.metricKeys.includes(line.key))
         return;
       const key = JSON.stringify([line.key, line.xKey ?? "step"]),
@@ -343,12 +346,13 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     let entriesByRun = scope.entries?.get(entryKey);
     if (!entriesByRun) {
       entriesByRun = new Map();
-      for (const block of blocks)
+      for (const block of blocks.filter(isRecordBlock))
         if (
           block.type === "experimentRecord" &&
           (!blockId || block.id === blockId)
         )
           for (const entry of block.payload.runs ?? []) {
+            if (!entry.runId) continue;
             const entries = entriesByRun.get(entry.runId) ?? [];
             entries.push({ block, entry });
             entriesByRun.set(entry.runId, entries);
@@ -391,34 +395,16 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
           unavailable(error, { assetId });
         }
       }
-      if (entry.ref && !entry.assetIds.length && !sources.has(entry.ref)) {
-        try {
-          this.c.check(actor, "experiment.view");
-          if (!this.options.gateway)
-            fail("EXPERIMENT_SOURCE_UNAVAILABLE", "实验记录来源未接入。", 422);
-          sources.add(entry.ref);
-          const result = await this.options.gateway.series(entry.ref, {
-            maxPoints: 2000,
-          });
-          for (const line of result.series ?? [])
-            append(line, {
-              blockId: block.id,
-              blockRevision: block.revision,
-              ref: entry.ref,
-              provider: block.payload.provider,
-              observedAt: result.observedAt,
-              sampledAtSource: true,
-            });
-        } catch (error) {
-          unavailable(error, { ref: entry.ref });
-        }
+      if (entry.ref && !entry.assetIds.length && !entry.projectSource) {
+        unavailable(Object.assign(new Error("该引用仅保留来源证据；请先把服务运行导入项目记录，再选择其持久版本。"), { code: "EXPERIMENT_SOURCE_NOT_IMPORTED", status: 422 }), { ref: entry.ref });
       }
     }
+
     for (const line of this.c.ingestion.metrics(run.blockId, run.id, pinned?.watermark)) {
       if (scope.metricKeys?.length && !scope.metricKeys.includes(line.key)) continue;
       lines.set(JSON.stringify([line.key, line.xKey]), line);
     }
-    const selectedBlock = blocks.find(block => block.id === run.blockId);
+    const selectedBlock = blocks.find(block => block.id === run.blockId) ?? fail("CONTENT_BLOCK_NOT_FOUND", "实验记录块不存在。", 404);
     for (const binding of this.c.projectRecords.bindings(selectedBlock, pinned).filter(binding => binding.runId === run.id)) {
       for (const line of this.c.ingestion.metrics(binding.sourceId, binding.runId, binding.watermark)) {
         if (scope.metricKeys?.length && !scope.metricKeys.includes(line.key)) continue;
@@ -438,8 +424,8 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       series: [...lines.values()],
     };
   }
-  async staticBlockEvents(block, actor, { runId, kind }: { runId?: string; kind?: string } = {}) {
-    const result = [];
+  async staticBlockEvents(block: RecordBlock, actor: ResearchActor, { runId, kind }: { runId?: string; kind?: string } = {}): Promise<RecordEventItem[]> {
+    const result: RecordEventItem[] = [];
     let order = 0;
     for (const entry of block.payload?.runs ?? []) {
       if (runId && entry.runId !== runId) continue;
@@ -454,8 +440,9 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
           };
           if (kind && event.kind !== kind) continue;
           result.push({
+            watermark: order + 1,
             order: order++,
-            runId: entry.runId,
+            runId: entry.runId ?? entry.sourceId,
             event,
             eventAssetId: assetId,
             eventSourceId: entry.sourceId,
@@ -466,58 +453,56 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     }
     return result;
   }
-  async events(input, actor) {
+  async events(input: RecordReadInput & { nodeId: string; blockId: string }, actor: ResearchActor) {
     this.c.check(actor, "research.view");
     const snapshot = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : null,
       blockView = snapshot ? { blocks: [snapshot.block] } : this.experiment(input.nodeId, actor, input.candidateId),
       block = blockView.blocks.find((item) => item.id === input.blockId && item.type === "experimentRecord" && item.lifecycle !== "archived");
-    if (!block) fail("CONTENT_BLOCK_NOT_FOUND", "实验记录块不存在。", 404);
+    if (!block || !isRecordBlock(block)) fail("CONTENT_BLOCK_NOT_FOUND", "实验记录块不存在。", 404);
     const staticItems = await this.staticBlockEvents(block, actor, { runId: input.runId, kind: input.eventKind });
-    const after = input.after ?? 0, limit = Math.min(100, input.limit ?? 20), live = this.c.ingestion.events(input.blockId, actor, { after: Math.max(0, after - staticItems.length), limit, snapshotId: input.snapshotId, runId: input.runId, kind: input.eventKind }), items = [];
+    const after = input.after ?? 0, limit = Math.min(100, input.limit ?? 20), live = this.c.ingestion.events(input.blockId, actor, { after: Math.max(0, after - staticItems.length), limit, snapshotId: input.snapshotId, runId: input.runId, kind: input.eventKind }), items: RecordEventItem[] = [];
     if (after < staticItems.length) items.push(...staticItems.slice(after, after + limit));
     if (items.length < limit) items.push(...live.items.slice(0, limit - items.length));
     const normalized = items.map(item => ({
-      watermark: item.eventAssetId ? item.order + 1 : staticItems.length + item.watermark,
+      watermark: item.eventAssetId ? (item.order ?? 0) + 1 : staticItems.length + item.watermark,
       runId: item.runId,
       event: item.event,
       totalChars: item.totalChars ?? JSON.stringify(item.event).length,
       ...(item.eventAssetId ? { eventAssetId: item.eventAssetId, eventSourceId: item.eventSourceId, eventIndex: item.eventIndex } : {}),
-      readHint: item.eventAssetId ? { tool: "read_experiment", mode: "events", nodeId: input.nodeId, blockId: input.blockId, eventWatermark: item.order + 1, eventAssetId: item.eventAssetId, eventSourceId: item.eventSourceId, eventIndex: item.eventIndex, ...(input.snapshotId ? { snapshotId: input.snapshotId } : {}) } : item.readHint,
-      attachments: (item.event?.data?.attachments ?? []).map(attachment => ({ ...attachment, downloadHint: { tool: "transfer_asset", direction: "download", variant: "original", target: { kind: "recordAttachment", blockId: input.blockId, sha256: attachment.sha256, ...(input.snapshotId ? { snapshotId: input.snapshotId } : {}) } } })),
+      readHint: item.eventAssetId ? { tool: "read_experiment", mode: "events", nodeId: input.nodeId, blockId: input.blockId, eventWatermark: (item.order ?? 0) + 1, eventAssetId: item.eventAssetId, eventSourceId: item.eventSourceId, eventIndex: item.eventIndex, ...(input.snapshotId ? { snapshotId: input.snapshotId } : {}) } : item.readHint,
+      attachments: (Array.isArray(item.event.data?.attachments) ? item.event.data.attachments : []).filter((attachment): attachment is { [key: string]: JsonValue } => attachment !== null && typeof attachment === "object" && !Array.isArray(attachment) && typeof attachment.sha256 === "string").map(attachment => ({ ...attachment, downloadHint: { tool: "transfer_asset", direction: "download", variant: "original", target: { kind: "recordAttachment", blockId: input.blockId, sha256: attachment.sha256, ...(input.snapshotId ? { snapshotId: input.snapshotId } : {}) } } })),
     }));
     const watermark = staticItems.length + live.watermark, last = normalized.at(-1)?.watermark;
     return { items: normalized, watermark, nextAfter: last !== undefined && last < watermark ? last : null, snapshotId: input.snapshotId };
   }
-  async staticEventText(input, actor) {
-    const block = this.c.objects.block({ kind: "node", id: input.nodeId }, input.blockId),
-      runs = await this.staticEvents(input.eventAssetId, block.payload.provider, actor),
+  async staticEventText(input: RecordReadInput & { nodeId: string; blockId: string; eventAssetId: string; eventWatermark: number }, actor: ResearchActor) {
+    const pinned = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : null;
+    if (pinned && (pinned.nodeId !== input.nodeId || pinned.blockId !== input.blockId)) fail("INGESTION_SCOPE_MISMATCH", "快照不属于所选实验。", 403);
+    const block = pinned?.block ?? this.c.objects.block({ kind: "node", id: input.nodeId }, input.blockId);
+    if (!isRecordBlock(block)) fail("CONTENT_BLOCK_NOT_FOUND", "实验记录块不存在。", 404);
+    if (input.eventIndex === undefined) fail("INPUT_INVALID", "请指定事件索引。", 422);
+    if (!block.payload.runs.some(entry => entry.assetIds.includes(input.eventAssetId) && entry.sourceId === input.eventSourceId)) fail("RECORD_EVENT_NOT_FOUND", "事件原文件不属于所选记录。", 404);
+    const runs = await this.staticEvents(input.eventAssetId, block.payload.provider, actor),
       source = runs.find((run) => run.sourceId === input.eventSourceId),
       event = source?.events?.[input.eventIndex];
     if (!event) fail("RECORD_EVENT_NOT_FOUND", "静态导入事件不存在。", 404);
     const text = JSON.stringify(event), offset = input.textOffset ?? 0, length = input.textLength ?? 4000;
     return { blockId: input.blockId, eventWatermark: input.eventWatermark, text: text.slice(offset, offset + length), totalChars: text.length, offset, nextOffset: offset + length < text.length ? offset + length : null, snapshotId: input.snapshotId };
   }
-  async selectPoints(lines, selection, actor) {
+  async selectPoints(lines: RecordLine[], selection: RecordPointRange, actor: ResearchActor) {
     const staticLines = lines.filter(line => !line.segments[0]?.live);
-    const staticValues = staticLines.length ? await super.selectPoints(staticLines, selection, actor) : [];
-    for (const value of staticValues) value.points = value.points.map(point => ({ x: point.originalX ?? point.x, y: point.originalY ?? point.y, ...(point.timestamp !== undefined ? { timestamp: point.timestamp } : {}) }));
+    const rawValues = staticLines.length ? await super.selectPoints(staticLines, selection, actor) : [];
+    const staticValues = rawValues.map(value => ({ ...value, points: value.points.map(point => ({ x: "originalX" in point ? point.originalX ?? point.x : point.x, y: "originalY" in point ? point.originalY ?? point.y : point.y, ...(point.timestamp !== undefined ? { timestamp: point.timestamp } : {}) })) }));
     let index = 0;
-    return lines.map(line => { const live = line.segments[0]; return live?.live ? this.c.ingestion.points(live.blockId, live.runId, line.key, line.xKey, selection, live.watermark) : staticValues[index++]; });
+    return lines.map(line => { const live = line.segments[0]; return live?.live ? this.c.ingestion.points(live.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。"), live.runId ?? fail("INPUT_INVALID", "执行身份缺失。"), line.key, line.xKey, selection, live.watermark ?? this.c.ingestion.watermark(live.blockId ?? "")) : staticValues[index++]; });
   }
-  async plot(input, actor) {
+  async plot(input: RecordPlotInput, actor: ResearchActor) {
     this.c.check(actor, "research.view");
     const wholeExperiments = input.nodeIds !== undefined;
-    const scope = {
-      views: new Map<string, any>(),
-      indices: new Map<string, Promise<any>>(),
-      entries: new Map<string, Map<string, { block: any; entry: any }[]>>(),
-      candidateSnapshot: input.candidateId
-        ? this.c.snapshot(input.candidateId, actor)
-        : undefined,
-    };
+    const scope: RecordReadScope = { views: new Map(), indices: new Map(), entries: new Map(), candidateSnapshot: input.candidateId ? this.c.snapshot(input.candidateId, actor) : undefined };
     let selections = input.selections;
     const wholeBlock = input.blockId !== undefined && input.nodeId !== undefined && input.selections === undefined;
-    if (wholeBlock) selections = this.overview(input.nodeId, actor, input.candidateId, input.blockId).runs.map(run => ({ nodeId: input.nodeId, blockId: input.blockId, runId: run.id }));
+    if (input.nodeId && input.blockId && input.selections === undefined) { const nodeId = input.nodeId, blockId = input.blockId; selections = this.overview(nodeId, actor, input.candidateId, blockId).runs.map(run => ({ nodeId, blockId, runId: run.id })); }
     if (wholeExperiments) {
       if (
         input.selections !== undefined ||
@@ -538,7 +523,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
           input.candidateId,
           scope.candidateSnapshot,
         );
-        scope.views.set(nodeId, view);
+        scope.views!.set(nodeId, view);
         return this.overview(nodeId, actor, input.candidateId).runs.map((run) => ({ nodeId, blockId: run.blockId, runId: run.id }));
       });
     }
@@ -571,7 +556,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     const maxPoints = input.maxPoints ?? 800;
     if (!Number.isInteger(maxPoints) || maxPoints < 2 || maxPoints > 2000)
       fail("INPUT_INVALID", "maxPoints 必须为 2–2000。", 422);
-    const runs: any[] = [];
+    const runs: Awaited<ReturnType<ExperimentRecordService["runSeries"]>>[] = [];
     // Reading a set of experiments must retain every run, including failures.
     // Bound source reads instead of silently truncating the run directory.
     for (let offset = 0; offset < selections.length; offset += 8) {
@@ -660,7 +645,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       ),
     };
   }
-  async table(input, actor) {
+  async table(input: RecordTableInput, actor: ResearchActor) {
     this.c.check(actor, "research.view");
     const metrics: ExperimentMetricSelection[] = input.metrics,
       offset = input.pointOffset ?? 0,
@@ -719,7 +704,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       })),
     };
   }
-  async read(input, actor) {
+  async read(input: RecordReadInput, actor: ResearchActor) {
     if (input.snapshotId) {
       const pinned = this.c.ingestion.getSnapshot(input.snapshotId, actor);
       if (input.nodeId && input.nodeId !== pinned.nodeId || input.blockId && input.blockId !== pinned.blockId) fail("INGESTION_SCOPE_MISMATCH", "快照不属于所选实验。", 403);
@@ -733,22 +718,23 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       return q.page("experiment", data.items, params, { mode: "available", offset: input.recordOffset ?? 0, records: data.items.map(item => item.projectSource) }, null, { total: data.total, nextOffset: data.nextOffset });
     }
     if (input.mode === "snapshot") {
-      const snapshot = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : this.c.ingestion.snapshot(input.blockId, actor);
+      const snapshot = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : this.c.ingestion.snapshot(input.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。", 422), actor);
       return q.finish(q.envelope("experiment", { snapshot: { id: snapshot.id, blockId: snapshot.blockId, nodeId: snapshot.nodeId, watermark: snapshot.watermark, blockRevision: snapshot.blockRevision, createdAt: snapshot.createdAt }, readHint: { tool: "read_experiment", mode: "runs", nodeId: snapshot.nodeId, blockId: snapshot.blockId, snapshotId: snapshot.id } }, params));
     }
     if (input.mode === "events") {
+      const nodeId = input.nodeId ?? fail("INPUT_INVALID", "实验身份缺失。", 422), blockId = input.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。", 422);
       if (input.eventWatermark !== undefined) {
-        const data = input.eventAssetId ? await this.staticEventText(input, actor) : this.c.ingestion.eventText(input.blockId, input.eventWatermark, actor, input.textOffset, input.textLength, input.snapshotId);
+        const data = input.eventAssetId ? await this.staticEventText({ ...input, nodeId, blockId, eventAssetId: input.eventAssetId, eventWatermark: input.eventWatermark }, actor) : this.c.ingestion.eventText(blockId, input.eventWatermark, actor, input.textOffset, input.textLength, input.snapshotId);
         return q.finish(q.envelope("experiment", data, params, { coverage: { complete: data.offset === 0 && data.nextOffset === null, omissions: data.offset > 0 || data.nextOffset !== null ? ["partialEventText"] : [] } }));
       }
-      const result = await this.events(input, actor);
+      const result = await this.events({ ...input, nodeId, blockId }, actor);
       const items = result.items.map(item => JSON.stringify(item.event).length > 1500 ? { ...item, event: { kind: item.event.kind, key: item.event.key, sourceRunId: item.event.sourceRunId, data: { preview: JSON.stringify(item.event.data).slice(0, 1000), truncated: true } } } : item);
       const page = q.page("experiment", items, params, { blockId: input.blockId, after: input.after, watermark: result.watermark, snapshotId: input.snapshotId, kind: input.eventKind, runId: input.runId }, null, { watermark: result.watermark, nextAfter: result.nextAfter, snapshotId: input.snapshotId });
       if (page.data.items.some(item => item.event.data?.truncated)) { page.coverage.complete = false; page.coverage.omissions.push("recordPreview"); }
       return q.finish(page);
     }
     if (input.mode === "inspect") {
-      const index = await this.inspect(input.provider, input.assetIds, actor);
+      const index = await this.inspect(input.provider ?? fail("INPUT_INVALID", "记录工具缺失。", 422), input.assetIds ?? fail("INPUT_INVALID", "记录文件缺失。", 422), actor);
       return q.page(
         "experiment",
         index.runs,
@@ -787,22 +773,23 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       }
       return q.finish(result);
     }
+    const nodeId = input.nodeId ?? fail("INPUT_INVALID", "实验身份缺失。", 422);
     const pinnedDirectory = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : null;
-    const experimentView = pinnedDirectory ? { node: pinnedDirectory.node, blocks: [pinnedDirectory.block] } : this.experiment(input.nodeId, actor, input.candidateId);
+    const experimentView = pinnedDirectory ? { node: pinnedDirectory.node, blocks: [pinnedDirectory.block] } : this.experiment(nodeId, actor, input.candidateId);
     if (pinnedDirectory && (pinnedDirectory.nodeId !== input.nodeId || input.blockId && pinnedDirectory.blockId !== input.blockId)) fail("INGESTION_SCOPE_MISMATCH", "快照不属于所选实验。", 403);
-    const view = pinnedDirectory && ["runs", "materials"].includes(input.mode) ? { revision: pinnedDirectory.recordCollection.revision, runs: this.collectionRuns({ id: pinnedDirectory.blockId, recordCollection: pinnedDirectory.recordCollection }, pinnedDirectory.runs, false).map(run => ({ ...run, readHint: { tool: "read_experiment", mode: "metrics", nodeId: input.nodeId, blockId: pinnedDirectory.blockId, snapshotId: pinnedDirectory.id, runId: run.id } })), materialLinks: pinnedDirectory.recordCollection.materialLinks.map(link => this.material({ id: input.nodeId }, link, experimentView.blocks)) } : ["runs", "materials"].includes(input.mode)
-      ? this.overview(input.nodeId, actor, input.candidateId, input.blockId)
+    const view = pinnedDirectory && ["runs", "materials"].includes(input.mode) ? { revision: pinnedDirectory.recordCollection.revision, runs: this.collectionRuns({ id: pinnedDirectory.blockId, recordCollection: pinnedDirectory.recordCollection }, pinnedDirectory.runs, false).map(run => ({ ...run, readHint: { tool: "read_experiment", mode: "metrics", nodeId: input.nodeId, blockId: pinnedDirectory.blockId, snapshotId: pinnedDirectory.id, runId: run.id } })), materialLinks: pinnedDirectory.recordCollection.materialLinks.map(link => this.material({ id: nodeId }, link, experimentView.blocks)) } : ["runs", "materials"].includes(input.mode)
+      ? this.overview(nodeId, actor, input.candidateId, input.blockId)
       : {
           revision: input.blockId ? experimentView.blocks.find(block => block.id === input.blockId)?.recordCollection?.revision : experimentView.node.revision,
           runs: [],
           materialLinks: [],
         };
-    const receipts = (items = []) => [
-      ...(input.blockId ? [q.receipt(actor, "block", input.blockId, experimentView.blocks.find(block => block.id === input.blockId)?.revision, "directory", { section: input.mode }, input, { owner: nodeRef(input.nodeId) })] : []),
+    const receipts = (items: { id: string }[] = []) => [
+      ...(input.blockId ? [q.receipt(actor, "block", input.blockId, experimentView.blocks.find(block => block.id === input.blockId)?.revision, "directory", { section: input.mode }, input, { owner: nodeRef(nodeId) })] : []),
       q.receipt(
         actor,
         "experiment",
-        input.blockId ?? input.nodeId,
+        input.blockId ?? nodeId,
         view.revision,
         "directory",
         {
@@ -814,7 +801,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
               : {}),
         },
         input,
-        { owner: nodeRef(input.nodeId) },
+        { owner: nodeRef(nodeId) },
       ),
     ];
     if (
@@ -827,9 +814,9 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         "experiment",
         view.runs,
         params,
-        { nodeId: input.nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
+        { nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
         receipts,
-        { nodeId: input.nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
+        { nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
       );
     if (input.mode === "materials")
       return q.page(
@@ -838,20 +825,20 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
           (link) => !input.runId || link.runId === input.runId,
         ),
         params,
-        { nodeId: input.nodeId, runId: input.runId, revision: view.revision },
+        { nodeId, runId: input.runId, revision: view.revision },
         receipts,
-        { nodeId: input.nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
+        { nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
       );
     const run = await this.runSeries(
-      { nodeId: input.nodeId, blockId: input.blockId, runId: input.runId, snapshotId: input.snapshotId },
+      { nodeId, blockId: input.blockId, runId: input.runId, snapshotId: input.snapshotId },
       actor,
       input.candidateId,
       input.blockId,
       input.blockRevision,
       false,
       {
-        views: new Map([[input.nodeId, experimentView]]),
-        ...(input.mode === "series" ? { metricKeys: [input.metric] } : {}),
+        views: new Map([[nodeId, experimentView]]),
+        ...(input.mode === "series" ? { metricKeys: [input.metric ?? fail("INPUT_INVALID", "指标名称缺失。", 422)] } : {}),
       },
     );
     if (input.mode === "metrics")
@@ -866,7 +853,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
             ...(input.snapshotId ? { snapshotId: input.snapshotId } : {}),
             tool: "read_experiment",
             mode: "series",
-            nodeId: input.nodeId,
+            nodeId,
             blockId: run.blockId,
             runId: input.runId,
             metric: line.key,
@@ -880,12 +867,12 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
         })),
         params,
         {
-          nodeId: input.nodeId,
+          nodeId,
           runId: input.runId,
           versions: run.series.map((line) => line.sources),
         },
-        receipts,
-        { nodeId: input.nodeId, blockId: input.blockId, runId: input.runId, snapshotId: input.snapshotId },
+        () => receipts(),
+        { nodeId, blockId: input.blockId, runId: input.runId, snapshotId: input.snapshotId },
       );
     const matches = run.series.filter((line) => line.key === input.metric && (input.xKey === undefined || line.xKey === input.xKey));
     if (matches.length > 1)
@@ -919,7 +906,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       q.envelope(
         "experiment",
         {
-          nodeId: input.nodeId,
+          nodeId,
           runId: input.runId,
           metric: line.key,
           xKey: line.xKey,

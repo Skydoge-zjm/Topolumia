@@ -16,6 +16,10 @@ MCP 的访问控制、每次调用授权与审计，不能代替 HTTP 和领域�
 
 节点组的 [领域权限](../modules/node-groups/interfaces-and-changes.md#授权历程与刷新) 复用科研权限：查看、直接修改、候选提出与审批分别授权；删除组及接受含删除组候选还需 research.withdrawOrSupersede。类型化 node/group 引用、成员与父组均校验当前项目，Agent 不能借人工组接口绕过审批。
 
+## MLflow 读取导入
+
+服务目录与导入入口都要求当前项目的 project.manageSettings，领域导入服务再次校验身份。Agent 与采集凭据不可调用；指定运行仍需属于配置的 MLflow 实验，不能绕过目录范围导入其他实验。导入后查询按 research.view 访问项目内的持久记录，记录块选择与固定快照继续限制可读取的运行和水位。第三方令牌从配置的环境变量读取，不写入持久来源或导入事件。
+
 ## 原生执行审批
 
 [approval-policy.ts](../../../src/services/agents/approval-policy.ts) 重新判断风险，不信任客户端或原生事件自报级别。

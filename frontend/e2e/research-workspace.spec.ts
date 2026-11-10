@@ -22,8 +22,11 @@ test.beforeAll(async () => {
   await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "metric", title: "Metrics", payload: { items: [{ name: "PSNR", value: 31.2 }] } });
   await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "link", title: "Dashboard", payload: { label: "W&B experiment dashboard", url: "https://wandb.ai/lab/study/runs/one", kind: "wandb" } });
   const runtime = await app.getRuntime(project.id);
-  runtime.registry.experiments.series = async () => ({ series: [{ key: "loss", xKey: "step", points: [{ x: 0, y: 1 }, { x: 10, y: .25 }] }], observedAt: "2026-10-31T00:00:00Z" });
-  await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "experimentRecord", title: "训练过程", payload: { provider: "wandb", runs: [{ sourceId: "lab/study/one", label: "Training run 1", status: "succeeded", assetIds: [], ref: "wandb:run:lab/study/one" }] } });
+  const actor=app.collaboration.actorForUser(user.id,project.id),commands=runtime.researchCommands;
+  const source=commands.projectRecords.configure({provider:"wandb",directory:path.join(root,"record-source"),hostId:"local",hostLabel:"Local fixture"},actor);
+  commands.ingestion.receive(source.id,{version:1,provider:"wandb",streamId:"training",writerId:"training",generation:"one",events:[{seq:0,sourceRunId:"training",kind:"run",label:"Training run 1",status:"succeeded"},{seq:1,sourceRunId:"training",kind:"scalar",key:"loss",xKey:"step",x:0,value:1},{seq:2,sourceRunId:"training",kind:"scalar",key:"loss",xKey:"step",x:10,value:.25}]},actor);
+  const run=commands.projectRecords.directory(actor).items[0];
+  await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "experimentRecord", title: "训练过程", payload: { provider: "wandb", runs: [{sourceId:run.sourceId,label:run.label,status:run.status,assetIds:[],projectSource:run.projectSource}] } });
   runtime.state.recordEvent({ type: "agentMessage", actor: "agent", nodeIds: [], sourceRefs: [], payload: { text: "RUNTIME_REPLY_MUST_NOT_APPEAR" } }, { skipValidation: true });
 });
 test.afterAll(async () => {
@@ -93,7 +96,6 @@ test("groups collapse to a group node, expand, and open editable scientific deta
   await expect(page.getByRole("region", { name: "实验数据", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "0.25", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "曲线", exact: true }).click();
-  await expect(curve).toContainText("曲线展示已采样");
   await page.getByRole("button", { name: "运行与材料", exact: true }).click();
   await expect(page.locator(".experiment-run-item").filter({ hasText: "Training run 1" })).toBeVisible();
   await page.screenshot({ path: "runtime/research-experiment-results.png", fullPage: true });

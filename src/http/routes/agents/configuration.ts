@@ -1,7 +1,8 @@
-import { readJson, sendJson } from "../../../lib/http.js";
+import type { RouteContext } from "../../route-context.js";
+import { readJsonObject, sendJson } from "../../../lib/http.js";
 import { requirePermission } from "../../../services/research/research-command-service.js";
 
-export async function handleAgentsConfigurationRoutes(context) {
+export async function handleAgentsConfigurationRoutes(context: RouteContext) {
   const {
     request,
     response,
@@ -9,7 +10,7 @@ export async function handleAgentsConfigurationRoutes(context) {
     requestActor,
     requestRuntime,
     collaboration,
-  } = context;
+  }: RouteContext = context;
 
   if (pathname === "/api/agent-configuration" && request.method === "GET") {
     sendJson(response, 200, requestRuntime.agentConfiguration.inventory());
@@ -22,7 +23,7 @@ export async function handleAgentsConfigurationRoutes(context) {
     sendJson(
       response,
       200,
-      await requestRuntime.agentConfiguration.check(await readJson(request), {
+      await requestRuntime.agentConfiguration.check(await readJsonObject(request), {
         actor: requestActor,
         baseUrl: `http://127.0.0.1:${request.socket.localPort}`,
         collaboration,
@@ -34,7 +35,7 @@ export async function handleAgentsConfigurationRoutes(context) {
   if (nativeMatch) {
     requirePermission(requestActor, "project.manageSettings");
     if (request.method === "GET") { sendJson(response, 200, await requestRuntime.agentConfiguration.configurationDocument(decodeURIComponent(nativeMatch[1]))); return true; }
-    if (request.method === "PUT") { sendJson(response, 200, await requestRuntime.agentConfiguration.saveConfigurationDocument(decodeURIComponent(nativeMatch[1]), await readJson(request))); return true; }
+    if (request.method === "PUT") { sendJson(response, 200, await requestRuntime.agentConfiguration.saveConfigurationDocument(decodeURIComponent(nativeMatch[1]), await readJsonObject(request))); return true; }
   }
   const agentConfigurationMatch = pathname.match(
     /^\/api\/agent-configuration\/profiles\/([^/]+)$/,
@@ -45,7 +46,7 @@ export async function handleAgentsConfigurationRoutes(context) {
       200,
       await requestRuntime.agentConfiguration.configure(
         agentConfigurationMatch[1],
-        await readJson(request),
+        await readJsonObject(request),
       ),
     );
     return true;

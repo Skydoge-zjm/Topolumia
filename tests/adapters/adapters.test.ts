@@ -1,14 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../../src/config.js";
 import { parseNumstat, parsePorcelainV2Z } from "../../src/adapters/sources/git-adapter.js";
 import { FilesystemAdapter, isPathInside } from "../../src/adapters/sources/filesystem-adapter.js";
-import { mapMlflowRun } from "../../src/adapters/experiments/mlflow-adapter.js";
-import { MlflowAdapter } from "../../src/adapters/experiments/mlflow-adapter.js";
 import { DockerAdapter } from "../../src/adapters/execution/docker-adapter.js";
 import { resolveInvocation } from "../../src/lib/command.js";
 
@@ -63,66 +60,6 @@ test("path containment rejects siblings with a common prefix", () => {
   const parent = path.resolve("C:/research/project");
   assert.equal(isPathInside(parent, path.resolve(parent, "notes/file.md")), true);
   assert.equal(isPathInside(parent, path.resolve("C:/research/project-other/file.md")), false);
-});
-
-test("MLflow mapping keeps run facts separate and selects latest metric step", () => {
-  const mapped = mapMlflowRun({
-    info: { run_id: "run-1", run_name: "G1", experiment_id: "7", status: "FINISHED", end_time: 1_786_821_100_000 },
-    data: {
-      metrics: [
-        { key: "lpips", value: 0.21, step: 10 },
-        { key: "lpips", value: 0.19, step: 20 },
-      ],
-      params: [{ key: "group", value: "G1" }],
-      tags: [{ key: "research.role", value: "conditioning" }],
-    },
-  });
-  assert.equal(mapped.ref, "mlflow:run:run-1");
-  assert.equal(mapped.group, "G1");
-  assert.equal(mapped.metrics.lpips, 0.19);
-  assert.equal(mapped.params.group, "G1");
-});
-
-test("MLflow live adapter follows run-search pagination", async () => {
-  const requests = [];
-  const server = createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
-    requests.push({ method: request.method, url: request.url, body });
-    response.setHeader("content-type", "application/json");
-    if (request.url.startsWith("/api/2.0/mlflow/experiments/search")) {
-      response.end(JSON.stringify({ experiments: [{ experiment_id: "9", name: "diffusion-sr-reproduction" }] }));
-      return;
-    }
-    if (request.url === "/api/2.0/mlflow/runs/search" && !body.page_token) {
-      response.end(JSON.stringify({
-        runs: [{ info: { run_id: "r1", experiment_id: "9", status: "FINISHED" }, data: { params: [{ key: "group", value: "G0" }] } }],
-        next_page_token: "page-2",
-      }));
-      return;
-    }
-    if (request.url === "/api/2.0/mlflow/runs/search" && body.page_token === "page-2") {
-      response.end(JSON.stringify({
-        runs: [{ info: { run_id: "r2", experiment_id: "9", status: "FINISHED" }, data: { params: [{ key: "group", value: "G1" }] } }],
-      }));
-      return;
-    }
-    response.statusCode = 404;
-    response.end(JSON.stringify({ message: "not found" }));
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const address = server.address();
-    const config = await loadConfig({ mlflow: { baseUrl: `http://127.0.0.1:${address.port}`, pageSize: 1 } });
-    const adapter = new MlflowAdapter(config);
-    const snapshot = await adapter.snapshot();
-    assert.equal(snapshot.mode, "live");
-    assert.deepEqual(snapshot.runs.map((run) => run.externalId), ["r1", "r2"]);
-    assert.equal(requests.filter((item) => item.url === "/api/2.0/mlflow/runs/search").length, 2);
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
 });
 
 test("Docker preview is deterministic and rejects unregistered inputs", async () => {

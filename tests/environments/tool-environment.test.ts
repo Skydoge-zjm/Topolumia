@@ -354,8 +354,8 @@ test("tools: a delayed connection check cannot restore a result after its config
   );
 });
 
-test("tools: checks the configured research resource and clears data from a replaced connection", async t => {
-  const { app, request } = await fixture(t);
+test("tools: MLflow catalog follows the current configured connection and experiment", async t => {
+  const { request } = await fixture(t);
   const provider = http.createServer((req, res) => {
     const url = new URL(req.url!, "http://fixture");
     let body;
@@ -370,12 +370,13 @@ test("tools: checks the configured research resource and clears data from a repl
   const baseUrl = `http://127.0.0.1:${(provider.address() as { port: number }).port}`;
   const config = { baseUrl: `${baseUrl}/a`, experimentName: "Study", experimentId: "", tokenEnv: "MLFLOW_TRACKING_TOKEN" };
   await request("/api/tools-environment/tools/mlflow", { method: "PATCH", body: config });
-  assert.equal((await app.registry.experiments.list({ provider: "mlflow" })).items[0].ref, "mlflow:run:connection-a");
+  assert.equal((await request("/api/research/experiments/mlflow/catalog")).data.runs[0].runId, "connection-a");
   await request("/api/tools-environment/tools/mlflow", { method: "PATCH", body: { ...config, baseUrl: `${baseUrl}/b` } });
-  assert.equal((await app.registry.experiments.list({ provider: "mlflow" })).items[0].ref, "mlflow:run:connection-b");
+  assert.equal((await request("/api/research/experiments/mlflow/catalog")).data.runs[0].runId, "connection-b");
   await request("/api/tools-environment/tools/mlflow", { method: "PATCH", body: { ...config, experimentName: "Missing" } });
-  const missingExperiment = await request("/api/tools-environment/check", { method: "POST", body: { toolId: "mlflow" } });
-  assert.equal(missingExperiment.data.tools.find(item => item.id === "mlflow").status, "unavailable");
+  const missingExperiment = await request("/api/research/experiments/mlflow/catalog");
+  assert.equal(missingExperiment.status, 200);
+  assert.deepEqual(missingExperiment.data.runs, []);
   await request("/api/tools-environment/tools/wandb", { method: "PATCH", body: { baseUrl, entity: "team", project: "missing", tokenEnv: "WANDB_API_KEY" } });
   const missingProject = await request("/api/tools-environment/check", { method: "POST", body: { toolId: "wandb" } });
   assert.equal(missingProject.data.tools.find(item => item.id === "wandb").status, "unavailable");

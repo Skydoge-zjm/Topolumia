@@ -1,32 +1,36 @@
-const list = (value) => value == null ? [] : Array.isArray(value) ? value : [value];
-const text = (value) => typeof value === "object" ? String(value?.["#text"] ?? "") : String(value ?? "");
-const enabled = (value) => value !== undefined && value?.["@_val"] !== "0" && value?.["@_val"] !== "false";
+import type { TableCellStyle, TableGrid } from "../../domain/research/table-presentation.js";
+import { stylesDocumentSchema, themeDocumentSchema, type XmlColor, type XmlFont, type XmlRichString } from "./xlsx-xml.js";
+const list = <T>(value: T | T[] | undefined | null): T[] => value == null ? [] : Array.isArray(value) ? value : [value];
+const text = (value: unknown) => value && typeof value === "object" && "#text" in value ? String(value["#text"] ?? "") : String(value ?? "");
+const enabled = (value: unknown) => value !== undefined && (!value || typeof value !== "object" || !("@_val" in value) || value["@_val"] !== "0" && value["@_val"] !== "false");
 const indexed = ["000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF",
   "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF",
   "800000", "008000", "000080", "808000", "800080", "008080", "C0C0C0", "808080"];
 const defaultTheme = ["FFFFFF", "000000", "E7E6E6", "44546A", "4472C4", "ED7D31", "A5A5A5", "FFC000", "5B9BD5", "70AD47", "0563C1", "954F72"];
-const formats = { 0: "General", 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%", 11: "0.00E+00", 14: "mm-dd-yy", 49: "@" };
+const formats: Record<string,string> = { 0: "General", 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%", 11: "0.00E+00", 14: "mm-dd-yy", 49: "@" };
 
-export function readXlsxStyles(stylesXml, themeXml) {
+export function readXlsxStyles(stylesValue: unknown, themeValue: unknown) {
+  const stylesXml = stylesDocumentSchema.parse(stylesValue), themeXml = themeDocumentSchema.parse(themeValue);
   const scheme = themeXml?.["a:theme"]?.["a:themeElements"]?.["a:clrScheme"];
   const themeNames = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
   const theme = scheme ? themeNames.map((name, index) => {
-    const entry = scheme["a:" + name];
+    const raw = scheme["a:" + name];
+    const entry = typeof raw === "object" ? raw : undefined;
     return entry?.["a:srgbClr"]?.["@_val"] ?? entry?.["a:sysClr"]?.["@_lastClr"] ?? defaultTheme[index];
   }) : defaultTheme;
-  const resolveColor = (value) => {
+  const resolveColor = (value: XmlColor | undefined) => {
     if (!value || typeof value !== "object") return undefined;
     let rgb = value["@_rgb"]?.slice(-6) ?? theme[Number(value["@_theme"])] ?? indexed[Number(value["@_indexed"])];
     if (!rgb || !/^[0-9a-f]{6}$/i.test(rgb)) return undefined;
     const tint = Math.max(-1, Math.min(1, Number(value["@_tint"] ?? 0)));
-    if (tint) rgb = rgb.match(/../g).map(hex => {
+    if (tint) rgb = (rgb.match(/../g) ?? []).map(hex => {
       const channel = parseInt(hex, 16);
       return Math.round(tint < 0 ? channel * (1 + tint) : channel + (255 - channel) * tint).toString(16).padStart(2, "0");
     }).join("");
     return "#" + rgb.toUpperCase();
   };
-  const fontStyle = (font) => {
-    const result: Record<string, any> = {};
+  const fontStyle = (font: XmlFont | undefined): TableCellStyle => {
+    const result: TableCellStyle = {};
     if (!font || typeof font !== "object") return result;
     if (font.b !== undefined) result.bold = enabled(font.b);
     if (font.i !== undefined) result.italic = enabled(font.i);
@@ -45,26 +49,26 @@ export function readXlsxStyles(stylesXml, themeXml) {
       const background = resolveColor(pattern.fgColor);
       if (background) style.background = background;
     }
-    const border = borders[Number(xf["@_borderId"] ?? 0)], edges = {};
-    for (const edge of ["top", "bottom", "left", "right"]) {
+    const border = borders[Number(xf["@_borderId"] ?? 0)], edges: NonNullable<TableCellStyle["borders"]> = {};
+    for (const edge of ["top", "bottom", "left", "right"] as const) {
       const side = border?.[edge], kind = side?.["@_style"];
       if (!kind) continue;
-      edges[edge] = { style: ["thin", "medium", "thick", "dotted", "dashed", "double"].includes(kind) ? kind : "thin", color: resolveColor(side.color) ?? "#000000" };
+      edges[edge] = { style: (["thin", "medium", "thick", "dotted", "dashed", "double"] as const).find(style => style === kind) ?? "thin", color: resolveColor(side.color) ?? "#000000" };
     }
     if (Object.keys(edges).length) style.borders = edges;
     const alignment = xf.alignment;
     if (alignment) {
       const horizontal = alignment["@_horizontal"];
-      if (["left", "center", "right", "justify"].includes(horizontal)) style.horizontal = horizontal;
+      if (horizontal === "left" || horizontal === "center" || horizontal === "right" || horizontal === "justify") style.horizontal = horizontal;
       const vertical = alignment["@_vertical"];
-      if (["top", "center", "bottom"].includes(vertical)) style.vertical = vertical === "center" ? "middle" : vertical;
+      if (vertical === "top" || vertical === "center" || vertical === "bottom") style.vertical = vertical === "center" ? "middle" : vertical;
       if (alignment["@_wrapText"] !== undefined) style.wrap = enabled({ "@_val": alignment["@_wrapText"] });
     }
-    const format = customFormats[xf["@_numFmtId"]] ?? formats[xf["@_numFmtId"]];
+    const format = customFormats[String(xf["@_numFmtId"])] ?? formats[String(xf["@_numFmtId"])];
     if (format && format !== "General") style.numberFormat = format;
     return style;
   });
-  const runs = (item) => list(item?.r).map(run => {
+  const runs = (item: XmlRichString | undefined) => list(item?.r).map(run => {
     const font = fontStyle(run.rPr);
     delete font.fontSize;
     return { text: text(run.t), ...font };
@@ -72,7 +76,7 @@ export function readXlsxStyles(stylesXml, themeXml) {
   return { styles, runs };
 }
 
-export function formatXlsxValue(value, format) {
+export function formatXlsxValue(value: unknown, format: string | undefined) {
   if (typeof value !== "number" || !format || format === "General" || format === "@") return String(value ?? "");
   const section = format.split(";")[value < 0 ? 1 : 0] ?? format.split(";")[0];
   const clean = section.replace(/\[[^\]]*]/g, "").replace(/"[^"]*"/g, "").replace(/\\./g, "");
@@ -88,7 +92,7 @@ export function formatXlsxValue(value, format) {
   return displayed + (clean.includes("%") ? "%" : "") + literal;
 }
 
-export function parseCellReference(reference) {
+export function parseCellReference(reference: unknown) {
   const match = String(reference ?? "").match(/^([A-Z]+)([1-9][0-9]*)$/i);
   if (!match) return null;
   let column = 0;
@@ -96,7 +100,7 @@ export function parseCellReference(reference) {
   return { row: Number(match[2]) - 1, column: column - 1 };
 }
 
-export function applyMergedRanges(cells, ranges) {
+export function applyMergedRanges(cells: TableGrid["cells"], ranges: string[]) {
   const occupied = new Set();
   for (const range of ranges) {
     const parts = String(range).split(":"), start = parseCellReference(parts[0]), end = parseCellReference(parts[1] ?? parts[0]);

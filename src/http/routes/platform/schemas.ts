@@ -1,3 +1,4 @@
+import type { RouteContext } from "../../route-context.js";
 import * as z from "zod/v4";
 import { recordBatchSchema } from "../../../domain/research/record-ingestion.js";
 import { sendJson } from "../../../lib/http.js";
@@ -11,7 +12,7 @@ import {
   topologyCuratorTriggerStatusSchema,
 } from "../../../domain/schemas.js";
 
-export async function handlePlatformSchemasRoutes(context) {
+export async function handlePlatformSchemasRoutes(context: RouteContext) {
   const { request, response, pathname } = context;
 
   if (pathname === "/api/schemas/record-ingestion" && request.method === "GET") { sendJson(response, 200, z.toJSONSchema(recordBatchSchema)); return true; }

@@ -1,7 +1,7 @@
 export const RESEARCH_EXPERIMENT_SCHEMA = "research-experiment.v1";
 export const RESEARCH_EXPERIMENT_INDEX_SCHEMA = "research-experiment-index.v1";
 
-const bilingual = (zh, en) => ({ zh, en });
+const bilingual = (zh: string, en: string) => ({ zh, en });
 
 /** Synthetic catalog used by the explicit topology fixture only.
  * User experiments and run identities are owned by the research repository.
@@ -132,99 +132,11 @@ export const RESEARCH_EXPERIMENT_CATALOG = Object.freeze([
   },
 ]);
 
-function clone(value) {
+function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-function toText(value, fallback = "") {
-  return typeof value === "string" ? value : fallback;
-}
-
-function normaliseGroup(value) {
-  const source = String(value ?? "").trim().toUpperCase();
-  const match = source.match(/^G\s*([0-9]+)$/);
-  return match ? `G${match[1]}` : source;
-}
-
-export function experimentGroupForRun(run = {}) {
-  return normaliseGroup(
-    run.group
-    ?? run.params?.group
-    ?? run.tags?.["research.group"]
-    ?? run.tags?.group
-    ?? null,
-  );
-}
-
-export function snapshotRuns(snapshot = null) {
-  const candidates = [
-    ...(snapshot?.mlflow?.runs ?? []),
-    ...(snapshot?.experiments?.wandb?.runs ?? []),
-    ...(snapshot?.experiments?.tensorboard?.runs ?? []),
-    ...(snapshot?.experiments?.simulation?.runs ?? []),
-  ].filter((item) => item && typeof item === "object");
-  const refs = new Set();
-  return candidates.filter((item) => {
-    const ref = String(item.ref ?? "");
-    if (!ref || refs.has(ref)) return false;
-    refs.add(ref);
-    return true;
-  });
-}
-
-function attemptRole(status, fallback = "observed") {
-  const normalized = String(status ?? "").toUpperCase();
-  if (["FINISHED", "COMPLETED", "SUCCESS"].includes(normalized)) return "completed";
-  if (["FAILED", "KILLED", "CANCELLED", "CANCELED", "ERROR"].includes(normalized)) return "failed";
-  if (["UNSTABLE", "DIVERGED", "DEGRADED"].includes(normalized)) return "unstable";
-  if (["RUNNING", "SCHEDULED", "QUEUED"].includes(normalized)) return "running";
-  if (["PLANNED", "PROPOSED"].includes(normalized)) return "planned";
-  return fallback;
-}
-
-function compactMetrics(value = {}) {
-  return Object.fromEntries(Object.entries(value ?? {})
-    .filter(([, item]) => Number.isFinite(Number(item)))
-    .slice(0, 24)
-    .map(([key, item]) => [key, Number(item)]));
-}
-
-function compactMetricSummary(value = {}) {
-  return Object.fromEntries(Object.entries(value ?? {})
-    .slice(0, 24)
-    .map(([key, item]) => [key, {
-      latest: Number.isFinite(Number(item?.latest)) ? Number(item.latest) : null,
-      best: Number.isFinite(Number(item?.best)) ? Number(item.best) : null,
-      count: Number.isFinite(Number(item?.count)) ? Number(item.count) : null,
-      lastStep: Number.isFinite(Number(item?.lastStep)) ? Number(item.lastStep) : null,
-    }]));
-}
-
-function providerAttempt(run, index) {
-  const role = attemptRole(run.status);
-  return {
-    id: String(run.externalId ?? run.ref ?? `provider-${index}`),
-    ref: String(run.ref),
-    sequence: 100 + index,
-    source: "provider",
-    provider: run.provider ?? null,
-    label: run.label ?? run.externalId ?? run.ref,
-    status: run.status ?? "UNKNOWN",
-    attemptRole: role,
-    failure: run.errorMessage ? String(run.errorMessage).slice(0, 800) : null,
-    params: clone(run.params ?? {}),
-    metrics: compactMetrics(run.metrics),
-    metricSummary: compactMetricSummary(run.metricSummary),
-    artifactCount: Array.isArray(run.artifacts) ? run.artifacts.length : Number(run.artifactCount ?? 0),
-    startedAt: run.startedAt ?? null,
-    endedAt: run.endedAt ?? null,
-    observedAt: run.observedAt ?? null,
-    mode: run.mode ?? null,
-    sourceStatus: run.sourceStatus ?? "unknown",
-  };
-}
-
-function authoredAttempt(attempt) {
+function authoredAttempt(attempt: (typeof RESEARCH_EXPERIMENT_CATALOG)[number]["authoredAttempts"][number]) {
   return {
     id: attempt.id,
     ref: attempt.ref,
@@ -233,7 +145,7 @@ function authoredAttempt(attempt) {
     provider: null,
     label: clone(attempt.label),
     status: attempt.status,
-    attemptRole: attempt.attemptRole ?? attemptRole(attempt.status),
+    attemptRole: attempt.attemptRole,
     failure: attempt.failure ? clone(attempt.failure) : null,
     params: clone(attempt.params ?? {}),
     metrics: {},
@@ -247,7 +159,7 @@ function authoredAttempt(attempt) {
   };
 }
 
-function statusSummary(attempts) {
+function statusSummary(attempts: ReturnType<typeof authoredAttempt>[]) {
   const result = {
     total: attempts.length,
     completed: 0,
@@ -259,13 +171,13 @@ function statusSummary(attempts) {
   };
   for (const attempt of attempts) {
     const role = attempt.attemptRole ?? "observed";
-    if (Object.hasOwn(result, role)) result[role] += 1;
+    if (Object.hasOwn(result, role) && role !== "total") result[role as Exclude<keyof typeof result, "total">] += 1;
     else result.observed += 1;
   }
   return result;
 }
 
-function experimentStatus(summary, declaredStatus) {
+function experimentStatus(summary: ReturnType<typeof statusSummary>, declaredStatus: string) {
   if (summary.completed > 0 && (summary.failed > 0 || summary.unstable > 0)) return "mixed";
   if (summary.completed > 0) return "completed";
   if (summary.running > 0) return "running";
@@ -274,40 +186,7 @@ function experimentStatus(summary, declaredStatus) {
   return declaredStatus ?? "needs_evidence";
 }
 
-const METRIC_ALIASES = Object.freeze({
-  psnr: ["psnr", "eval/psnr"],
-  ssim: ["ssim", "eval/ssim"],
-  lpips: ["lpips", "eval/lpips"],
-  fid: ["fid", "eval/fid"],
-});
-
-function keyMetrics(attempts) {
-  const preferred = [...attempts]
-    .filter((attempt) => attempt.attemptRole === "completed" && Object.keys(attempt.metrics ?? {}).length)
-    .sort((a, b) => String(b.observedAt ?? b.endedAt ?? "").localeCompare(String(a.observedAt ?? a.endedAt ?? "")));
-  const source = preferred[0]?.metrics ?? {};
-  const result = {};
-  for (const [key, aliases] of Object.entries(METRIC_ALIASES)) {
-    const found = aliases.find((alias) => Number.isFinite(Number(source[alias])));
-    if (found) result[key] = Number(source[found]);
-  }
-  return result;
-}
-
-function keyMetricSummary(attempts) {
-  const preferred = [...attempts]
-    .filter((attempt) => attempt.attemptRole === "completed" && Object.keys(attempt.metricSummary ?? {}).length)
-    .sort((a, b) => String(b.observedAt ?? b.endedAt ?? "").localeCompare(String(a.observedAt ?? a.endedAt ?? "")));
-  const source = preferred[0]?.metricSummary ?? {};
-  const result = {};
-  for (const [key, aliases] of Object.entries(METRIC_ALIASES)) {
-    const found = aliases.find((alias) => source[alias]);
-    if (found) result[key] = clone(source[found]);
-  }
-  return result;
-}
-
-function statusSentence(summary, locale) {
+function statusSentence(summary: ReturnType<typeof statusSummary>, locale: string) {
   if (locale === "en") {
     const pieces = [`${summary.total} attempt${summary.total === 1 ? "" : "s"}`];
     if (summary.completed) pieces.push(`${summary.completed} completed`);
@@ -326,18 +205,12 @@ function statusSentence(summary, locale) {
   return pieces.join(" · ");
 }
 
-function buildExperiment(definition, runs = []) {
-  const external = runs
-    .filter((run) => experimentGroupForRun(run) === definition.code)
-    .map((run, index) => providerAttempt(run, index));
-  const attempts = [
-    ...definition.authoredAttempts.map(authoredAttempt),
-    ...external,
-  ].sort((a, b) => a.sequence - b.sequence || String(a.label?.zh ?? a.label).localeCompare(String(b.label?.zh ?? b.label)));
+function buildExperiment(definition: (typeof RESEARCH_EXPERIMENT_CATALOG)[number]) {
+  const attempts = definition.authoredAttempts.map(authoredAttempt).sort((a, b) => a.sequence - b.sequence || a.label.zh.localeCompare(b.label.zh));
   const runSummary = statusSummary(attempts);
   const status = experimentStatus(runSummary, definition.status);
-  const metrics = keyMetrics(attempts);
-  const metricSummary = keyMetricSummary(attempts);
+  const metrics: Record<string, number> = {};
+  const metricSummary: Record<string, unknown> = {};
   const summary = {
     schemaVersion: RESEARCH_EXPERIMENT_SCHEMA,
     id: definition.id,
@@ -356,28 +229,21 @@ function buildExperiment(definition, runs = []) {
     runSummary,
     keyMetrics: metrics,
     metricSummary,
-    attemptSourceCount: external.length,
+    attemptSourceCount: 0,
     detailRef: `research:experiment:${definition.id}`,
-    sourceRefs: external.map((attempt) => attempt.ref),
+    sourceRefs: [] as string[],
   };
   return { summary, attempts };
 }
 
-export function aggregateResearchExperiments(snapshot = null) {
-  const runs = snapshotRuns(snapshot);
-  const records = RESEARCH_EXPERIMENT_CATALOG.map((definition) => buildExperiment(definition, runs));
-  const knownGroups = new Set(RESEARCH_EXPERIMENT_CATALOG.map((item) => item.code));
-  const unassignedRuns = runs.filter((run) => !knownGroups.has(experimentGroupForRun(run)));
-  return {
-    schemaVersion: RESEARCH_EXPERIMENT_INDEX_SCHEMA,
-    observedAt: snapshot?.observedAt ?? null,
-    items: records.map((record) => record.summary),
-    records,
-    unassignedRuns: unassignedRuns.map((run, index) => providerAttempt(run, index)),
-  };
+export function aggregateResearchExperiments() {
+  const records = RESEARCH_EXPERIMENT_CATALOG.map(buildExperiment);
+  return { schemaVersion: RESEARCH_EXPERIMENT_INDEX_SCHEMA, observedAt: null, items: records.map(record => record.summary), records, unassignedRuns: [] };
 }
 
-export function researchExperimentNodeData(summary) {
+export type ResearchExperimentSummary = Omit<ReturnType<typeof buildExperiment>["summary"], "design"> & { design: Record<string, string | undefined> };
+
+export function researchExperimentNodeData(summary: ResearchExperimentSummary) {
   return {
     experimentId: summary.id,
     purpose: clone(summary.purpose),

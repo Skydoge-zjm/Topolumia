@@ -1,17 +1,18 @@
+import type { StoredAgentSession, AgentRuntimeSession, AgentTurn, AgentEvent } from "../../domain/agents/agent-types.js";
 import { compactConversationEvents } from "../../domain/agents/agent-conversation.js";
 import { publicAgentAttachment } from "../../domain/agents/agent-attachments.js";
 
 // Turn records retain the original input and full message bodies even when an
 // older raw trace has already rolled over. Recover only those known messages;
 // deleted tool diagnostics cannot be reconstructed from them.
-export function restoreConversationEvents(session) {
+export function restoreConversationEvents(session: Pick<StoredAgentSession | AgentRuntimeSession, "id" | "createdAt" | "provider" | "turns" | "events"> & { conversationEvents?: AgentEvent[] }): AgentEvent[] {
   if (Array.isArray(session.conversationEvents)) return compactConversationEvents(structuredClone(session.conversationEvents));
   const raw = session.events ?? [];
   if (raw.length && raw[0].cursor <= 1) return compactConversationEvents(raw);
   const result = raw.filter(event => !event.turnId && event.type !== "session.closed");
   const turns = session.turns ?? [];
   const knownTurns = new Set(turns.map(turn => turn.id));
-  const recovered = (turn, type, payload, suffix) => ({
+  const recovered = (turn: AgentTurn, type: string, payload: AgentEvent["payload"], suffix: string) => ({
     schemaVersion: "agent-session-event.v1", id: `recovered:${turn.id}:${suffix}`,
     cursor: 0, sessionId: session.id, turnId: turn.id, type,
     occurredAt: turn.startedAt ?? session.createdAt, provider: session.provider, payload,

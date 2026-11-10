@@ -23,15 +23,6 @@
     "freshForMs": 15000,
     "foregroundThresholdMs": 30000
   },
-  "experimentGateway": {
-    "listTtlMs": 15000,
-    "detailTtlMs": 30000,
-    "seriesTtlMs": 30000,
-    "contextTtlMs": 30000,
-    "descriptorTtlMs": 30000,
-    "maxListRuns": 300,
-    "maxCacheEntries": 256
-  },
   "filesystem": {
     "roots": [
       "fixtures/research"
@@ -45,7 +36,9 @@
     "baseUrl": "",
     "experimentId": "",
     "experimentName": "diffusion-sr-reproduction",
-    "tokenEnv": "MLFLOW_TRACKING_TOKEN"
+    "tokenEnv": "MLFLOW_TRACKING_TOKEN",
+    "pageSize": 200,
+    "maxRuns": 1000
   },
   "wandb": {
     "baseUrl": "",
@@ -53,16 +46,11 @@
     "authScheme": "basic",
     "entity": "your-entity",
     "project": "diffusion-sr-reproduction",
-    "tokenEnv": "WANDB_API_KEY",
-    "fixtureFile": "fixtures/wandb-runs.json"
+    "tokenEnv": "WANDB_API_KEY"
   },
   "tensorboard": {
     "logdir": "",
-    "fixtureFile": "fixtures/tensorboard-runs.json",
-    "pythonCommand": "python",
-    "parserScript": "scripts/runtime/tensorboard-event-parser.py",
-    "parserTimeoutMs": 10000,
-    "maxDepth": 4
+    "pythonCommand": "python"
   },
   "experimentRecords": {
     "pythonCommand": "python"

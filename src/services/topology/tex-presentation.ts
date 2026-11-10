@@ -1,5 +1,6 @@
-const namedColors = { white: "#FFFFFF", black: "#000000", red: "#FF0000", green: "#00AA00", blue: "#0000FF", yellow: "#FFFF00", cyan: "#00FFFF", gray: "#808080", orange: "#FF8000" };
-function texColor(value) {
+import type { TableCellStyle, TableGrid } from "../../domain/research/table-presentation.js";
+const namedColors: Record<string,string> = { white: "#FFFFFF", black: "#000000", red: "#FF0000", green: "#00AA00", blue: "#0000FF", yellow: "#FFFF00", cyan: "#00FFFF", gray: "#808080", orange: "#FF8000" };
+function texColor(value: unknown) {
   const [name, percent = "100", base = "white"] = String(value ?? "").split("!");
   const foreground = namedColors[name.toLowerCase()], background = namedColors[base.toLowerCase()];
   if (/^[0-9a-f]{6}$/i.test(name)) return "#" + name.toUpperCase();
@@ -7,7 +8,7 @@ function texColor(value) {
   const fraction = Math.max(0, Math.min(1, Number(percent) / 100));
   return "#" + [1, 3, 5].map(index => Math.round(parseInt(foreground.slice(index, index + 2), 16) * fraction + parseInt(background.slice(index, index + 2), 16) * (1 - fraction)).toString(16).padStart(2, "0")).join("").toUpperCase();
 }
-const group = (source, position) => {
+const group = (source: string, position: number) => {
   let start = position;
   while (/\s/.test(source[start] ?? "") && start < source.length) start++;
   if (source[start] !== "{") return null;
@@ -19,7 +20,7 @@ const group = (source, position) => {
   }
   return null;
 };
-const command = (source, name, argumentCount) => {
+const command = (source: string, name: string, argumentCount: number) => {
   const match = new RegExp("\\\\" + name + "\\b").exec(source);
   if (!match) return null;
   let end = match.index + match[0].length;
@@ -31,7 +32,7 @@ const command = (source, name, argumentCount) => {
   }
   return { arguments: arguments_, start: match.index, end };
 };
-function splitOutsideGroups(source, separator) {
+function splitOutsideGroups(source: string, separator: string) {
   const pieces = []; let depth = 0, piece = "";
   for (let index = 0; index < source.length; index++) {
     if (source[index] === "\\" && /[{}&%]/.test(source[index + 1] ?? "")) { piece += source.slice(index, index + 2); index++; continue; }
@@ -44,7 +45,7 @@ function splitOutsideGroups(source, separator) {
   pieces.push(piece);
   return pieces;
 }
-function alignmentColumns(preamble) {
+function alignmentColumns(preamble: string) {
   const columns = [];
   for (let index = 0; index < preamble.length; index++) {
     const char = preamble[index];
@@ -53,9 +54,9 @@ function alignmentColumns(preamble) {
   }
   return columns;
 }
-function styleAndText(source, parseText) {
+function styleAndText(source: string, parseText: (source:string)=>string) {
   let content = source;
-  const style: Record<string, any> = {};
+  const style: TableCellStyle = {};
   if (/\\(?:textbf|mathbf|bfseries)\b/.test(content)) style.bold = true;
   if (/\\(?:textit|emph|itshape)\b/.test(content)) style.italic = true;
   if (/\\underline\b/.test(content)) style.underline = true;
@@ -68,7 +69,7 @@ function styleAndText(source, parseText) {
   return { value, style };
 }
 
-export function parseTexPresentation(source, parseText) {
+export function parseTexPresentation(source: string, parseText: (source:string)=>string): TableGrid {
   const uncommented = source.split("\n").map(line => line.replace(/(?<!\\)%.*$/, "")).join("\n");
   const begin = /\\begin\s*\{tabular(\*)?\}(?:\[[^\]]*])?/.exec(uncommented);
   if (!begin) throw new Error("TeX 文件中没有找到 tabular 表格环境。");
@@ -81,9 +82,9 @@ export function parseTexPresentation(source, parseText) {
   body = body.replace(/\\(?:cline|cmidrule)(?:\([^)]*\))?\s*\{[^}]*}/g, "");
   const rawRows = splitOutsideGroups(body, "\\\\").map(row => row.replace(/^\s*\[[^\]]*]/, "").trim()).filter(row => row.replace(/\\(?:toprule|midrule|bottomrule|hline|addlinespace)\b/g, "").trim());
   if (rawRows.length > 301) throw new Error("TeX 表格超过 300 行预览限制。");
-  const alignments = alignmentColumns(preamble.value), cells = [];
+  const alignments = alignmentColumns(preamble.value), cells: TableGrid["cells"] = [];
   let maxColumns = alignments.length;
-  const ensure = (row, column) => {
+  const ensure = (row: number, column: number) => {
     if (row >= 301 || column >= 60) throw new Error("TeX 表格合并范围超过预览限制。");
     cells[row] ??= [];
     cells[row][column] ??= { value: "" };
@@ -120,8 +121,8 @@ export function parseTexPresentation(source, parseText) {
   return { cells: normalized, columnWidths: Array(maxColumns).fill(130), rowHeights: Array(cells.length).fill(32) };
 }
 
-export function exportTexPresentation(grid, escape) {
-  const anchors = [];
+export function exportTexPresentation(grid: TableGrid, escape: (value:unknown)=>string) {
+  const anchors: {row:number;column:number;rowSpan:number;colSpan:number}[] = [];
   for (let row = 0; row < grid.cells.length; row++) for (let column = 0; column < grid.cells[row].length; column++) {
     const cell = grid.cells[row][column];
     if (!cell.covered) anchors.push({ row, column, rowSpan: cell.rowSpan ?? 1, colSpan: cell.colSpan ?? 1 });

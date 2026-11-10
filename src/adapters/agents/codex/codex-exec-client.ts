@@ -1,9 +1,17 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type { resolveInvocation } from "../../../lib/command.js";
+type CommandInvocation = Awaited<ReturnType<typeof resolveInvocation>>;
+import type { CuratorMaterialization, CuratorTrace } from "../../../services/topology/curator-types.js";
+import * as z from "zod/v4";
+const execEventSchema = z.looseObject({ type: z.string(), thread_id: z.string().optional(), message: z.string().optional(), error: z.looseObject({ message: z.string().optional() }).optional(), usage: z.unknown().optional(), item: z.looseObject({ id: z.string().optional(), type: z.string(), text: z.string().optional(), command: z.string().optional(), aggregated_output: z.string().optional(), exit_code: z.number().optional(), status: z.string().optional() }).optional() });
+export interface CommandExecution { id: string | null; command: string; output: string; exitCode?: number; status?: string }
+export interface CodexExecution { threadId: string | null; usage: unknown; agentMessages: string[]; commandExecutions: CommandExecution[]; protocolEvents: unknown[]; stderr: string }
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
 import { AppError } from "../../../lib/errors.js";
 
-export function extractJsonObject(text) {
+export function extractJsonObject(text: string): unknown {
   let candidate = String(text ?? "").trim();
   if (candidate.startsWith("```")) {
     candidate = candidate.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -21,13 +29,18 @@ export function extractJsonObject(text) {
   } catch (error) {
     throw new AppError("CODEX_OUTPUT_NOT_JSON", "Codex 返回的 JSON 无效。", {
       status: 422,
-      detail: { reason: error.message, outputPreview: candidate.slice(0, 240) },
+      detail: { reason: error instanceof Error ? error.message : String(error), outputPreview: candidate.slice(0, 240) },
     });
   }
 }
 
 export class CodexExecClient {
-  constructor(invocation, options = {}) {
+  invocation: CommandInvocation; cwd?: string; timeoutMs: number; maxOutputBytes: number;
+  protocolEvents: unknown[]; agentMessages: string[]; commandExecutions: CommandExecution[];
+  stderr: string; rawBytes: number; threadId: string | null; usage: unknown; settled: boolean;
+  child?: ChildProcessWithoutNullStreams; reader?: readline.Interface; timer?: ReturnType<typeof setTimeout>;
+  resolve!: (result: CodexExecution) => void; reject!: (error: unknown) => void; failureDetail?: string;
+  constructor(invocation: CommandInvocation, options: { cwd?: string; timeoutMs?: number; maxOutputBytes?: number } = {}) {
     this.invocation = invocation;
     this.cwd = options.cwd;
     this.timeoutMs = options.timeoutMs ?? 180_000;
@@ -42,8 +55,8 @@ export class CodexExecClient {
     this.settled = false;
   }
 
-  run(prompt) {
-    return new Promise((resolve, reject) => {
+  run(prompt: string): Promise<CodexExecution> {
+    return new Promise<CodexExecution>((resolve, reject) => {
       this.resolve = resolve;
       this.reject = reject;
       try {
@@ -57,7 +70,7 @@ export class CodexExecClient {
       } catch (error) {
         reject(new AppError("CODEX_PROCESS_ERROR", "无法启动 codex exec。", {
           status: 503,
-          detail: { reason: error.message },
+          detail: { reason: error instanceof Error ? error.message : String(error) },
           retryable: true,
         }));
         return;
@@ -72,7 +85,7 @@ export class CodexExecClient {
       });
       this.child.on("error", (error) => this.#fail(new AppError("CODEX_PROCESS_ERROR", "codex exec 进程错误。", {
         status: 503,
-        detail: { reason: error.message },
+        detail: { reason: error instanceof Error ? error.message : String(error) },
         retryable: true,
       })));
       this.child.on("close", (code, signal) => {
@@ -96,7 +109,7 @@ export class CodexExecClient {
     });
   }
 
-  #onLine(line) {
+  #onLine(line: string) {
     if (!line.trim() || this.settled) return;
     this.rawBytes += Buffer.byteLength(line) + 1;
     if (this.rawBytes > this.maxOutputBytes) {
@@ -106,12 +119,12 @@ export class CodexExecClient {
     }
     let event;
     try {
-      event = JSON.parse(line);
+      event = execEventSchema.parse(JSON.parse(line));
     } catch (error) {
       this.child?.kill();
       this.#fail(new AppError("CODEX_PROTOCOL_ERROR", "codex exec 输出了无效 JSONL。", {
         status: 502,
-        detail: { reason: error.message, line: line.slice(0, 240) },
+        detail: { reason: error instanceof Error ? error.message : String(error), line: line.slice(0, 240) },
       }));
       return;
     }
@@ -150,7 +163,7 @@ export class CodexExecClient {
     });
   }
 
-  #fail(error) {
+  #fail(error: unknown) {
     if (this.settled) return;
     this.settled = true;
     clearTimeout(this.timer);
@@ -163,34 +176,34 @@ export class CodexExecClient {
   }
 }
 
-function includesRelative(text, relativePath) {
+function includesRelative(text: string, relativePath: string) {
   const normalized = relativePath.replaceAll("\\", "/").toLowerCase();
   const candidate = String(text).replaceAll("\\", "/").toLowerCase();
   return candidate.includes(normalized) || candidate.includes(path.posix.basename(normalized));
 }
 
-function displayCommand(command) {
+function displayCommand(command: string) {
   const value = String(command ?? "");
   const match = value.match(/-Command\s+'([\s\S]*)'$/);
   return (match?.[1] ?? value).replaceAll("'\"'", "'").slice(0, 900);
 }
 
-export function deriveExplorationTrace(materialization, result, { maxCommands = 24 } = {}) {
-  const observedNodeIds = new Set();
-  const observedEdgeIds = new Set();
+export function deriveExplorationTrace(materialization: Pick<CuratorMaterialization, "nodeFileById" | "edgeIds">, result: Pick<CodexExecution, "commandExecutions" | "stderr">, { maxCommands = 24 } = {}): CuratorTrace {
+  const observedNodeIds = new Set<string>();
+  const observedEdgeIds = new Set<string>();
   for (const execution of result.commandExecutions) {
     const combined = `${execution.command}\n${execution.output}`;
     const readsNodeArea = /topology[\\/]nodes/i.test(execution.command);
     for (const [nodeId, relativeFile] of Object.entries(materialization.nodeFileById)) {
       if (includesRelative(execution.command, relativeFile)
-        || (readsNodeArea && combined.includes(`\"id\": \"${nodeId}\"`))
-        || (readsNodeArea && combined.includes(`\"id\":\"${nodeId}\"`))) {
+        || (readsNodeArea && combined.includes(`"id": "${nodeId}"`))
+        || (readsNodeArea && combined.includes(`"id":"${nodeId}"`))) {
         observedNodeIds.add(nodeId);
       }
     }
     if (/edges\.jsonl/i.test(execution.command)) {
       for (const edgeId of materialization.edgeIds) {
-        if (combined.includes(`\"id\":\"${edgeId}\"`) || combined.includes(`\"id\": \"${edgeId}\"`) || combined.includes(edgeId)) {
+        if (combined.includes(`"id":"${edgeId}"`) || combined.includes(`"id": "${edgeId}"`) || combined.includes(edgeId)) {
           observedEdgeIds.add(edgeId);
         }
       }

@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { contentBlockInput, representationSchema, sourceRef } from "../content-blocks.js";
+import { contentBlockInput, representationSchema, sourceRef, nullablePatchShape } from "../content-blocks.js";
 import { objectRefSchema, endpointVersionsSchema } from "../object-schemas.js";
 import { groupCoreSchema, groupMembersSchema, membershipPatchSchema, primaryRelationsSchema } from "../groups.js";
 import { experimentPatchSchema } from "../experiment-records.js";
@@ -7,7 +7,7 @@ const id = z.string().min(1).max(240), revision = z.number().int().positive();
 const refs = z.array(sourceRef).max(80).optional();
 const fromAsset = z.strictObject({ assetId: id, format: z.enum(["markdown", "plain"]) });
 const blockFields = contentBlockInput.omit({ review: true }).extend({ review: z.enum(["unreviewed", "needs_review"]).optional() });
-export const blockPatchSchema = z.strictObject({ ...Object.fromEntries(Object.entries(blockFields.shape).map(([key, schema]) => [key, (typeof schema.removeDefault === "function" ? schema.removeDefault() : schema).optional().nullable()])), payloadFromAsset: fromAsset.optional() });
+export const blockPatchSchema = z.strictObject({ ...nullablePatchShape(blockFields.shape), payloadFromAsset: fromAsset.nullable().optional() });
 export const operationSchemas = {
   editExperiment: z.strictObject({ op: z.literal("editExperiment"), owner: objectRefSchema, blockId: id, expectedExperimentRevision: revision, patch: experimentPatchSchema }),
   addNode: z.strictObject({ op: z.literal("addNode"), clientRef: id, kind: z.string().max(80), core: z.record(z.string(), z.unknown()), sourceRefs: refs }),
@@ -28,7 +28,8 @@ export const operationSchemas = {
   deleteNode: z.strictObject({ op: z.literal("deleteNode"), nodeId: id, expectedNodeRevision: revision, reason: z.string().max(2000).optional() }),
   deleteGroup: z.strictObject({ op: z.literal("deleteGroup"), groupId: id, expectedGroupRevision: revision, impactVersion: id, reason: z.string().trim().min(1).max(2000) }),
 };
-export const operationsSchema = z.array(z.discriminatedUnion("op", Object.values(operationSchemas))).min(1).max(800);
+type OperationSchema = (typeof operationSchemas)[keyof typeof operationSchemas];
+export const operationsSchema = z.array(z.discriminatedUnion("op", Object.values(operationSchemas) as [OperationSchema, ...OperationSchema[]])).min(1).max(800);
 export const deleteNodeInput = operationSchemas.deleteNode.omit({ op: true, nodeId: true }).extend({ reason: z.string().trim().min(1, "请填写删除原因。").max(2000) });
 export const createSchema = z.strictObject({ reason: z.string().min(1).max(2000), idempotencyKey: id, operations: operationsSchema, evidenceReadIds: z.array(id).max(80).optional() });
 export const editSchema = z.strictObject({ candidateId: id, expectedRevision: revision, reason: z.string().min(1).max(2000), operations: operationsSchema, evidenceReadIds: z.array(id).max(80).optional() });

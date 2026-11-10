@@ -19,4 +19,4 @@
 - 后端定向测试：`npm run build:backend` 后执行 `node --test dist/tests/<对应文件>.test.js`。
 - 文档检查：`npm run docs:check`。
 
-按改动选择验证，已通过且未受后续修改影响的检查无需重复。后端构建只做转译，后端 typecheck 目前只覆盖指定边界。
+按改动选择验证，已通过且未受后续修改影响的检查无需重复。后端 typecheck 以 strict 检查全部 src/**/*.ts；后端构建先通过该检查，再转译源码与测试等运行产物。

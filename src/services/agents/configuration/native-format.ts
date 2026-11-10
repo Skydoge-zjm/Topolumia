@@ -1,8 +1,10 @@
+import type { AgentProfile, NativeConfig } from "../../../domain/agents/agent-types.js";
+import type { ParseError } from "jsonc-parser";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
 import { AppError } from "../../../lib/errors.js";
 
-export const nativeFormats = {
+export const nativeFormats: Record<string, { filename: string; format: string; schemaUrl: string; docsUrl: string }> = {
   codex: {
     filename: "config.toml",
     format: "toml",
@@ -22,13 +24,13 @@ export const nativeFormats = {
     docsUrl: "https://opencode.ai/docs/config/",
   },
 };
-const invalid = (message, detail = null) => {
+const invalid = (message: string, detail: unknown = null): never => {
   throw new AppError("AGENT_NATIVE_CONFIG_INVALID", message, {
     status: 422,
     detail,
   });
 };
-function validateTree(value, depth = 0) {
+function validateTree(value: unknown, depth = 0) {
   if (depth > 32) invalid("配置嵌套不能超过 32 层。");
   if (typeof value === "number" && !Number.isFinite(value))
     invalid("配置中的数值必须是有限数。");
@@ -43,22 +45,23 @@ function validateTree(value, depth = 0) {
     validateTree(item, depth + 1);
   }
 }
-export function parseNativeConfig(provider, content) {
+export function parseNativeConfig(provider: string, content: string): NativeConfig {
   if (!nativeFormats[provider]) invalid("未知的 Agent 配置格式。");
   if (typeof content !== "string" || Buffer.byteLength(content) > 524288)
     invalid("配置文件须为不超过 512 KiB 的文本。");
-  let value;
+  let value: NativeConfig = {};
   if (provider === "codex") {
     try {
-      value = parseToml(content.replace(/^\uFEFF/, ""));
-    } catch (error) {
+      value = parseToml(content.replace(/^\uFEFF/, "")) as NativeConfig;
+    } catch (problem) {
+      const error = problem as { line?: number; column?: number };
       invalid("TOML 语法无效，请检查标记位置。", {
         line: error.line ?? null,
         column: error.column ?? null,
       });
     }
   } else {
-    const errors = [];
+    const errors: ParseError[] = [];
     value = parseJsonc(content.replace(/^\uFEFF/, ""), errors, {
       allowTrailingComma: provider === "opencode",
       disallowComments: provider !== "opencode",
@@ -70,7 +73,7 @@ export function parseNativeConfig(provider, content) {
         lines = prefix.split(/\r?\n/);
       invalid("JSON 配置语法无效，请检查标记位置。", {
         line: lines.length,
-        column: lines.at(-1).length + 1,
+        column: lines.at(-1)!.length + 1,
         code: printParseErrorCode(error.error),
       });
     }
@@ -83,7 +86,7 @@ export function parseNativeConfig(provider, content) {
       invalid(`${key} 必须是字符串。`, { path: key });
   if (
     value.model !== undefined &&
-    (!value.model.trim() || value.model.length > 160)
+    (!value.model!.trim() || value.model.length > 160)
   )
     invalid("model 必须为 1–160 字符的模型标识。", { path: "model" });
   if (provider === "claude" && value.permissions !== undefined) {
@@ -105,12 +108,12 @@ export function parseNativeConfig(provider, content) {
   }
   return value;
 }
-export function serializeNativeConfig(provider, value) {
+export function serializeNativeConfig(provider: string, value: NativeConfig) {
   return provider === "codex"
-    ? stringifyToml(value)
+    ? stringifyToml(value as Parameters<typeof stringifyToml>[0])
     : JSON.stringify(value, null, 2) + "\n";
 }
-export function nativeProfile(profile, config) {
+export function nativeProfile(profile: AgentProfile, config: NativeConfig): AgentProfile {
   const result = { ...profile };
   result.model = config.model;
   if (profile.provider === "codex") {
@@ -123,7 +126,7 @@ export function nativeProfile(profile, config) {
   }
   return result;
 }
-export function initialNativeConfig(profile) {
+export function initialNativeConfig(profile: AgentProfile): NativeConfig {
   const common = profile.model ? { model: profile.model } : {};
   if (profile.provider === "codex")
     return {
@@ -144,7 +147,7 @@ export function initialNativeConfig(profile) {
     permission: profile.approvalPolicy === "never" ? "allow" : "ask",
   };
 }
-export function tomlValue(value) {
+export function tomlValue(value: unknown): string | undefined {
   if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value)) return `[${value.map(tomlValue).join(",")}]`;
   if (value && typeof value === "object")
@@ -153,7 +156,7 @@ export function tomlValue(value) {
       .join(",")}}`;
   return JSON.stringify(value);
 }
-export function codexConfigurationArgs(config = {}) {
+export function codexConfigurationArgs(config: NativeConfig = {}) {
   return Object.entries(config)
     .filter(([key]) => key !== "$schema")
     .flatMap(([key, value]) => ["-c", `${key}=${tomlValue(value)}`]);

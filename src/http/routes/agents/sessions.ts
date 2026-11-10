@@ -1,4 +1,5 @@
-import { readJson, sendJson } from "../../../lib/http.js";
+import type { RouteContext } from "../../route-context.js";
+import { readJsonObject, sendJson, requiredString } from "../../../lib/http.js";
 
 import { buildResearchMcpBinding } from "../../../agent/research-mcp-binding.js";
 import { MCP_SESSION_HINT } from "../../../domain/research/research-mcp-contract.js";
@@ -13,7 +14,7 @@ import { agentContextFromRequest } from "../../presenters.js";
 import { sessionResearchChanges } from "../../../services/agents/agent-research-changes.js";
 import { streamAgentImage, streamStoredAgentImage } from "../../../services/agents/agent-image-service.js";
 
-export async function handleAgentsSessionsRoutes(context) {
+export async function handleAgentsSessionsRoutes(context: RouteContext) {
   const {
     request,
     response,
@@ -22,7 +23,6 @@ export async function handleAgentsSessionsRoutes(context) {
     requestedProjectId,
     requestActor,
     collaboration,
-    config,
     researchCommands,
     state,
     curatorTriggerCoordinator,
@@ -30,15 +30,17 @@ export async function handleAgentsSessionsRoutes(context) {
     topologyService,
     commandActor,
     ensureFreshForContext,
-  } = context;
+  }: RouteContext = context;
 
+  if (!pathname.startsWith("/api/agent-")) return false;
+  if (!requestActor.user) throw Object.assign(new Error("请先登录。"), { code: "AUTH_REQUIRED", status: 401 });
   const runtimeConfig = context.requestRuntime.config;
   const persistMatch = pathname.match(/^\/api\/agent-sessions\/([^/]+)\/persist$/);
   if (persistMatch && request.method === "POST") { sendJson(response, 200, await agentSessionGateway.persist(persistMatch[1])); return true; }
   const media = context.requestRuntime.agentMedia;
   const changesMatch = pathname.match(/^\/api\/agent-sessions\/([^/]+)\/research-changes$/);
   if (changesMatch && request.method === "GET") {
-    researchCommands.check(commandActor, "research.view");
+    context.researchCommands.check(commandActor, "research.view");
     const result = sessionResearchChanges(agentSessionGateway.researchSnapshot(changesMatch[1]), researchCommands);
     const tag = `"${result.version}"`;
     if (request.headers["if-none-match"] === tag) { response.writeHead(304, { etag: tag, "cache-control": "private, no-cache" }); response.end(); }
@@ -73,7 +75,7 @@ export async function handleAgentsSessionsRoutes(context) {
     return true;
   }
   if (pathname === "/api/agent-profiles" && request.method === "GET") {
-    const refresh = ["true", "1"].includes(url.searchParams.get("refresh"));
+    const refresh = ["true", "1"].includes(url.searchParams.get("refresh") ?? "");
     sendJson(response, 200, {
       schemaVersion: "agent-profiles.v1",
       profiles: await agentSessionGateway.profiles({ refresh }),
@@ -90,7 +92,7 @@ export async function handleAgentsSessionsRoutes(context) {
     return true;
   }
   if (pathname === "/api/agent-sessions" && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     await ensureFreshForContext("before-agent-session");
     const context = agentContextFromRequest(state, topologyService, body);
     const baseUrl = `http://127.0.0.1:${request.socket.localPort}`;
@@ -101,8 +103,8 @@ export async function handleAgentsSessionsRoutes(context) {
         typeof body?.reasoningEffort === "string"
           ? body.reasoningEffort.trim()
           : undefined,
-      title: body?.title,
-      locale: body?.locale,
+      title: body.title === undefined ? undefined : requiredString(body.title),
+      locale: body.locale === undefined ? undefined : requiredString(body.locale),
       cwd: runtimeConfig.project.root,
       context,
       ownerUserId: requestActor.user.id,
@@ -128,7 +130,7 @@ export async function handleAgentsSessionsRoutes(context) {
     sendJson(
       response,
       200,
-      agentSessionGateway.searchMessages(url.searchParams.get("q"), {
+      agentSessionGateway.searchMessages(url.searchParams.get("q") ?? "", {
         includeArchived: url.searchParams.get("includeArchived") === "true",
       }),
     );
@@ -153,7 +155,7 @@ export async function handleAgentsSessionsRoutes(context) {
         validate: () => {
           const actor = collaboration.requireActor(request, requestedProjectId);
           collaboration.requireProject(actor, requestedProjectId);
-          collaboration.requirePermission(actor, "project.view", { projectId: requestedProjectId });
+          context.collaboration.requirePermission(actor, "project.view", { projectId: requestedProjectId });
         },
         subscribe: check => { collaboration.on("access-changed", check); return () => collaboration.off("access-changed", check); },
       },
@@ -164,7 +166,7 @@ export async function handleAgentsSessionsRoutes(context) {
     /^\/api\/agent-sessions\/([^/]+)\/turns$/,
   );
   if (sessionTurnMatch && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const attachments = await media.resolve(sessionTurnMatch[1], body.attachmentIds);
     const turn = agentSessionGateway.startTurn(sessionTurnMatch[1], { ...body, attachments });
     sendJson(response, 202, turn);
@@ -183,7 +185,7 @@ export async function handleAgentsSessionsRoutes(context) {
       agentSessionGateway.editQueuedMessage(
         sessionQueueMatch[1],
         sessionQueueMatch[2],
-        await readJson(request),
+        await readJsonObject(request),
       ),
     );
     return true;
@@ -212,7 +214,7 @@ export async function handleAgentsSessionsRoutes(context) {
     return true;
   }
   if (sessionApprovalMatch && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const result = await agentSessionGateway.resolveApproval(
       sessionApprovalMatch[1],
       sessionApprovalMatch[2],
@@ -233,7 +235,7 @@ export async function handleAgentsSessionsRoutes(context) {
     /^\/api\/agent-sessions\/([^/]+)\/(resume|permissions\/reset)$/,
   );
   if (sessionResumeMatch && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const baseUrl = `http://127.0.0.1:${request.socket.localPort}`;
     const resumeAction =
       sessionResumeMatch[2] === "permissions/reset"
@@ -277,12 +279,12 @@ export async function handleAgentsSessionsRoutes(context) {
     /^\/api\/agent-sessions\/([^/]+)\/sync$/,
   );
   if (sessionSyncMatch && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     sendJson(
       response,
       200,
       await agentSessionGateway.sync(sessionSyncMatch[1], {
-        reason: body?.reason ?? "manual",
+        reason: typeof body.reason === "string" ? body.reason : "manual",
       }),
     );
     return true;
@@ -307,7 +309,7 @@ export async function handleAgentsSessionsRoutes(context) {
     /^\/api\/agent-sessions\/([^/]+)\/context$/,
   );
   if (sessionContextMatch && request.method === "GET") {
-    researchCommands.check(commandActor, "research.view");
+    context.researchCommands.check(commandActor, "research.view");
     sendJson(
       response,
       200,
@@ -322,7 +324,7 @@ export async function handleAgentsSessionsRoutes(context) {
     /^\/api\/agent-sessions\/([^/]+)\/notes$/,
   );
   if (sessionNotesMatch && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const result = saveAgentMessage(
       agentSessionGateway.snapshot(sessionNotesMatch[1]),
       researchCommands,
@@ -338,7 +340,7 @@ export async function handleAgentsSessionsRoutes(context) {
       200,
       await agentSessionGateway.updateSession(
         sessionMatch[1],
-        await readJson(request),
+        await readJsonObject(request),
       ),
     );
     return true;

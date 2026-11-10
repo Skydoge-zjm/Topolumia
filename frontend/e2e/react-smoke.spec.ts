@@ -52,6 +52,7 @@ test("authenticated user reaches the React Agent workspace", async ({ page }) =>
   await login(page);
   await expect(page.getByRole("heading", { name: "项目" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: /Research Project/ }).click();
+  await page.getByRole("link", { name: "Agent 会话", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Agent 会话", exact: true })).toBeVisible({ timeout: 10_000 });
 });
 
@@ -61,6 +62,7 @@ test("Agent workspace keeps the desktop three-column layout", async ({ page }) =
   await login(page);
   await expect(page.getByRole("heading", { name: "项目" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: /Research Project/ }).click();
+  await page.getByRole("link", { name: "Agent 会话", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Agent 会话", exact: true })).toBeVisible({ timeout: 10_000 });
   await expectWorkspaceFits(page);
   await page.screenshot({ path: "test-results/agent-workspace-1440.png", fullPage: true });
@@ -72,6 +74,7 @@ test("Agent workspace remains usable at the 1280 desktop width", async ({ page }
   await login(page);
   await expect(page.getByRole("heading", { name: "项目" })).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: /Research Project/ }).click();
+  await page.getByRole("link", { name: "Agent 会话", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Agent 会话", exact: true })).toBeVisible({ timeout: 10_000 });
   await expectWorkspaceFits(page);
   await page.screenshot({ path: "test-results/agent-workspace-1280.png", fullPage: true });

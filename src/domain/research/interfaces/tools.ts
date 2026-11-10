@@ -14,7 +14,7 @@ export const transferSchema = z.discriminatedUnion("direction", [
   z.strictObject({ direction: z.literal("upload"), relativePath: path, idempotencyKey: id, originalName: z.string().max(240).optional(), mediaType: z.string().max(200).optional() }),
   z.strictObject({ direction: z.literal("download"), relativePath: path, idempotencyKey: id, target: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("asset"), assetId: id, expectedChecksum: id.optional() }), z.strictObject({ kind: z.literal("recordAttachment"), blockId: id, snapshotId: id.optional(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }), z.strictObject({ kind: z.literal("block"), owner: objectRefSchema, blockId: id, expectedRevision: rev, representationId: id.optional(), candidateId: id.optional() })]), variant: z.enum(["original", "compiledPdf", "previewImage", "xlsx", "tex"]) }),
 ]);
-const definitions = {
+export const definitions = {
   read_experiment: {
     description: "Read an optional experiment record block's independent run registry, material associations, metric directory or exact points. Use available to discover project training records before proposing a block with projectSource selections; deployment is managed in Tools & environment. Use runs → metrics → series and pass the directory's metric and xKey to select a series and precise ranges. Inspect uploaded W&B/TensorBoard records before proposing an experimentRecord block. Compare is always temporary and uses exact metric names; save analysis in a new note candidate with an experimentSnapshot sourceRef referencing snapshot.id. Use snapshot to freeze a block and events to read preserved rich records.",
     schema: z.strictObject({ ...page, mode: z.enum(["available", "runs", "materials", "metrics", "series", "compare", "inspect", "snapshot", "events"]), hostId: id.optional(), query: z.string().max(240).optional(), unassigned: z.boolean().optional(), recordOffset: z.number().int().nonnegative().optional(), snapshotId: id.optional(), eventWatermark: z.number().int().positive().optional(), eventAssetId: id.optional(), eventSourceId: id.optional(), eventIndex: z.number().int().nonnegative().optional(), textOffset: z.number().int().nonnegative().optional(), textLength: z.number().int().min(1).max(12000).optional(), eventKind: z.enum(["config", "summary", "table", "distribution", "media", "file", "lifecycle", "extension"]).optional(), after: z.number().int().nonnegative().optional(), nodeIds: z.array(id).min(2).max(100).optional(), nodeId: id.optional(), runId: id.optional(), blockId: id.optional(), blockRevision: rev.optional(), candidateId: id.optional(), expectedRevision: rev.optional(), expectedContentVersion: id.optional(), provider: z.enum(experimentProviders).optional(), assetIds: z.array(id).min(1).max(40).optional(), metric: id.optional(), xKey: id.optional(), metricKeys: z.array(id).max(32).optional(), selections: z.array(z.strictObject({ nodeId: id, blockId: id.optional(), snapshotId: id.optional(), runId: id })).min(1).max(24).optional(), pointOffset: z.number().int().nonnegative().optional(), pointLimit: z.number().int().min(1).max(100).optional() }),
@@ -35,20 +35,23 @@ const definitions = {
   create_candidate: { description: 'Save research for human review. Example: {reason:"Save reading",nodes:[{kind:"paper",core:{nodeName:"Paper",paperTitle:"Full title",identifiers:{arxiv:"2502.14321v3"}},blocks:[{title:"Method",type:"richText",payload:{format:"markdown",body:"Source-grounded explanation"}}]}]}. Paper core accepts ONLY nodeName,paperTitle,authors,year,venue,field,identifiers,urls,abstract,tags. identifiers accepts doi/arxiv/other; publication date, paper type and coverage belong in content blocks. Files use representations:[{kind:"asset",assetId:"returned ID",role:"source"}]. For existing nodes use nodeChanges and observed revisions. Groups: groups:[{core:{nodeName:"Ablation"},members:[{nodeId:"returned node ID",role:"baseline"}],blocks:[]}]; groupChanges edits a group. Relations use from/to:{kind:"node"|"group",id:"returned ID"}. System assigns IDs; only humans apply.', schema: createProposalSchema, kind: "candidateReceipt", defaultBudget: 4000, command: "candidate", write: true },
   edit_candidate: { description: 'Incrementally revise your pending candidate. Example: {candidateId:"returned ID",expectedRevision:1,nodeChanges:[{nodeId:"returned node ID",addBlocks:[{title:"Limits",type:"richText",payload:{format:"markdown",body:"Source limitations"}}]}]}. Omitted content stays intact. Use IDs from receipt or candidate reads. Only candidate expectedRevision is needed for content already in that candidate; first edits of formal content also require its observed revision.', schema: reviseProposalSchema, kind: "candidateReceipt", defaultBudget: 4000, command: "candidate", write: true },
 };
-function conditions(name, input) {
-  const reject = (message) => { throw Object.assign(new Error(message), { code: "INPUT_INVALID", status: 422 }); };
+export type ResearchToolName = keyof typeof definitions;
+export type ResearchToolInputs = { [K in ResearchToolName]: z.infer<(typeof definitions)[K]["schema"]> };
+type ConditionInput = {mode?:string;nodeId?:string;nodeIds?:unknown[];blockId?:string;snapshotId?:string;provider?:string;assetIds?:string[];selections?:unknown[];runId?:string;metric?:string;xKey?:string;owner?:{kind:string;id:string};object?:{kind:string;id:string};target?:unknown;groupId?:string;scope?:string;section?:string;view?:string;candidateId?:string;status?:string;cursor?:string;limit?:number;selection?:Record<string,unknown>;[key:string]:unknown};
+function conditions(name:string, input:ConditionInput) {
+  const reject = (message:string) => { throw Object.assign(new Error(message), { code: "INPUT_INVALID", status: 422 }); };
   if (name === "read_experiment") {
-    if (["snapshot", "events"].includes(input.mode) && !input.blockId && !input.snapshotId) reject("record blockId is required");
+    if (["snapshot", "events"].includes(input.mode??"") && !input.blockId && !input.snapshotId) reject("record blockId is required");
     if (input.mode === "inspect" && (!input.provider || !input.assetIds)) reject("inspect requires provider and assetIds");
     if (input.mode === "compare" && Boolean(input.selections) === Boolean(input.nodeIds)) reject("compare requires either selections or nodeIds");
-    if (["runs", "materials", "metrics", "series", "snapshot", "events"].includes(input.mode) && !input.nodeId && !input.snapshotId) reject("nodeId or snapshotId is required");
+    if (["runs", "materials", "metrics", "series", "snapshot", "events"].includes(input.mode??"") && !input.nodeId && !input.snapshotId) reject("nodeId or snapshotId is required");
     if (input.mode === "metrics" && !input.runId) reject("metrics requires runId");
     if (input.mode === "series" && (!input.runId || !input.metric)) reject("series requires runId and exact metric name");
     if (input.xKey !== undefined && input.mode !== "series") reject("xKey requires series mode");
   }
   if (name === "search" && input.owner && input.target !== "blocks") reject("owner requires target=blocks");
   if (name === "read_groups") { if(input.mode!=="list"&&!input.groupId)reject("groupId is required");if(input.mode==="list"&&(input.groupId||input.scope||input.section))reject("list excludes group details");if(input.mode!=="members"&&input.scope)reject("scope requires members");if(input.mode!=="show"&&input.section)reject("section requires show"); }
-  if(name==="neighbors"&&input.scope==="groupBoundary"&&input.object.kind!=="group")reject("groupBoundary requires a group");
+  if(name==="neighbors"&&input.scope==="groupBoundary"&&input.object?.kind!=="group")reject("groupBoundary requires a group");
   if (name === "read_blocks") {
     if (input.mode === "list" && ["blockId","view","selection","representationId","revision","expectedRevision","expectedContentVersion"].some(k => input[k] !== undefined)) reject("list excludes block content parameters");
     if (input.mode === "read" && (!input.blockId || !input.view || ["cursor","limit","titleQuery","types","review"].some(k => input[k] !== undefined))) reject("read requires blockId/view and excludes list parameters");
@@ -63,12 +66,14 @@ function conditions(name, input) {
   }
   return input;
 }
-export const researchTools = Object.fromEntries(Object.entries(definitions).map(([name, tool]) => [name, { ...tool, validate(input) { return conditions(name, tool.schema.parse(input)); }, command(input) { return { args: ["--tool", name, "--input", "-"], input }; } }]));
-export const toolPermission = (name, input = {}) => name === "transfer_asset" ? input.direction === "upload" ? "research.proposeChange" : "research.view" : researchTools[name]?.write ? "research.proposeChange" : "research.view";
-export const isWrite = (name, input = {}) => Boolean(researchTools[name]?.write || name === "transfer_asset" && input.direction === "upload");
+type ToolEntry<K extends ResearchToolName> = (typeof definitions)[K] & { write?:boolean;transfer?:boolean;validate(input:unknown):ResearchToolInputs[K];command(input:ResearchToolInputs[K]):{args:string[];input:ResearchToolInputs[K]} };
+export const researchTools = Object.fromEntries(Object.entries(definitions).map(([name, tool]) => [name, { ...tool, validate(input:unknown) { const parsed=tool.schema.parse(input);conditions(name,parsed);return parsed; }, command(input:unknown) { return { args: ["--tool", name, "--input", "-"], input }; } }])) as {[K in ResearchToolName]:ToolEntry<K>};
+export const isResearchToolName=(name:string):name is ResearchToolName=>Object.hasOwn(researchTools,name);
+export const toolPermission = (name:string, input:{direction?:string} = {}) => name === "transfer_asset" ? input.direction === "upload" ? "research.proposeChange" : "research.view" : (isResearchToolName(name)&&researchTools[name].write) ? "research.proposeChange" : "research.view";
+export const isWrite = (name:string, input:{direction?:string} = {}) => Boolean((isResearchToolName(name)&&researchTools[name].write) || name === "transfer_asset" && input.direction === "upload");
 export function toolDefinitions(permissions = ["research.view","research.proposeChange"]) {
   return Object.entries(researchTools).filter(([name]) => permissions.includes(toolPermission(name))).map(([name, tool]) => {
-    const schema: any = compactSchemaOutput(z.toJSONSchema(tool.schema, { reused: "ref" })); delete schema.$schema; schema.type = "object";
+    const schema = compactSchemaOutput(z.toJSONSchema(tool.schema, { reused: "ref" })); delete schema.$schema; schema.type = "object";
     return { name, description: tool.description, inputSchema: schema, annotations: { readOnlyHint: !tool.write && !tool.transfer, destructiveHint: false, idempotentHint: name === "edit_candidate" || !tool.write, openWorldHint: false } };
   });
 }

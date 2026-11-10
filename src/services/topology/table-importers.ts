@@ -4,21 +4,28 @@ import { AppError } from "../../lib/errors.js";
 import { applyMergedRanges, formatXlsxValue, parseCellReference, readXlsxStyles } from "./xlsx-presentation.js";
 import { exportTexPresentation, parseTexPresentation } from "./tex-presentation.js";
 import { exportStyledXlsx } from "./xlsx-export.js";
+import type { IndexedTable } from "../../domain/research/types.js";
+import type { TableGrid } from "../../domain/research/table-presentation.js";
+import { workbookDocumentSchema, relationshipsDocumentSchema, sharedStringsDocumentSchema, worksheetDocumentSchema, type XmlCell, type XmlRichString } from "./xlsx-xml.js";
+type CellValue = TableGrid["cells"][number][number]["value"];
+type TableCell = TableGrid["cells"][number][number];
+export type TableRange = { offset?:number;limit?:number;columnKeys?:string[] };
+export type TableImportOptions = { sheetName?:string;range?:TableRange|null };
 
 const MAX_PREVIEW_ROWS = 300;
 const MAX_PREVIEW_COLUMNS = 60;
 const MAX_PREVIEW_CELLS = 12_000;
 const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", parseTagValue: false, trimValues: false });
-const list = (value) => value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
-const xmlEscape = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+const list = <T>(value: T | T[] | undefined | null): T[] => value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
+const xmlEscape = (value: unknown) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
-function makeTable(headers, rows, sourceFormat, sheetName = undefined, range = null) {
+function makeTable(headers: CellValue[], rows: CellValue[][], sourceFormat: "xlsx" | "tex" | "csv", sheetName: string | undefined = undefined, range: TableRange | null = null): IndexedTable {
   const columns = headers.map((label, index) => ({ key: "c" + (index + 1), label: String(label || ("Column " + (index + 1))).trim() }));
   if (!columns.length) throw new AppError("TABLE_PARSE_EMPTY", "文件中没有可预览的表格列。", { status: 422 });
   if (range) {
     const offset = range.offset ?? 0, limit = range.limit ?? 20, availableRows = rows.length + 1;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset >= availableRows || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new AppError("RANGE_INVALID", "Select 1–100 rows at a valid offset.", { status: 422 });
-    const selected = range.columnKeys ? columns.filter(column => range.columnKeys.includes(column.key)) : columns;
+    const selected = range.columnKeys ? columns.filter(column => range.columnKeys!.includes(column.key)) : columns;
     if (range.columnKeys?.some(key => !selected.some(column => column.key === key))) throw new AppError("RANGE_INVALID", "Unknown column key.", { status: 422 });
     const count = Math.min(limit, availableRows - offset);
     if (selected.length > 60 || selected.length * count > 2000) throw new AppError("RANGE_INVALID", "Select at most 60 columns and 2000 cells.", { status: 422 });
@@ -33,7 +40,7 @@ function makeTable(headers, rows, sourceFormat, sheetName = undefined, range = n
   return { schemaVersion: "research-table-preview.v1", columns, rows: boundedRows, sourceFormat, ...(sheetName ? { sheetName } : {}), truncated: rows.length > MAX_PREVIEW_ROWS, totalRows: rows.length };
 }
 
-function parseTexCell(cell) {
+function parseTexCell(cell: unknown) {
   return String(cell ?? "")
     .replace(/\\multicolumn\s*\{[^{}]*\}\s*\{[^{}]*\}\s*\{([^{}]*)\}/g, "$1")
     .replace(/\\multirow\s*\{[^{}]*\}\s*\{[^{}]*\}\s*\{([^{}]*)\}/g, "$1")
@@ -48,29 +55,29 @@ function parseTexCell(cell) {
     .replace(/\\,/g, " ").replace(/\$+/g, "").replace(/\\[a-zA-Z]+\*?/g, "").replace(/[{}]/g, "").trim();
 }
 
-export function parseTexTable(buffer) {
+export function parseTexTable(buffer: Uint8Array) {
   const source = Buffer.from(buffer).toString("utf8").replace(/\r\n?/g, "\n");
   let grid;
   try { grid = parseTexPresentation(source, parseTexCell); }
-  catch (error) { throw new AppError("TEX_TABLE_INVALID", error.message, { status: 422 }); }
+  catch (error) { throw new AppError("TEX_TABLE_INVALID", error instanceof Error ? error.message : String(error), { status: 422 }); }
   if (!grid.cells.length || !grid.cells[0]?.length) throw new AppError("TEX_TABLE_EMPTY", "TeX 表格没有数据行。", { status: 422 });
   const rows = grid.cells.map(row => row.map(cell => cell.covered ? "" : cell.value));
   return { ...makeTable(rows[0], rows.slice(1), "tex"), grid };
 }
 
-const cellColumnIndex = (reference) => {
+const cellColumnIndex = (reference: unknown) => {
   const letters = String(reference ?? "").match(/^[A-Z]+/i)?.[0]?.toUpperCase() ?? "A";
   let index = 0;
   for (const char of letters) index = index * 26 + char.charCodeAt(0) - 64;
   return index - 1;
 };
-const xmlText = (value) => typeof value === "string" || typeof value === "number" ? String(value) : value && typeof value === "object" ? String(value["#text"] ?? "") : "";
-const richString = (value) => {
+const xmlText = (value: unknown) => typeof value === "string" || typeof value === "number" ? String(value) : value && typeof value === "object" ? String("#text" in value ? value["#text"] ?? "" : "") : "";
+const richString = (value: XmlRichString | undefined) => {
   if (!value || typeof value !== "object") return "";
   if (value.t !== undefined) return xmlText(value.t);
   return list(value.r).map((run) => xmlText(run?.t)).join("");
 };
-const xlsxCellValue = (cell, shared) => {
+const xlsxCellValue = (cell: XmlCell, shared: string[]): CellValue => {
   const type = cell?.["@_t"], value = cell?.v;
   if (type === "s") return shared[Number(value)] ?? "";
   if (type === "inlineStr") return richString(cell.is);
@@ -81,9 +88,9 @@ const xlsxCellValue = (cell, shared) => {
   return Number.isFinite(numeric) ? numeric : String(value);
 };
 
-const workbookParsers = new Map<object, { readXml: (name: string) => any; bytes: number }>();
+const workbookParsers = new Map<object, { readXml: (name: string) => unknown; bytes: number }>();
 let workbookBytes = 0;
-export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheetName?: string; range?: any} = {}) {
+export async function parseXlsxTable(buffer: Uint8Array, { sheetName, range = null }: TableImportOptions = {}): Promise<IndexedTable> {
   const cached = workbookParsers.get(buffer);
   let readXml = cached?.readXml;
   if (cached) { workbookParsers.delete(buffer); workbookParsers.set(buffer, cached); }
@@ -97,8 +104,8 @@ export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheet
       return true;
     } });
   }
-  catch (error) { throw new AppError("XLSX_PARSE_FAILED", "无法读取 XLSX 压缩包。", { status: 422, detail: { reason: String(error?.message ?? error).slice(0, 400) } }); }
-  const parsed = new Map<string, any>();
+  catch (error) { throw new AppError("XLSX_PARSE_FAILED", "无法读取 XLSX 压缩包。", { status: 422, detail: { reason: String(error instanceof Error ? error.message : error).slice(0, 400) } }); }
+  const parsed = new Map<string, unknown>();
   readXml = (name) => {
     if (!parsed.has(name)) parsed.set(name, files[name] ? xmlParser.parse(strFromU8(files[name])) : null);
     return parsed.get(name);
@@ -107,14 +114,14 @@ export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheet
   if (bytes <= 16 * 1024 * 1024) {
     workbookParsers.set(buffer, { readXml, bytes }); workbookBytes += bytes;
     while (workbookBytes > 16 * 1024 * 1024 || workbookParsers.size > 8) {
-      const oldest = workbookParsers.keys().next().value;
+      const oldest = workbookParsers.keys().next().value!;
       workbookBytes -= workbookParsers.get(oldest)!.bytes; workbookParsers.delete(oldest);
     }
   }
   }
-  const workbook = readXml("xl/workbook.xml")?.workbook;
+  const workbook = workbookDocumentSchema.parse(readXml("xl/workbook.xml"))?.workbook;
   if (!workbook) throw new AppError("XLSX_PARSE_FAILED", "XLSX 中缺少工作簿定义。", { status: 422 });
-  const rels = list(readXml("xl/_rels/workbook.xml.rels")?.Relationships?.Relationship);
+  const rels = list(relationshipsDocumentSchema.parse(readXml("xl/_rels/workbook.xml.rels"))?.Relationships?.Relationship);
   const sheets = list(workbook.sheets?.sheet);
   const selected = sheetName ? sheets.find((sheet) => sheet["@_name"] === sheetName) : sheets[0];
   if (!selected) throw new AppError("XLSX_SHEET_NOT_FOUND", "XLSX 文件中没有找到工作表。", { status: 422 });
@@ -122,26 +129,26 @@ export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheet
   if (!relationship) throw new AppError("XLSX_SHEET_NOT_FOUND", "工作表关系无效。", { status: 422 });
   const target = String(relationship["@_Target"] ?? "");
   const sheetPath = target.startsWith("/") ? target.slice(1) : target.startsWith("xl/") ? target : "xl/" + target;
-  const worksheet = readXml(sheetPath)?.worksheet;
+  const worksheet = worksheetDocumentSchema.parse(readXml(sheetPath))?.worksheet;
   if (!worksheet) throw new AppError("XLSX_SHEET_NOT_FOUND", "工作表文件不存在。", { status: 422 });
-  const sharedItems = list(readXml("xl/sharedStrings.xml")?.sst?.si);
+  const sharedItems = list(sharedStringsDocumentSchema.parse(readXml("xl/sharedStrings.xml"))?.sst?.si);
   const shared = sharedItems.map(richString);
   const presentation = readXlsxStyles(readXml("xl/styles.xml"), readXml("xl/theme/theme1.xml"));
   const rows = list(worksheet.sheetData?.row);
   if (range) {
     const offset = range.offset ?? 0, limit = range.limit ?? 20;
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new AppError("RANGE_INVALID", "Select 1–100 rows at a valid offset.", {status:422});
-    const values = new Map(), metadata = new Map(); let availableRows = 0, columnCount = 0;
+    const values = new Map<number,CellValue[]>(), metadata = new Map<number,TableCell[]>(); let availableRows = 0, columnCount = 0;
     const mergeRefs = list(worksheet.mergeCells?.mergeCell).map(m => m["@_ref"]);
     const headerEnd = Math.min(10, Math.max(1, ...mergeRefs.map(r => { const [a,b] = String(r).split(":").map(parseCellReference); return a?.row === 0 ? (b?.row ?? 0) + 1 : 1; })));
     for (const [i,row] of rows.entries()) {
       const rowIndex = Number(row["@_r"] ?? i + 1) - 1; availableRows = Math.max(availableRows, rowIndex + 1);
       const keep = rowIndex < headerEnd || rowIndex >= offset && rowIndex < offset + limit;
-      const cells = [], meta = [];
+      const cells: CellValue[] = [], meta: TableCell[] = [];
       for (const c of list(row.c)) {
         const column = cellColumnIndex(c["@_r"]); columnCount = Math.max(columnCount,column + 1); if (!keep) continue;
-        const value = xlsxCellValue(c,shared), style: any = presentation.styles[Number(c["@_s"] ?? 0)] ?? {};
-        cells[column] = value; meta[column] = { value, text: formatXlsxValue(value,style.numberFormat), numberFormat: style.numberFormat, ...(c.f !== undefined ? {formulaStatus:c.v === undefined ? "noCachedValue" : "cached"} : {}) };
+        const value = xlsxCellValue(c,shared), style = presentation.styles[Number(c["@_s"] ?? 0)] ?? {};
+        cells[column] = value; meta[column] = { value, text: formatXlsxValue(value,style.numberFormat), style: {numberFormat: style.numberFormat}, ...(c.f !== undefined ? {formulaStatus:c.v === undefined ? "noCachedValue" : "cached"} : {}) };
       }
       if (keep) {values.set(rowIndex,cells);metadata.set(rowIndex,meta);}
     }
@@ -152,12 +159,12 @@ export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheet
     const count = Math.min(limit,availableRows-offset), cells = Array.from({length:count},(_,i)=>indices.map(c=>metadata.get(offset+i)?.[c]??{value:null}));
     return {schemaVersion:"research-table-preview.v1",sourceFormat:"xlsx",sheetName:selected["@_name"],sheetNames:sheets.map(s=>s["@_name"]).slice(0,40),columns:keys.map((key,i)=>({key,label:String(values.get(0)?.[indices[i]]??key)})),rows:[],grid:{cells},rangeOffset:offset,availableRows,totalRows:Math.max(0,availableRows-1),truncated:false,headerContext:{rows:Array.from({length:headerEnd},(_,i)=>({index:i,values:indices.map(c=>values.get(i)?.[c]??null)})),merges:mergeRefs.slice(0,40)}};
   }
-  const matrix = [], cellMetadata = [], rowHeights = [];
+  const matrix: CellValue[][] = [], cellMetadata: TableCell[][] = [], rowHeights: number[] = [];
   let maxColumn = 0, maxRow = 0;
   for (const [rowIndex, row] of rows.entries()) {
     const realRow = Math.max(0, Number(row["@_r"] ?? rowIndex + 1) - 1);
     maxRow = Math.max(maxRow, realRow + 1);
-    const rowValues = [], metadata = [];
+    const rowValues: CellValue[] = [], metadata: TableCell[] = [];
     for (const cell of list(row.c)) {
       const index = cellColumnIndex(cell["@_r"]);
       maxColumn = Math.max(maxColumn, index + 1);
@@ -181,7 +188,7 @@ export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheet
   const boundedRowCount = Math.min(maxRow, MAX_PREVIEW_ROWS + 1);
   if (maxColumn > MAX_PREVIEW_COLUMNS || boundedRowCount * maxColumn > MAX_PREVIEW_CELLS) throw new AppError("TABLE_PREVIEW_LIMIT", "XLSX 表格超过预览列数或单元格数限制。", { status: 413 });
   const normalized = Array.from({ length: boundedRowCount }, (_, row) => Array.from({ length: maxColumn }, (_, index) => matrix[row]?.[index] ?? ""));
-  const table: any = makeTable(normalized[0], normalized.slice(1), "xlsx", selected["@_name"]);
+  const table = makeTable(normalized[0], normalized.slice(1), "xlsx", selected["@_name"]);
   table.truncated = maxRow > MAX_PREVIEW_ROWS + 1;
   table.totalRows = Math.max(0, maxRow - 1);
   const cells = normalized.map((values, row) => values.map((value, column) => cellMetadata[row]?.[column] ?? { value }));
@@ -197,7 +204,7 @@ export async function parseXlsxTable(buffer, { sheetName, range = null }: {sheet
   return table;
 }
 
-export async function importTablePreview(buffer, filename, mediaType = "", options: any = {}) {
+export async function importTablePreview(buffer: Uint8Array, filename: string, mediaType = "", options: TableImportOptions = {}) {
   const extension = String(filename ?? "").toLowerCase().split(".").pop();
   if (extension === "tex" || /x-tex|latex/i.test(mediaType)) return parseTexTable(buffer);
   if (extension === "xlsx" || /spreadsheetml/i.test(mediaType)) return parseXlsxTable(buffer, options);
@@ -220,12 +227,12 @@ export async function importTablePreview(buffer, filename, mediaType = "", optio
   return null;
 }
 
-const columnName = (index) => {
+const columnName = (index: number) => {
   let value = index + 1, name = "";
   while (value > 0) { const remainder = (value - 1) % 26; name = String.fromCharCode(65 + remainder) + name; value = Math.floor((value - 1) / 26); }
   return name;
 };
-export function exportXlsxTable(table, sheetName = "Table") {
+export function exportXlsxTable(table: IndexedTable, sheetName = "Table") {
   if (table.grid) return exportStyledXlsx(table.grid, sheetName);
   const escape = xmlEscape;
   const rows = [table.columns.map((column) => column.label), ...table.rows.map((row) => table.columns.map((column) => row[column.key] ?? ""))];
@@ -248,9 +255,9 @@ export function exportXlsxTable(table, sheetName = "Table") {
   return zipSync(files, { level: 6 });
 }
 
-export function exportTexTable(table) {
-  const escapes = { "\\": "\\textbackslash{}", "{": "\\{", "}": "\\}", "%": "\\%", "&": "\\&", "#": "\\#", "_": "\\_", "$": "\\$", "↓": "$\\downarrow$", "↑": "$\\uparrow$", "×": "$\\times$", "±": "$\\pm$", "—": "---" };
-  const escape = (value) => String(value ?? "").replace(/[\\{}%&#_$↓↑×±—]/g, (char) => escapes[char]);
+export function exportTexTable(table: IndexedTable) {
+  const escapes: Record<string,string> = { "\\": "\\textbackslash{}", "{": "\\{", "}": "\\}", "%": "\\%", "&": "\\&", "#": "\\#", "_": "\\_", "$": "\\$", "↓": "$\\downarrow$", "↑": "$\\uparrow$", "×": "$\\times$", "±": "$\\pm$", "—": "---" };
+  const escape = (value: unknown) => String(value ?? "").replace(/[\\{}%&#_$↓↑×±—]/g, (char) => escapes[char]);
   if (table.grid) return Buffer.from(exportTexPresentation(table.grid, escape), "utf8");
   const align = table.columns.map(() => "l").join("");
   const lines = ["\\begin{tabular}{" + align + "}", "\\toprule", table.columns.map((column) => escape(column.label)).join(" & ") + " \\\\", "\\midrule"];

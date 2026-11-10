@@ -1,12 +1,15 @@
 import { versionHash } from "../../lib/hash.js";
 import { candidateTurn } from "./agent-candidate-turns.js";
 import { summarizeCandidate } from "../research/changes/candidate-summary.js";
+import type { ResearchCommandService } from "../research/research-command-service.js";
+import type { StoredAgentSession, AgentTurn } from "../../domain/agents/agent-types.js";
+import type { CandidateSummary } from "../research/changes/candidate-summary.js";
 
 const summaries = new WeakMap<
   object,
-  Map<string, { key: string; value: unknown }>
+  Map<string, { key: string; value: CandidateSummary }>
 >();
-export function sessionResearchChanges(session, commands) {
+export function sessionResearchChanges(session: Pick<StoredAgentSession, "researchSessionId" | "candidateTurns"> & { turns?: Pick<AgentTurn, "id" | "startedAt" | "completedAt">[] }, commands: ResearchCommandService) {
   const candidates = commands.store.forSession(
     "candidates",
     session.researchSessionId,

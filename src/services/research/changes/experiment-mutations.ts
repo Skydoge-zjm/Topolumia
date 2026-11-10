@@ -1,14 +1,21 @@
+import type * as z from "zod/v4";
+import type { ResearchCommandService } from "../research-command-service.js";
+import type { StoredResearchObject, StoredNode, StoredBlock, ValidatedBlock, ResearchActor } from "../../../domain/research/types.js";
+import type { ResearchObjectRef } from "../../../domain/research/object-ref.js";
+import type { ExperimentRecordCollection, experimentPatchSchema } from "../../../domain/research/experiment-records.js";
+import { isRecordBlock } from "../../../domain/research/record-types.js";
 import { fail } from "../../../domain/research/access.js";
 import { sameObject } from "../../../domain/research/object-ref.js";
 
-export function requireExperiment(object, owner) {
+export function requireExperiment(object: StoredResearchObject, owner: ResearchObjectRef): asserts object is StoredNode {
   if (owner.kind !== "node" || object.kind !== "experiment")
     fail("NODE_NOT_EXPERIMENT", "Run records belong to an experiment.", 422);
 
 }
 
-export function registerRecordRuns(c, node, owner, block, actor, allocate) {
+export function registerRecordRuns(c: ResearchCommandService, node: StoredResearchObject, owner: ResearchObjectRef, block: ValidatedBlock & { id: string }, actor: ResearchActor, allocate: (kind: string, key: string) => string) {
   requireExperiment(node, owner);
+  if (!isRecordBlock(block)) fail("EXPERIMENT_RECORD_INVALID", "记录块缺少执行集合。", 422);
   const object = block.recordCollection;
   c.records.validatePayload(block.payload, block.representations, actor);
   const provider = block.payload.provider;
@@ -59,15 +66,15 @@ export function registerRecordRuns(c, node, owner, block, actor, allocate) {
 }
 
 export function applyExperimentPatch(
-  c,
-  object,
-  owner,
-  patch,
-  blocks,
-  allocate,
-  operationIndex,
-  actor,
-  assetIds,
+  c: ResearchCommandService,
+  object: ExperimentRecordCollection,
+  owner: ResearchObjectRef,
+  patch: z.infer<typeof experimentPatchSchema>,
+  blocks: Map<string, StoredBlock>,
+  allocate: (kind: string, key: string) => string,
+  operationIndex: number,
+  actor: ResearchActor,
+  assetIds: Set<string>,
 ) {
   if (owner.kind !== "node") fail("NODE_NOT_EXPERIMENT", "Run records belong to an experiment.", 422);
   for (const [index, input] of (patch.addRuns ?? []).entries())
@@ -88,7 +95,7 @@ export function applyExperimentPatch(
         404,
       );
     Object.assign(run, change);
-    if (Array.isArray(run.metadataFields)) run.metadataFields = [...new Set([...run.metadataFields, ...Object.keys(change).filter(key => key !== "id")])];
+    if (Array.isArray(run.metadataFields)) run.metadataFields = [...new Set([...run.metadataFields, ...(["label", "status", "note"] as const).filter(key => change[key] !== undefined)])];
   }
   for (const id of patch.removeLinkIds ?? []) {
     if (!object.materialLinks.some((link) => link.id === id))
@@ -109,17 +116,18 @@ export function applyExperimentPatch(
       current?.revision === input.blockRevision
         ? current
         : c.store.get("versions", input.blockId + ":" + input.blockRevision);
-    if (!version || !sameObject(version.owner, owner))
+    if (!version || !("type" in version) || !sameObject(version.owner, owner))
       fail(
         "CONTENT_BLOCK_NOT_FOUND",
         "Material version does not belong to this experiment.",
         404,
       );
+    const selection = input.selection;
     if (
-      ["asset", "assetRow"].includes(input.selection.kind) &&
+      (selection.kind === "asset" || selection.kind === "assetRow") &&
       !version.representations?.some(
         (rep) =>
-          rep.kind === "asset" && rep.assetId === input.selection.assetId,
+          rep.kind === "asset" && rep.assetId === selection.assetId,
       )
     )
       fail(
@@ -190,7 +198,7 @@ export function applyExperimentPatch(
           block.id === object.blockId &&
           block.lifecycle !== "archived" &&
           block.type === "experimentRecord" &&
-          block.payload.runs.some((run) => run.runId === id),
+          (block.payload?.runs ?? []).some((run) => run.runId === id),
       )
     )
       fail(

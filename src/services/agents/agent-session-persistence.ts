@@ -1,12 +1,13 @@
+import type { AgentRuntimeSession, StoredAgentSession } from "../../domain/agents/agent-types.js";
 export class AgentSessionPersistence {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private pending = new Map<string, Promise<void>>();
   private closed = false;
   constructor(
-    private store,
-    private onStatus: (session, status: string, error?: string) => void,
+    private store: { upsert(session: AgentRuntimeSession | StoredAgentSession): Promise<unknown>; close(): void } | null,
+    private onStatus: (session: AgentRuntimeSession, status: string, error?: string) => void,
   ) {}
-  schedule(session) {
+  schedule(session: AgentRuntimeSession) {
     if (!this.store || this.closed || this.timers.has(session.id)) return;
     // Throttle checkpoints; a continuous stream cannot postpone this deadline.
     const timer = setTimeout(() => {
@@ -16,8 +17,9 @@ export class AgentSessionPersistence {
     timer.unref?.();
     this.timers.set(session.id, timer);
   }
-  async save(session): Promise<void> {
+  async save(session: AgentRuntimeSession): Promise<void> {
     if (!this.store || this.closed) return;
+    const store = this.store;
     clearTimeout(this.timers.get(session.id));
     this.timers.delete(session.id);
     const previous = this.pending.get(session.id) ?? Promise.resolve();
@@ -27,7 +29,7 @@ export class AgentSessionPersistence {
         if (this.closed) return;
         this.onStatus(session, "saving");
         try {
-          await this.store.upsert(session);
+          await store.upsert(session);
           this.onStatus(session, "persisted");
         } catch (error) {
           this.onStatus(
@@ -46,7 +48,7 @@ export class AgentSessionPersistence {
         this.pending.delete(session.id);
     }
   }
-  async close(sessions) {
+  async close(sessions: AgentRuntimeSession[]) {
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     await Promise.allSettled(this.pending.values());

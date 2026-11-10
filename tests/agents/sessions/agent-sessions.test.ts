@@ -2,25 +2,33 @@ import { installTopologyFixture } from "../../helpers/topology-fixture.js";
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import os from "node:os";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { loadConfig, bundledRoot } from "../../../src/config.js";
 import { startMvpServer } from "../../../src/server.js";
 
 let app;
 let sessionId;
+let fixtureRoot;
 
 before(async () => {
-  const config = await loadConfig();
+  fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "topolumia-agent-session-sources-"));
+  const projectRoot = path.join(fixtureRoot, "project");
+  await mkdir(projectRoot, { recursive: true });
+  await writeFile(path.join(projectRoot, "g1-observations.md"), "# Synthetic G1 observations\nG1 LPIPS: 0.18; G0 LPIPS: 0.21. Additional seeds are needed before attributing the difference.\n");
+  const config = await loadConfig({ project: { root: projectRoot, workspacesRoot: path.join(fixtureRoot, "workspaces") }, filesystem: { roots: [projectRoot] }, sourceRefresh: { enabled: false } });
   config.agentSessions.profiles.push({
     id: "research-fixture-acp", label: "Research Demo · ACP", provider: "fixture", source: "bundled",
     command: process.execPath, args: [path.join(bundledRoot, "fixtures/acp/research-agent.js")],
   });
-  app = await startMvpServer({ port: 0, config });
+  app = await startMvpServer({ port: 0, config, collaborationFile: path.join(fixtureRoot, "db.sqlite"), userSettingsFile: path.join(fixtureRoot, "settings.json") });
   installTopologyFixture(app);
 });
 
 after(async () => {
   if (sessionId) await request(`/api/agent-sessions/${sessionId}/close`, { method: "POST", body: "{}" }).catch(() => {});
-  if (app?.server) await new Promise((resolve) => app.server.close(resolve));
+  await app?.close();
+  if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true, maxRetries: 3 });
 });
 
 async function request(path, options = {}) {
@@ -55,7 +63,9 @@ test("ACP profiles expose one deterministic fixture and capability-negotiated pr
 
 test("ACP fixture session streams messages and tool events into the platform journal", async () => {
   const sync = await request("/api/sync", { method: "POST", body: "{}" });
-  const sourceRef = sync.payload.mlflow.runs.find((run) => run.group === "G1").ref;
+  assert.equal(sync.response.status, 200);
+  const sourceRef = app.researchCommands.sources().find(source => source.label === "g1-observations.md")?.ref;
+  assert.ok(sourceRef, "the synced real Markdown fixture must be indexed before creating the Agent session");
   const created = await request("/api/agent-sessions", {
     method: "POST",
     body: JSON.stringify({

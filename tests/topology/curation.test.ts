@@ -1,9 +1,13 @@
 import { installTopologyFixture } from "../helpers/topology-fixture.js";
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { startMvpServer } from "../../src/server.js";
 
 let app;
+let fixtureRoot;
 let curatorDisposition = "proposal";
 
 const contractCuratorDriver = {
@@ -83,12 +87,17 @@ const contractCuratorDriver = {
 };
 
 before(async () => {
-  app = await startMvpServer({ port: 0, topologyCuratorDriver: contractCuratorDriver });
+  fixtureRoot=await mkdtemp(path.join(os.tmpdir(),"topolumia-curation-"));
+  const projectRoot=path.join(fixtureRoot,"research");
+  await mkdir(projectRoot);
+  await writeFile(path.join(projectRoot,"research-evidence.md"),"# Evaluator evidence\nRecord the evaluator backbone before accepting perceptual gains.\n","utf8");
+  app = await startMvpServer({ port: 0, topologyCuratorDriver: contractCuratorDriver, collaborationFile:path.join(fixtureRoot,"app.sqlite"),userSettingsFile:path.join(fixtureRoot,"settings.json"),config:{project:{root:projectRoot,workspacesRoot:path.join(fixtureRoot,"workspaces")},filesystem:{roots:[projectRoot]},sourceRefresh:{enabled:false}} });
   installTopologyFixture(app);
 });
 
 after(async () => {
-  if (app?.server) await new Promise((resolve) => app.server.close(resolve));
+  await app?.close();
+  if(fixtureRoot)await rm(fixtureRoot,{recursive:true,force:true,maxRetries:3});
 });
 
 async function request(path, options = {}) {
@@ -125,9 +134,10 @@ test("curator reports remain advisory and cannot bypass research object review",
 });
 
 test("human research move is validated against current topology and source snapshot", async () => {
-  const sync = await request("/api/sync", { method: "POST", body: "{}" });
+  await request("/api/sync", { method: "POST", body: "{}" });
   const nodeId = "gap:seed-variance";
-  const sourceRef = sync.payload.mlflow.runs[0].ref;
+  const sourceRef = "file:research-evidence.md";
+  assert.ok(app.researchCommands.sources().some(source=>source.ref===sourceRef));
   const accepted = await request("/api/agent-events", {
     method: "POST",
     body: JSON.stringify({ text: "先检查 evaluator backbone，再决定是否接受感知收益。", nodeIds: [nodeId], sourceRefs: [sourceRef] }),

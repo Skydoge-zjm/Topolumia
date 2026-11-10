@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import { contentBlockInput, sourceRef, paperCoreSchema, genericCoreSchema } from "../content-blocks.js";
+import { contentBlockInput, sourceRef, paperCoreSchema, genericCoreSchema, nullablePatchShape } from "../content-blocks.js";
 import { researchNodeKinds } from "../node-kinds.js";
 import { groupCoreSchema, groupMembersSchema, membershipPatchSchema, primaryRelationsSchema } from "../groups.js";
 import { objectRefSchema, endpointVersionsSchema } from "../object-schemas.js";
@@ -23,9 +23,7 @@ export const proposalNode = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("paper"), core: paperCoreSchema.describe('Bibliographic fields only. Put arXiv/DOI in identifiers:{arxiv:"2502.14321v3",doi:"…"}; year is numeric. Extra dates, paper type and reading details belong in titled blocks, not invented core fields.'), ...nodeFields }),
   z.strictObject({ kind: z.enum(researchNodeKinds.filter(k => k !== "paper")), core: genericCoreSchema, ...nodeFields }),
 ]);
-const blockPatch = z.strictObject(Object.fromEntries(Object.entries(proposalBlock.shape).map(([key, schema]) => [
-  key, (typeof schema.removeDefault === "function" ? schema.removeDefault() : schema).optional().nullable(),
-]))).describe("Only supplied fields change. payload, representations and sourceRefs replace that field; null removes an optional field.");
+const blockPatch = z.strictObject(nullablePatchShape(proposalBlock.shape)).describe("Only supplied fields change. payload, representations and sourceRefs replace that field; null removes an optional field.");
 export const nodeChange = z.strictObject({
   nodeId: id.describe("An existing formal node ID, or an ID returned by this candidate's receipt. No temporary reference syntax."),
   expectedCoreRevision: revision.optional(),
@@ -67,7 +65,7 @@ const edits = {
   deleteNodes: z.array(z.strictObject({ nodeId: id, expectedNodeRevision: revision.optional() })).max(20).optional(),
   evidenceReadIds: z.array(id).max(80).optional(),
 };
-const hasChanges = value => ["nodes", "nodeChanges", "groups", "groupChanges", "relations", "relationChanges", "deleteNodes", "deleteGroups"].some(key => value[key]?.length);
+const hasChanges = (value: Partial<Record<"nodes" | "nodeChanges" | "groups" | "groupChanges" | "relations" | "relationChanges" | "deleteNodes" | "deleteGroups", unknown[]>>) => (["nodes", "nodeChanges", "groups", "groupChanges", "relations", "relationChanges", "deleteNodes", "deleteGroups"] as const).some(key => value[key]?.length);
 export const createProposalSchema = z.strictObject({
   reason: z.string().min(1).max(2000),
   idempotencyKey: id.optional().describe("Optional retry key. The execution layer generates one when omitted and returns it; retry with the returned key after an uncertain result."),

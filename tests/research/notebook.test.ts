@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Readable } from "node:stream";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -95,28 +96,31 @@ test("series schedule independent idempotent occurrences and records enforce rea
 
   assert.equal((await request("GET", "/api/research-records", undefined, app.config.project.id, agent)).status, 403);
 });
-test("experiment records explicitly register runs, retain partial provider failures and never invent final outputs", async t => {
-  const { app, request } = await fixture(t);
-  app.registry.experiments.series = async ref => {
-    if (ref.includes("missing")) throw new Error("Provider unavailable");
-    return { series: [{ key: "loss", xKey: "step", points: [{ x: 1, y: .5 }, { x: 2, y: .25 }] }], observedAt: "2026-11-06T12:00:00Z" };
-  };
-  const created = (await request("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: "My replication" }, sourceRefs: [{ kind: "range", value: "wandb:run:lab/project/valid" }] })).data;
+test("experiment records retain saved metrics and report a missing source file without inventing results", async t => {
+  const { app, request, user } = await fixture(t), c=app.researchCommands;
+  const actor=app.collaboration.actorForUser(user.id,app.config.project.id);
+  const created = (await request("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: "My replication" } })).data;
   const base = `/api/research-nodes/${encodeURIComponent(created.node.id)}`;
   assert.deepEqual((await request("GET", base + "/experiment")).data.runs, []);
   const metric = (await request("POST", `/api/research-objects/node/${encodeURIComponent(created.node.id)}/content-blocks`, { type: "metric", title: "Metrics", payload: { items: [{ name: "PSNR", value: 30.2 }] } })).data.contentBlock;
   const read = await request("POST", "/api/research/blocks/read", { owner: { kind: "node", id: created.node.id }, blockId: metric.id, view: "values" });
   assert.equal(read.status, 200); assert.equal(read.data.data.items[0].value, 30.2);
-  const attached = await request("POST", `/api/research-objects/node/${encodeURIComponent(created.node.id)}/content-blocks`, { type: "experimentRecord", title: "Training", payload: { provider: "wandb", runs: [
-    { sourceId: "lab/project/valid", label: "Available", ref: "wandb:run:lab/project/valid" },
-    { sourceId: "lab/project/missing", label: "Unavailable", ref: "wandb:run:lab/project/missing" },
-  ] } });
+  const assets=[],runs=[];
+  for(const [sourceId,label] of [["saved","Available"],["lost","Unavailable"]]){
+    const data=JSON.stringify({id:sourceId,label,status:"FINISHED",series:[{key:"loss",xKey:"step",points:[{x:1,y:.5},{x:2,y:.25}]}]});
+    const asset=await c.assets.upload(Readable.from([Buffer.from(data)]),{originalName:sourceId+".json",mediaType:"application/json",idempotencyKey:sourceId},actor);
+    const index=await c.records.inspect("wandb",[asset.id],actor);
+    assets.push(asset);runs.push(...index.runs.map(({metrics,...run})=>run));
+  }
+  const attached = await request("POST", `/api/research-objects/node/${encodeURIComponent(created.node.id)}/content-blocks`, { type: "experimentRecord", title: "Training", payload: { provider: "wandb", runs },representations:assets.map(asset=>({kind:"asset",assetId:asset.id,role:"source"})) });
   assert.equal(attached.status, 201, JSON.stringify(attached.data));
+  await rm(c.assets.file(c.assets.assert(assets[1].id,actor)));
   const registry = (await request("GET", base + "/experiment")).data;
   const result = await request("POST", "/api/research/experiments/plot", { selections: registry.runs.map(run => ({ nodeId: created.node.id, runId: run.id })) });
   assert.equal(result.status, 200, JSON.stringify(result.data));
   assert.equal(result.data.runs.length, 2); assert.equal(result.data.series.length, 1); assert.equal(result.data.warnings.length, 1);
-  assert.equal(result.data.series[0].points.at(-1).y, .25);
+  assert.deepEqual(result.data.series[0].points,[{x:1,y:.5},{x:2,y:.25}]);
+  assert.equal(result.data.warnings[0].code,"ASSET_UNAVAILABLE");
   const empty = (await request("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: "No results yet" } })).data;
   assert.deepEqual(empty.contentBlocks, []);
   assert.deepEqual((await request("GET", `/api/research-nodes/${encodeURIComponent(empty.node.id)}/experiment`)).data.runs, []);

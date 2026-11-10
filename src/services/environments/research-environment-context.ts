@@ -3,31 +3,41 @@ import { readFile } from "node:fs/promises";
 import { AppError } from "../../lib/errors.js";
 import { versionHash } from "../../lib/hash.js";
 import { requirePermission } from "../research/research-command-service.js";
+import type { AppConfig } from "../../config.js";
+import type { ResearchActor } from "../../domain/research/types.js";
+import type { UserSettingsStore } from "../platform/user-settings-store.js";
+import type { ToolEnvironmentService } from "./tool-environment-service.js";
+import type { SshEnvironmentHub } from "../../ssh/ssh-environment-hub.js";
+import { researchInspectionSchema, type ResearchInspection, type ComponentResult } from "./environment-types.js";
+export type EnvironmentRuntime = { config:AppConfig;userSettings:UserSettingsStore;toolEnvironment:ToolEnvironmentService;updateWorkspaceDirectory?:(owner:string,connectionId:string,directory:string)=>Promise<void> };
+export type EnvironmentSnapshot = { host:{kind:string;platform:string|null;connected?:boolean;label?:string;alias?:string;hostname?:string;user?:string;port?:number};directory:string|null|undefined;name:string;selection:{kind:string;prefix?:string;pythonCommand?:string|null};toolCommands:Partial<Record<string,string>>;inspection:ResearchInspection|null;tools:(ComponentResult&{id:string;checkedAt?:string|null})[];pendingEnvironment?:boolean };
 
 const componentIds = ["jupyter", "tensorboard", "wandb", "mlflow", "torch", "jax", "tensorflow", "cuda"];
-const clip = (value, max = 80) => typeof value === "string" ? value.slice(0, max) : value;
-const fields = (value, keys) => Object.fromEntries(keys.filter(key => value?.[key] !== undefined).map(key => [key, clip(value[key])]));
-export const inspectionStale = (checkedAt) => !checkedAt || !Number.isFinite(Date.parse(checkedAt)) || Date.now() - Date.parse(checkedAt) > 900_000;
+const clip = (value: unknown, max = 80) => typeof value === "string" ? value.slice(0, max) : value;
+const fields = <T extends object>(value: T | null | undefined, keys: (keyof T)[]) => Object.fromEntries(keys.filter(key => value?.[key] !== undefined).map(key => [key, clip(value?.[key])]));
+export const inspectionStale = (checkedAt: string | null | undefined) => !checkedAt || !Number.isFinite(Date.parse(checkedAt)) || Date.now() - Date.parse(checkedAt) > 900_000;
 
 /** Read a diagnostic cache without starting discovery, imports, or commands. */
-export async function cachedEnvironmentInspection(file, fingerprint) {
+export async function cachedEnvironmentInspection(file: string, fingerprint: string): Promise<ResearchInspection | null> {
   try {
     const raw = await readFile(file, "utf8");
     if (raw.length > 262144) return null;
-    const saved = JSON.parse(raw);
+    const result = researchInspectionSchema.safeParse(JSON.parse(raw));
+    if (!result.success) return null;
+    const saved = result.data;
     return saved.schemaVersion === "research-environment.v1" && saved.fingerprint === fingerprint &&
       saved.status === "completed" && Array.isArray(saved.components) && saved.components.length <= 10
       ? saved : null;
   } catch { return null; }
 }
 
-function binding(runtime) {
+function binding(runtime: EnvironmentRuntime) {
   const { config, userSettings } = runtime;
   return versionHash([config.project.id, config.project.root, config.project.workspace, config.researchEnvironment, config.toolCommands,
     userSettings.settings.researchLocation, userSettings.settings.remoteEnvironment]);
 }
 
-function components(inspection) {
+function components(inspection: ResearchInspection | null) {
   return componentIds.flatMap(id => {
     const item = inspection?.components?.find(component => component.id === id);
     if (!item || item.status === "unchecked") return [];
@@ -36,7 +46,7 @@ function components(inspection) {
   });
 }
 
-function hardware(component) {
+function hardware(component: (ComponentResult & {checkedAt?:string|null}) | undefined) {
   if (!component) return { status: "unchecked", checkedAt: null };
   const gpus = Array.isArray(component.gpus) ? component.gpus : [];
   return { status: component.status, checkedAt: component.checkedAt ?? null, stale: inspectionStale(component.checkedAt),
@@ -45,8 +55,8 @@ function hardware(component) {
     ...(gpus.length > 4 ? { additionalGpuCount: gpus.length - 4 } : {}) };
 }
 
-function tracking(config) {
-  const result = {};
+function tracking(config: AppConfig) {
+  const result: Record<string,Record<string,string>> = {};
   if (config.tensorboard?.logdir) result.tensorboard = { logdir: config.tensorboard.logdir, location: "topolumia-service" };
   if (config.wandb?.baseUrl) result.wandb = { baseUrl: config.wandb.baseUrl, entity: config.wandb.entity, project: config.wandb.project };
   if (config.mlflow?.baseUrl) result.mlflow = { baseUrl: config.mlflow.baseUrl, experimentName: config.mlflow.experimentName, experimentId: config.mlflow.experimentId };
@@ -54,7 +64,7 @@ function tracking(config) {
 }
 
 /** A small briefing of the user's selection. The Agent owns further exploration. */
-export async function readResearchEnvironmentContext({ runtime, actor, sshEnvironments, locale = "zh" }) {
+export async function readResearchEnvironmentContext({ runtime, actor, sshEnvironments, locale = "zh" }: {runtime:EnvironmentRuntime;actor:ResearchActor|null|undefined;sshEnvironments:SshEnvironmentHub;locale?:string}) {
   requirePermission(actor, "research.view");
   if (actor.projectId && actor.projectId !== runtime.config.project.id)
     throw new AppError("PROJECT_SCOPE_MISMATCH", "项目上下文不匹配。", { status: 403 });
@@ -62,9 +72,10 @@ export async function readResearchEnvironmentContext({ runtime, actor, sshEnviro
     throw new AppError("ENVIRONMENT_LOCALE_INVALID", "locale 必须是 zh 或 en。", { status: 422 });
   const initial = binding(runtime);
   const remote = runtime.userSettings.settings.researchLocation === "ssh";
+  if (remote && !actor.user) throw new AppError("AUTH_REQUIRED", "远程环境需要当前登录身份。", { status: 401 });
   const localEntry = remote ? null : [...runtime.toolEnvironment.catalog?.entries?.values() ?? []]
     .find(entry => runtime.toolEnvironment.catalog.isCurrent(entry));
-  const target = remote ? await sshEnvironments.contextSnapshot(runtime, actor.user.id) : {
+  const target: EnvironmentSnapshot = remote ? await sshEnvironments.contextSnapshot(runtime, actor.user!.id) : {
     host: { kind: "local", platform: process.platform },
     directory: runtime.config.project.workspace?.kind === "unassigned" ? null : runtime.config.project.root,
     name: localEntry?.name ?? runtime.toolEnvironment.research.view().name,
@@ -80,7 +91,7 @@ export async function readResearchEnvironmentContext({ runtime, actor, sshEnviro
   const python = target.inspection?.components?.find(item => item.id === "python" && item.status === "ready");
   const paths = remote ? path.posix : path;
   const executable = pendingEnvironment ? null : python?.python?.executable || (selection.kind === "conda"
-    ? paths.join(selection.prefix, !remote && process.platform === "win32" ? "python.exe" : "bin/python")
+    ? paths.join(selection.prefix ?? "", !remote && process.platform === "win32" ? "python.exe" : "bin/python")
     : selection.pythonCommand || "python");
   const prefix = selection.kind === "conda" ? selection.prefix : python?.python?.prefix ?? null;
   const invocation = pendingEnvironment ? null : selection.kind === "conda"
@@ -88,8 +99,9 @@ export async function readResearchEnvironmentContext({ runtime, actor, sshEnviro
     : { command: executable, args: [] };
   const availableTools = new Map((target.tools ?? []).map(item => [item.id, item]));
   const nvidia = [availableTools.get("nvidia"), target.inspection?.components?.find(item => item.id === "nvidia")]
-    .filter(Boolean).sort((a, b) => String(b.checkedAt ?? "").localeCompare(String(a.checkedAt ?? "")))[0];
-  const { connected: _connected, ...hostIdentity } = target.host;
+    .filter((item): item is NonNullable<typeof item> => Boolean(item)).sort((a, b) => String(b.checkedAt ?? "").localeCompare(String(a.checkedAt ?? "")))[0];
+  const hostIdentity = { ...target.host };
+  delete hostIdentity.connected;
   const result = {
     schemaVersion: "research-environment-context.v1",
     projectId: runtime.config.project.id,

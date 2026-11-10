@@ -213,7 +213,7 @@ export class AgentAttachmentStore {
   }
   async snapshot(
     sessionId: string,
-    event: ConversationEvent,
+    event: Pick<ConversationEvent, "type" | "payload" | "turnId"> & Partial<Pick<ConversationEvent, "id">>,
     cwd: string,
   ): Promise<Media> {
     const raw = imageViewPath(event);

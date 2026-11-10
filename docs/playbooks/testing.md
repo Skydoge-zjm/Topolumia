@@ -14,7 +14,7 @@ npm run test:frontend -- frontend/src/features/topology/details/ContentBlockEdit
 npm run build:backend
 node --test dist/tests/research/object-consistency.test.js
 
-# 类型和 lint；后端覆盖范围见下面说明
+# 类型和 lint；后端生产源码全量 strict
 npm run typecheck
 npm run lint
 
@@ -50,7 +50,7 @@ npm run docs:check
 
 真实模型、SSH、TeX 编译、Python 与实验 provider 测试有外部条件，按需运行并记录跳过或不可用。真实模型任务的质量要检查候选正文、图表证据和失败重试，不能仅看 HTTP 200 或候选数量。
 
-实验集成单独使用 package.json 中 setup:experiment-test-env 与 test:experiment-integration；其依赖及真实端点不是普通回归测试前提。
+MLflow 真实服务集成使用 package.json 中 setup:experiment-test-env 与 test:experiment-integration；测试启动隔离的本机 MLflow 服务，验证读取、持久化导入及服务断开后的记录再读。其 Python 依赖不是普通回归测试前提。
 
 归档原生文件的集成测试使用 [官方写入器生成的离线合成记录](../../scripts/testing/generate-native-records.py)，不访问 W&B 账号或训练服务。先在专用 Python 环境安装 `requirements/experiment-record-readers.txt`，然后执行：
 
@@ -91,7 +91,7 @@ node scripts/diagnostics/benchmark-experiment-performance.mjs runtime/experiment
 
 ## 结果表述
 
-区分类型检查、构建、逻辑测试、浏览器行为与真实科研质量。后端 [转译配置](../../tsconfig.backend.json) 启用 noCheck；[检查配置](../../tsconfig.backend.check.json) 只覆盖指定关键边界，不宣称完整 strict。
+区分类型检查、构建、逻辑测试、浏览器行为与真实科研质量。后端[检查配置](../../tsconfig.backend.check.json)以 strict 覆盖全部 src/**/*.ts，包含 noImplicitAny、noImplicitThis 与严格空值检查，不按目录排除生产模块。build:backend 先执行该检查，再用[转译配置](../../tsconfig.backend.json)生成源码、测试、fixture 和脚本产物；测试与脚本本身不属于生产源码 strict 的验收范围。CI 同样执行全量后端 typecheck。
 
 通过的定向检查无需无理由反复运行。验证记录写范围与结果，不把过往通过数固化进长期文档；截图和日志放临时输出位置，完成审阅后清理。
 

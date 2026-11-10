@@ -2,23 +2,23 @@ import { AppError } from "../../lib/errors.js";
 import { versionHash } from "../../lib/hash.js";
 import { validateTopologyCuratorResult, validateTopologyPatchProposal } from "../../domain/validators.js";
 import { CodexCuratorDriver } from "../../adapters/agents/codex/codex-curator-driver.js";
+import type { AppConfig } from "../../config.js";
+import type { ResearchTopology, SourceSnapshot } from "../../domain/research/types.js";
+import type { ResearchEvent } from "../research/research-state.js";
+import type { CuratorOperation, CuratorInput, CuratorDriver, TopologyCuratorResult } from "./curator-types.js";
 
-function snapshotSourceRefs(snapshot) {
+function snapshotSourceRefs(snapshot: SourceSnapshot | null | undefined) {
   return [
     ...(snapshot?.git?.ref ? [snapshot.git.ref] : []),
-    ...(snapshot?.mlflow?.runs ?? []).map((item) => item.ref),
-    ...(snapshot?.experiments?.wandb?.runs ?? []).map((item) => item.ref),
-    ...(snapshot?.experiments?.tensorboard?.runs ?? []).map((item) => item.ref),
-    ...(snapshot?.experiments?.simulation?.runs ?? []).map((item) => item.ref),
     ...(snapshot?.files?.files ?? []).map((item) => item.ref),
-  ].filter(Boolean);
+  ].filter((ref): ref is string => typeof ref === "string" && Boolean(ref));
 }
 
-function unique(values) {
-  return [...new Set((values ?? []).filter(Boolean))];
+function unique(values: unknown): string[] {
+  return [...new Set((Array.isArray(values) ? values : []).filter((value): value is string => typeof value === "string" && Boolean(value)))];
 }
 
-function slug(value) {
+function slug(value: unknown) {
   return String(value ?? "item")
     .normalize("NFKD")
     .replace(/[^a-zA-Z0-9_-]+/g, "-")
@@ -27,29 +27,29 @@ function slug(value) {
     .slice(0, 64) || "item";
 }
 
-function bilingual(value) {
+function bilingual(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  if (typeof value.zh !== "string" || !value.zh.trim() || typeof value.en !== "string" || !value.en.trim()) return null;
+  if (!("zh" in value) || !("en" in value) || typeof value.zh !== "string" || !value.zh.trim() || typeof value.en !== "string" || !value.en.trim()) return null;
   return { zh: value.zh.trim(), en: value.en.trim() };
 }
 
-function fallbackPosition(topology, evidenceNodeIds, index) {
+function fallbackPosition(topology: ResearchTopology, evidenceNodeIds: string[], index: number) {
   const selected = new Map((topology.nodes ?? []).map((node) => [node.id, node]));
-  const anchors = evidenceNodeIds.map((id) => selected.get(id)?.position).filter((position) => Number.isFinite(position?.x) && Number.isFinite(position?.y));
+  const anchors = evidenceNodeIds.map((id) => selected.get(id)?.position).filter((position): position is {x:number;y:number} => Boolean(position) && Number.isFinite(position?.x) && Number.isFinite(position?.y));
   const base = anchors.length
     ? anchors.reduce((sum, position) => ({ x: sum.x + position.x / anchors.length, y: sum.y + position.y / anchors.length }), { x: 0, y: 0 })
     : { x: 900, y: 980 };
   return { x: Math.round(base.x + 180 + (index % 3) * 190), y: Math.round(base.y + 160 + Math.floor(index / 3) * 150) };
 }
 
-function normalizeOperations(rawOperations, { topology, patchToken, evidenceNodeIds, runId, allowedSourceRefs = new Set() }) {
+function normalizeOperations(rawOperations: CuratorOperation[] | undefined, { topology, patchToken, evidenceNodeIds, runId, allowedSourceRefs = new Set<string>() }: {topology:ResearchTopology;patchToken:string;evidenceNodeIds:string[];runId:string;allowedSourceRefs?:Set<string>}): CuratorOperation[] {
   const existingNodeIds = new Set((topology.nodes ?? []).map((node) => node.id));
   const existingEdgeIds = new Set((topology.edges ?? []).map((edge) => edge.id));
-  const nodeIdMap = new Map();
+  const nodeIdMap = new Map<string,string>();
   const usedNodeIds = new Set(existingNodeIds);
   const usedEdgeIds = new Set(existingEdgeIds);
-  const operations = [];
-  const candidateId = (raw, index, kind, used) => {
+  const operations: CuratorOperation[] = [];
+  const candidateId = (raw: unknown, index: number, kind: string, used: Set<string>) => {
     const requested = slug(raw);
     let id = `candidate:${patchToken}:${kind}-${requested || index + 1}`;
     let suffix = 2;
@@ -116,11 +116,11 @@ function normalizeOperations(rawOperations, { topology, patchToken, evidenceNode
     }
     if (operation.op === "updateNode") {
       const patch = operation.patch && typeof operation.patch === "object" ? { ...operation.patch } : {};
-      if (patch.label !== undefined) patch.label = bilingual(patch.label);
-      if (patch.summary !== undefined) patch.summary = bilingual(patch.summary);
+      if (patch.label !== undefined) { const label = bilingual(patch.label); if (!label) throw new AppError("CURATOR_OPERATION_INVALID", "更新节点 label 缺少双语文本。", {status:422}); patch.label = label; }
+      if (patch.summary !== undefined) { const summary = bilingual(patch.summary); if (!summary) throw new AppError("CURATOR_OPERATION_INVALID", "更新节点 summary 缺少双语文本。", {status:422}); patch.summary = summary; }
       delete patch.data;
       delete patch.sourceRef;
-      delete patch.adapter;
+      if ("adapter" in patch) delete patch.adapter;
       operations.push({ op: "updateNode", nodeId: nodeIdMap.get(operation.nodeId) ?? operation.nodeId, patch });
       continue;
     }
@@ -130,7 +130,7 @@ function normalizeOperations(rawOperations, { topology, patchToken, evidenceNode
   return operations;
 }
 
-function contextFor(input, relevantEvents) {
+function contextFor(input: CuratorInput, relevantEvents: ResearchEvent[]) {
   return {
     trigger: input.context?.trigger ?? {
       mode: input.mode ?? "manual",
@@ -153,7 +153,8 @@ function contextFor(input, relevantEvents) {
 }
 
 export class TopologyCuratorService {
-  constructor(options = {}) {
+  adapter: string; model: string; driver: CuratorDriver;
+  constructor(options: {adapter?:string;model?:string;config?:Partial<AppConfig["curator"]>;driver?:CuratorDriver} = {}) {
     this.adapter = options.adapter ?? "codex-topology-curator";
     this.model = options.model ?? options.config?.model ?? "gpt-6-luna";
     this.driver = options.driver ?? new CodexCuratorDriver({
@@ -162,14 +163,14 @@ export class TopologyCuratorService {
     });
   }
 
-  async preview({ topology, events = [], snapshot = null, ...input } = {}) {
+  async preview({ topology, events = [], snapshot = null, ...input }: CuratorInput = {}): Promise<TopologyCuratorResult> {
     if (!topology) throw new AppError("TOPOLOGY_REQUIRED", "需要当前正式拓扑才能整理候选层。", { status: 409 });
     const relevantEvents = events.filter((event) => event.type !== "topologyChange").slice(-120);
     const allowedRefs = new Set([
       ...snapshotSourceRefs(snapshot),
-      ...topology.nodes.map((item) => item.sourceRef).filter(Boolean),
-      ...topology.nodes.flatMap((item) => item.data?.sourceRefs ?? []),
-      ...topology.edges.map((item) => item.sourceRef).filter(Boolean),
+      ...unique(topology.nodes.map((item) => item.sourceRef)),
+      ...topology.nodes.flatMap((item) => unique(item.data.sourceRefs)),
+      ...unique(topology.edges.map((item) => item.sourceRef)),
     ]);
     const driverRun = await this.driver.run({
       topology,
@@ -191,7 +192,7 @@ export class TopologyCuratorService {
     for (const nodeId of inspectedNodeIds) {
       const node = topologyNodeById.get(nodeId);
       if (node?.sourceRef) observedSourceRefs.add(node.sourceRef);
-      for (const ref of node?.data?.sourceRefs ?? []) observedSourceRefs.add(ref);
+      for (const ref of unique(node?.data?.sourceRefs)) observedSourceRefs.add(ref);
     }
     const claimedSourceRefs = unique(raw.sourceRefs);
     const invalidSourceRefs = claimedSourceRefs.filter((ref) => !allowedRefs.has(ref) || !observedSourceRefs.has(ref));
@@ -201,7 +202,7 @@ export class TopologyCuratorService {
         detail: { invalidSourceRefs },
       });
     }
-    const result = {
+    const result: TopologyCuratorResult = {
       schemaVersion: "topology-curator-result.v1",
       disposition: raw.disposition,
       summary: raw.summary,
@@ -278,18 +279,18 @@ export class TopologyCuratorService {
       allowedNodeIds: topology.nodes.map((item) => item.id),
       allowedGroupIds: (topology.groups ?? []).map(group => group.id),
       allowedEdgeIds: topology.edges.map((item) => item.id),
-      allowedSourceRefs: allowedRefs,
+      allowedSourceRefs: [...allowedRefs],
     });
     return result;
   }
 
-  validationOptions(topology, allowedSourceRefs) {
+  validationOptions(topology: ResearchTopology, allowedSourceRefs: Set<string>) {
     return {
       baseStateVersion: topology.stateVersion,
       allowedNodeIds: topology.nodes.map((item) => item.id),
       allowedGroupIds: (topology.groups ?? []).map(group => group.id),
       allowedEdgeIds: topology.edges.map((item) => item.id),
-      allowedSourceRefs,
+      allowedSourceRefs: [...allowedSourceRefs],
     };
   }
 }

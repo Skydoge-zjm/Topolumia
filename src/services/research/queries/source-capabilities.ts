@@ -1,6 +1,7 @@
+import type { ResearchSource } from "../../../domain/research/types.js";
 export const scientificFactKeys = ["runName", "status", "group", "params", "metrics", "metricSummary", "protocol", "commit", "branch", "dirty"];
 
-export function sourceCapabilities(source, indexedText = null) {
+export function sourceCapabilities(source:ResearchSource&{ref:string}, indexedText:string|null|undefined = null) {
   const textAvailable = source.capabilities?.text ?? (typeof indexedText === "string" || typeof source.excerpt === "string");
   const factKeys = scientificFactKeys.filter(key => source[key] !== undefined);
   const originalAvailable = source.ref.startsWith("file:") && typeof source.locator === "string";

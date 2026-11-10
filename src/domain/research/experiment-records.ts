@@ -91,8 +91,10 @@ export type ExperimentRun = {
   label: string;
   status: z.infer<typeof runStatusSchema>;
   note?: string;
+  metadataFields?: ("label" | "status" | "note")[];
+  projectSource?: { sourceId: string; runId: string };
   sources: {
-    provider: (typeof experimentProviders)[number];
+    provider: (typeof experimentProviders)[number] | "custom";
     sourceId: string;
   }[];
 };
@@ -133,3 +135,14 @@ export type ImportedExperimentRun = {
   series: ExperimentSeries[];
   metrics?: Record<string, number>;
 };
+
+const recordSelection = z.strictObject({ nodeId: id, blockId: id.optional(), runId: id, snapshotId: id.optional() });
+export const recordPlotInputSchema = z.strictObject({
+  selections: z.array(recordSelection).max(200).optional(), nodeId: id.optional(), nodeIds: z.array(id).max(100).optional(),
+  blockId: id.optional(), blockRevision: z.number().int().positive().optional(), candidateId: id.optional(),
+  metricKeys: z.array(id).max(32).optional(), maxPoints: z.number().int().min(2).max(2000).optional(),
+});
+export const recordTableInputSchema = recordSelection.extend({
+  candidateId: id.optional(), metrics: z.array(z.strictObject({ key: id, xKey: id, expectedContentVersion: id.optional() })).min(1).max(24),
+  pointOffset: z.number().int().nonnegative().optional(), pointLimit: z.number().int().min(1).max(100).optional(),
+});

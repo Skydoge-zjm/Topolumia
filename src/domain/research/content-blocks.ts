@@ -5,6 +5,11 @@ export const contentBlockTypes = [
   "richText", "metric", "table", "image", "document", "spreadsheet", "link", "quote", "code", "chart", "file", "experimentRecord",
 ] as const;
 export type ContentBlockType = typeof contentBlockTypes[number];
+/** Patch fields preserve their schema output types while removing create-time defaults. */
+export function nullablePatchShape<S extends Record<string, z.ZodType>>(shape: S) {
+  type PatchShape = { [K in keyof S]: z.ZodOptional<z.ZodNullable<z.ZodType<z.output<S[K]>, z.input<S[K]>>>> };
+  return Object.fromEntries(Object.entries(shape).map(([key, schema]) => [key, z.optional(z.nullable(schema instanceof z.ZodDefault ? schema.removeDefault() : schema))])) as PatchShape;
+}
 
 export const sourceRef = z.strictObject({
   id: z.string().max(240).optional(), clientRef: z.string().max(240).optional(), assetId: z.string().max(240).optional(),
@@ -63,8 +68,8 @@ export const contentBlockInput = z.strictObject({
 
 export function validateContentBlockPayload(type: ContentBlockType, payload: unknown) {
   const result = payloadSchemas[type].safeParse(payload);
-  if (!result.success) return { success: false, issues: result.error.issues.slice(0, 12) };
-  return { success: true, data: result.data };
+  if (!result.success) return { success: false as const, issues: result.error.issues.slice(0, 12) };
+  return { success: true as const, data: result.data };
 }
 
 export function extractContentBlockText(type: ContentBlockType, payload: any) {

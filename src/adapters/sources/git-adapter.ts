@@ -1,14 +1,16 @@
 import path from "node:path";
+import type { AppConfig } from "../../config.js";
 import { AppError } from "../../lib/errors.js";
 import { runCommand, summarizeCommandFailure } from "../../lib/command.js";
 
-function cleanStatus(code) {
+type GitChange = { kind: string; status: string; path: string; score?: string; originalPath?: string | null };
+function cleanStatus(code: string | undefined) {
   return code?.replaceAll(".", " ") ?? "  ";
 }
 
-export function parsePorcelainV2Z(output) {
+export function parsePorcelainV2Z(output: string) {
   const records = output.split(/\0|\r?\n/).filter(Boolean);
-  const state = {
+  const state: { oid: string | null; head: string | null; upstream: string | null; ahead: number; behind: number; changes: GitChange[] } = {
     oid: null,
     head: null,
     upstream: null,
@@ -59,7 +61,7 @@ export function parsePorcelainV2Z(output) {
   return state;
 }
 
-export function parseNumstat(output, staged) {
+export function parseNumstat(output: string, staged: boolean) {
   return output.split(/\r?\n/).filter(Boolean).map((line) => {
     const [added, deleted, ...pathParts] = line.split("\t");
     return {
@@ -73,12 +75,10 @@ export function parseNumstat(output, staged) {
 }
 
 export class GitAdapter {
-  constructor(config) {
-    this.config = config;
-    this.id = "git-local";
-  }
+  readonly id = "git-local";
+  constructor(public config: AppConfig) {}
 
-  async command(args, options = {}) {
+  async command(args: string[], options: NonNullable<Parameters<typeof runCommand>[2]> = {}) {
     return runCommand(this.config.git.command, args, {
       cwd: this.config.project.root,
       timeoutMs: this.config.git.timeoutMs,

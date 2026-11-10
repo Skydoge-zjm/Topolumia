@@ -1,3 +1,8 @@
+import type { AppConfig } from "../../config.js";
+import type { AgentProfile, AgentDriverOptions, AgentAdapterContract } from "../../domain/agents/agent-types.js";
+import type { NativeAgentConfigStore } from "./configuration/native-config-store.js";
+import type { OpenCodeCatalog } from "../../adapters/agents/opencode/opencode-server.js";
+import type { RuntimeProbe } from "./managed-wrapper-registry.js";
 import path from "node:path";
 import { AppError } from "../../lib/errors.js";
 import { AcpProcessDriver } from "../../adapters/agents/acp/acp-agent-driver.js";
@@ -7,7 +12,7 @@ import { OpenCodeAgentAdapter } from "../../adapters/agents/opencode/opencode-ag
 import { discoverOpenCodeModels } from "../../adapters/agents/opencode/opencode-server.js";
 import { ManagedWrapperRegistry } from "./managed-wrapper-registry.js";
 
-function publicProfile(profile, probe) {
+function publicProfile(profile: AgentProfile, probe: RuntimeProbe) {
   if (profile.model && !(profile.models ?? []).some(model => model.id === profile.model)) {
     profile = { ...profile, models: [{ id: profile.model, label: profile.model }, ...(profile.models ?? [])] };
   }
@@ -54,11 +59,14 @@ function publicProfile(profile, probe) {
 }
 
 export class AgentProfileRegistry {
-  constructor(config, { nativeConfigs = null } = {}) {
+  config: AppConfig; nativeConfigs: NativeAgentConfigStore | null;
+  profiles: Map<string, AgentProfile>; wrapperRegistry: ManagedWrapperRegistry;
+  probes: Map<string, RuntimeProbe>; modelCatalogs: Map<string, { at: number; value: Promise<OpenCodeCatalog> }>;
+  constructor(config: AppConfig, { nativeConfigs = null }: { nativeConfigs?: NativeAgentConfigStore | null } = {}) {
     this.config = config;
     this.nativeConfigs = nativeConfigs;
     this.profiles = new Map((config.agentSessions?.profiles ?? []).map((profile) => [profile.id, Object.freeze({ ...(nativeConfigs?.effective(profile) ?? profile) })]));
-    this.wrapperRegistry = new ManagedWrapperRegistry({ root: config.agentSessions?.managedWrappersRoot });
+    this.wrapperRegistry = new ManagedWrapperRegistry({ root: config.agentSessions.managedWrappersRoot });
     this.probes = new Map();
     this.modelCatalogs = new Map();
   }
@@ -88,7 +96,7 @@ export class AgentProfileRegistry {
     return result;
   }
 
-  async get(profileId) {
+  async get(profileId: string) {
     const profile = this.profiles.get(profileId);
     if (!profile) {
       throw new AppError("AGENT_PROFILE_NOT_FOUND", "没有找到指定的 Agent profile。", {
@@ -138,7 +146,7 @@ export class AgentProfileRegistry {
     return profile;
   }
 
-  async createAdapter(profileId, options = {}) {
+  async createAdapter(profileId: string, options: AgentDriverOptions = {}): Promise<AgentAdapterContract> {
     const base = await this.get(profileId);
     const profile = this.nativeConfigs ? await this.nativeConfigs.snapshot(base) : base;
     const invocation = this.wrapperRegistry.invocation(profile);
@@ -166,8 +174,8 @@ export class AgentProfileRegistry {
     this.wrapperRegistry.probeCache.clear();
   }
 
-  async #probe(profile, options = {}) {
-    if (!options.refresh && this.probes.has(profile.id)) return this.probes.get(profile.id);
+  async #probe(profile: AgentProfile, options: { refresh?: boolean } = {}): Promise<RuntimeProbe> {
+    if (!options.refresh && this.probes.has(profile.id)) return this.probes.get(profile.id)!;
     let effective;
     try { effective = this.nativeConfigs ? await this.nativeConfigs.snapshot(profile) : profile; }
     catch { return { availability: "unavailable", reason: "native_configuration_invalid", runtime: { command: profile.command, available: false }, auth: { required: false, status: "unchecked" } }; }

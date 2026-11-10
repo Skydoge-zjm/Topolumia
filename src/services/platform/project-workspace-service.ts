@@ -10,22 +10,30 @@ import {
   stat,
 } from "node:fs/promises";
 import { AppError } from "../../lib/errors.js";
+import * as z from "zod/v4";
+import type { AppConfig } from "../../config.js";
+import type { CollaborationStore, CollaborationActor } from "./collaboration-store.js";
+import type { AuthenticatedResearchActor } from "../../domain/research/types.js";
+import type { SshConnectionService } from "../../ssh/ssh-connection-service.js";
+import type { ProjectWorkspace } from "../../domain/projects/workspace.js";
+type WorkspaceOptions = {config:AppConfig;collaboration:CollaborationStore;sshConnections:SshConnectionService;replaceRuntime:(projectId:string,operation:()=>void)=>Promise<unknown>};
+const browseSchema = z.object({kind:z.enum(["local","ssh"]),connectionId:z.string().nullish(),directory:z.string().optional(),offset:z.number().optional(),query:z.string().optional()});
 import {
   createProjectSchema,
   projectWorkspaceSchema,
 } from "../../domain/projects/workspace.js";
 
 export class ProjectWorkspaceService {
-  constructor(public options) {}
-  requireAdministrator(actor) {
-    if (!actor?.isServerAdmin || actor.isAgent || actor.collectorGrant)
+  constructor(public options: WorkspaceOptions) {}
+  requireAdministrator(actor: CollaborationActor | null | undefined): asserts actor is CollaborationActor & AuthenticatedResearchActor {
+    if (!actor?.isServerAdmin || !actor.user || actor.isAgent || actor.collectorGrant)
       throw new AppError(
         "FORBIDDEN",
         "只有服务器管理员可以创建项目或关联主机目录。",
         { status: 403 },
       );
   }
-  get(projectId, actor) {
+  get(projectId: string, actor: CollaborationActor | null | undefined) {
     const project = this.options.collaboration.requireProject(actor, projectId);
     return {
       projectId: project.id,
@@ -37,7 +45,7 @@ export class ProjectWorkspaceService {
         this.options.config.project.workspacesRoot,
     };
   }
-  defaults(actor) {
+  defaults(actor: CollaborationActor | null | undefined) {
     this.requireAdministrator(actor);
     const id = "project_" + randomUUID().replaceAll("-", "");
     return {
@@ -121,25 +129,30 @@ export class ProjectWorkspaceService {
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw new AppError(
-        error.code === "ENOENT"
+        error instanceof Error && "code" in error && error.code === "ENOENT"
           ? "PROJECT_DIRECTORY_NOT_FOUND"
           : "PROJECT_DIRECTORY_UNAVAILABLE",
-        error.code === "ENOENT"
+        error instanceof Error && "code" in error && error.code === "ENOENT"
           ? "目录不存在，请检查路径。"
           : "目录不可访问，请检查主机上的目录权限。",
         { status: 422, detail: { field: "workspace.directory" } },
       );
     }
   }
-  async browse(input, actor, list = true) {
+  async browse(input: unknown, actor: CollaborationActor | null | undefined, list = true) {
     this.requireAdministrator(actor);
+    const parsed = browseSchema.safeParse(input);
+    if (!parsed.success)
+      throw new AppError("PROJECT_DIRECTORY_INVALID", "目录选择参数无效。", {
+        status: 422,
+      });
     const {
       kind,
       connectionId,
       directory = "",
       offset = 0,
       query = "",
-    } = input;
+    } = parsed.data;
     if (
       !["local", "ssh"].includes(kind) ||
       typeof directory !== "string" ||
@@ -159,12 +172,12 @@ export class ProjectWorkspaceService {
       ? this.localDirectory(directory, { list, offset, query })
       : this.options.sshConnections.browseDirectory(
           actor.user.id,
-          connectionId,
+          connectionId ?? "",
           directory,
           { list, offset, query },
         );
   }
-  async prepare(choice, actor) {
+  async prepare(choice: unknown, actor: CollaborationActor | null | undefined) {
     this.requireAdministrator(actor);
     const parsed = projectWorkspaceSchema.safeParse(choice);
     if (!parsed.success)
@@ -211,7 +224,7 @@ export class ProjectWorkspaceService {
       connectionRevision: revision,
     };
   }
-  async create(input, actor) {
+  async create(input: unknown, actor: CollaborationActor | null | undefined) {
     this.requireAdministrator(actor);
     const parsed = createProjectSchema.safeParse(input);
     if (!parsed.success)
@@ -245,7 +258,7 @@ export class ProjectWorkspaceService {
           await mkdir(directory);
           createdDirectory = directory;
         } catch (error) {
-          if (error.code !== "EEXIST" || !(await stat(directory)).isDirectory())
+          if ((!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") || !(await stat(directory)).isDirectory())
             throw error;
         }
       }
@@ -264,7 +277,7 @@ export class ProjectWorkspaceService {
       );
     }
   }
-  async update(projectId, choice, expectedRevision, actor) {
+  async update(projectId: string, choice: unknown, expectedRevision: number, actor: CollaborationActor | null | undefined) {
     this.requireAdministrator(actor);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
       throw new AppError(
@@ -280,9 +293,9 @@ export class ProjectWorkspaceService {
         { status: 409 },
       );
     const workspace = await this.prepare(choice, actor);
-    const identity = (value) => [
+    const identity = (value: Partial<ProjectWorkspace>) => [
       value.kind,
-      ["local", "ssh"].includes(value.kind) ? value.directory : null,
+      value.kind === "local" || value.kind === "ssh" ? value.directory : null,
       value.connectionId ?? null,
       value.ownerId ?? null,
       value.connectionRevision ?? null,

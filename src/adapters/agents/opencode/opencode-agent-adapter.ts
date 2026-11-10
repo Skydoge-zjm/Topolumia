@@ -1,19 +1,15 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Event, OpencodeClient, TextPartInput, FilePartInput } from "@opencode-ai/sdk/v2/client";
+import type { Event, OpencodeClient, TextPartInput, FilePartInput, PermissionRuleset } from "@opencode-ai/sdk/v2/client";
+import type { AgentStartInput, AgentPromptInput } from "../../../domain/agents/agent-types.js";
 import { promptImages } from "../shared/prompt-images.js";
 import { AgentAdapter } from "../shared/agent-adapter.js";
 import { OpenCodeServer, readOpenCodeCatalog, resolveOpenCodeModelId, type OpenCodeCatalog, type OpenCodeProfile } from "./opencode-server.js";
-import { OpenCodeTrace, type OpenCodeEvent, type OpenCodeMessage } from "./opencode-trace.js";
+import { OpenCodeTrace, type OpenCodeEvent } from "./opencode-trace.js";
 import { AppError } from "../../../lib/errors.js";
-import { buildResearchMcpBinding } from "../../../agent/research-mcp-binding.js";
 import { compactId } from "../../../lib/hash.js";
 
-interface StartInput {
-  cwd?: string; resumeThreadId?: string; developerInstructions?: string;
-  researchMcp?: ReturnType<typeof buildResearchMcpBinding> | null;
-}
 interface TurnResult { stopReason: "end_turn" | "cancelled" | "incomplete" }
 interface PendingTurn {
   id: string; userMessageId: string; cancelled: boolean; accepted: boolean;
@@ -68,7 +64,7 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
     this.trace = new OpenCodeTrace(event => this.onEvent({ ...event, payload: { nativeSessionId: this.nativeSessionId, nativeEventId: this.nativeEventId, ...event.payload } }), () => this.eventTurnId ?? this.turn?.id ?? null);
   }
 
-  async start(input: StartInput = {}) {
+  async start(input: AgentStartInput = {}) {
     this.cwd = path.resolve(input.cwd ?? this.cwd);
     this.instructions = input.developerInstructions ?? "";
     try {
@@ -78,19 +74,21 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
         const { data: connections } = await this.client.mcp.add({ name: binding.name, config: { type: "local", command: [binding.command, ...binding.args], environment: binding.env, enabled: true, timeout: 30000 } });
         if (connections?.[binding.name]?.status !== "connected") throw new AppError("OPENCODE_MCP_UNAVAILABLE", "科研 MCP 连接失败，请检查会话授权和 CLI。", { status: 503 });
       }
-      this.catalog = await readOpenCodeCatalog(this.client, this.profile.model);
+      this.catalog = await readOpenCodeCatalog(this.client, this.profile.model ?? undefined);
       if (!this.catalog.models.length) throw new AppError("OPENCODE_NO_MODELS", "OpenCode 没有可用模型，请先在本机配置 Provider。", { status: 503 });
       const policy = this.profile.approvalPolicy === "never" && this.profile.sandbox !== "read-only" ? "allow" : "ask";
-      const permission = this.profile.nativeConfig ? [] : [{ permission: "*", pattern: "*", action: policy },
-        ...["read", "glob", "grep", "list"].map(name => ({ permission: name, pattern: "*", action: "allow" })),
-        ...(input.researchMcp ? [{ permission: `${input.researchMcp.name}_*`, pattern: "*", action: "allow" }] : [])];
+      const permission: PermissionRuleset = this.profile.nativeConfig ? [] : [{ permission: "*", pattern: "*", action: policy },
+        ...["read", "glob", "grep", "list"].map(name => ({ permission: name, pattern: "*", action: "allow" as const })),
+        ...(input.researchMcp ? [{ permission: `${input.researchMcp.name}_*`, pattern: "*", action: "allow" as const }] : [])];
       if (input.resumeThreadId) {
         const { data } = await this.client.session.get({ sessionID: input.resumeThreadId });
+        if (!data) throw new AppError("OPENCODE_SESSION_NOT_FOUND", "没有找到 OpenCode 原生会话。", { status: 404 });
         if (!sameDirectory(data.directory, this.cwd)) throw new AppError("OPENCODE_SESSION_DIRECTORY_MISMATCH", "原生会话不属于当前项目目录。", { status: 409 });
         this.nativeSessionId = data.id;
         if (permission.length) await this.client.session.update({ sessionID: data.id, permission });
       } else {
         const { data } = await this.client.session.create({ title: "Topolumia", ...(permission.length ? { permission } : {}) });
+        if (!data) throw new AppError("OPENCODE_SESSION_CREATE_FAILED", "OpenCode 未返回新会话。", { status: 502 });
         this.nativeSessionId = data.id;
       }
       await this.startStream();
@@ -124,12 +122,12 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
           if (reconnect && this.turn) {
             await this.reconcile();
             const { data: pending } = await this.client!.permission.list();
-            const active = pending.filter(request => request.sessionID === this.nativeSessionId);
+            const active = (pending ?? []).filter(request => request.sessionID === this.nativeSessionId);
             for (const [requestId, approval] of this.approvals) if (!active.some(request => request.id === approval.nativeId)) {
               this.approvals.delete(requestId);
               this.onEvent({ type: "approval.resolved", turnId: approval.turnId, payload: { requestId, decision: "external", status: "resolved" } });
             }
-            for (const request of pending) if (request.sessionID === this.nativeSessionId && this.turn) this.requestPermission(request);
+            for (const request of pending ?? []) if (request.sessionID === this.nativeSessionId && this.turn) this.requestPermission(request);
           }
         } else this.handleEvent(event);
       }
@@ -142,7 +140,7 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
     }
   }
 
-  async prompt(input: { turnId: string; content?: Array<{ type: string; text?: string; resource?: unknown }>; model?: string; reasoningEffort?: string }): Promise<TurnResult> {
+  async prompt(input: AgentPromptInput): Promise<TurnResult> {
     if (!this.client || !this.nativeSessionId || this.closed) throw new AppError("OPENCODE_NOT_READY", "OpenCode 会话未连接。", { status: 409 });
     if (this.turn) throw new AppError("AGENT_TURN_ACTIVE", "当前会话已有运行中的任务。", { status: 409 });
     const requestedModel = input.model || this.catalog?.model;
@@ -154,30 +152,31 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
     const split = model.id.indexOf("/");
     const userMessageId = `msg_${Date.now().toString(16).padStart(12, "0")}${randomBytes(8).toString("hex")}`;
     this.userTurns.set(userMessageId, input.turnId);
-    const result = new Promise<TurnResult>((resolve, reject) => {
-      this.turn = { id: input.turnId, userMessageId, cancelled: false, accepted: false, resolve, reject, requestAbort: new AbortController() };
-    });
+    let resolve!: PendingTurn["resolve"], reject!: PendingTurn["reject"];
+    const result = new Promise<TurnResult>((accept, fail) => { resolve = accept; reject = fail; });
+    const turn: PendingTurn = { id: input.turnId, userMessageId, cancelled: false, accepted: false, resolve, reject, requestAbort: new AbortController() };
+    this.turn = turn;
     // Attach a rejection handler before the HTTP request can fail.
     void result.catch(() => {});
     this.onEvent({ type: "turn.native-linked", turnId: input.turnId, payload: { nativeMessageId: userMessageId } });
     try {
       const images = await promptImages(input.content);
-      if (this.turn?.userMessageId !== userMessageId) return await result;
-      if (this.turn.cancelled) { this.settle({ stopReason: "cancelled" }); return await result; }
+      if (this.turn !== turn) return await result;
+      if (turn.cancelled) { this.settle({ stopReason: "cancelled" }); return await result; }
       const parts: Array<TextPartInput | FilePartInput> = [
         ...(input.content ?? []).filter(part => part.type !== "image").map((part) => ({ type: "text" as const, text: part.text ?? JSON.stringify(part.resource ?? part) })),
         ...images.map(image => ({ type: "file" as const, mime: image.mimeType, filename: image.name, url: `data:${image.mimeType};base64,${image.data}` })),
       ];
       await this.client.session.promptAsync({ sessionID: this.nativeSessionId, messageID: userMessageId,
         model: { providerID: model.id.slice(0, split), modelID: model.id.slice(split + 1) },
-        variant: input.reasoningEffort || undefined, system: this.instructions || undefined, parts }, { signal: this.turn!.requestAbort.signal });
-      if (this.turn?.userMessageId === userMessageId) {
-        this.turn.accepted = true;
-        if (this.turn.cancelled) this.cancel();
+        variant: input.reasoningEffort || undefined, system: this.instructions || undefined, parts }, { signal: turn.requestAbort.signal });
+      if (this.turn === turn) {
+        turn.accepted = true;
+        if (turn.cancelled) this.cancel();
       }
       // The native turn may have finished before prompt_async returned.
       await this.reconcile();
-    } catch (error) { if (this.turn?.userMessageId === userMessageId) this.settle(undefined, nativeError(error)); }
+    } catch (error) { if (this.turn === turn) this.settle(undefined, nativeError(error)); }
     return result;
   }
 
@@ -185,18 +184,18 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
     if (this.closed) return;
     const properties = event.properties;
     const sessionID = "sessionID" in properties ? properties.sessionID
-      : "info" in properties ? properties.info.sessionID
-      : "part" in properties ? properties.part.sessionID : null;
+      : event.type === "message.updated" ? event.properties.info.sessionID
+      : event.type === "message.part.updated" ? event.properties.part.sessionID : null;
     if (sessionID !== this.nativeSessionId) return;
     if (event.id && this.seenEvents.has(event.id)) return;
     if (event.id) {
       this.seenEvents.add(event.id);
       if (this.seenEvents.size > 20_000) this.seenEvents.delete(this.seenEvents.values().next().value!);
     }
-    const messageID = "messageID" in properties ? properties.messageID : "part" in properties ? properties.part.messageID : null;
-    const info = "info" in properties ? properties.info : messageID ? this.trace.messages.get(messageID) : undefined;
+    const messageID = "messageID" in properties && typeof properties.messageID === "string" ? properties.messageID : event.type === "message.part.updated" ? event.properties.part.messageID : null;
+    const info = event.type === "message.updated" ? event.properties.info : messageID ? this.trace.messages.get(messageID) : undefined;
     const parentID = info?.role === "assistant" ? info.parentID : info?.id;
-    const localTurnId = parentID ? this.userTurns.get(parentID) ?? (parentID === this.turn?.userMessageId ? this.turn.id : null) : null;
+    const localTurnId = parentID ? this.userTurns.get(parentID) ?? (parentID === this.turn?.userMessageId ? this.turn?.id : null) : null;
     this.eventTurnId = localTurnId;
     this.nativeEventId = event.id;
     try {
@@ -272,7 +271,7 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
     if (!this.turn || !this.client || !this.nativeSessionId) return;
     const turn = this.turn;
     turn.cancelled = true;
-    const retire = error => { if (this.turn === turn) { this.settle(undefined, nativeError(error)); void this.close(); } };
+    const retire = (error: unknown) => { if (this.turn === turn) { this.settle(undefined, nativeError(error)); void this.close(); } };
     if (!turn.cancelTimer) { turn.cancelTimer = setTimeout(() => retire(new AppError("OPENCODE_CANCEL_TIMEOUT", "OpenCode 停止请求超时，运行实例已关闭。", { status: 504 })), 5_000); turn.cancelTimer.unref?.(); }
     if (!turn.accepted || turn.abortSent) return;
     turn.abortSent = true;
@@ -287,6 +286,7 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
     const [{ data: messages }, { data: statuses }] = await Promise.all([
       this.client!.session.messages({ sessionID: this.nativeSessionId! }), this.client!.session.status(),
     ]);
+    if (!messages || !statuses) throw new AppError("OPENCODE_SNAPSHOT_INVALID", "OpenCode 未返回消息或会话状态。", { status: 502 });
     if (this.turn !== turn) return;
     const current = messages.filter((m) => m.info.id === turn.userMessageId || (m.info.role === "assistant" && m.info.parentID === turn.userMessageId));
     // A live snapshot can overtake deltas already in transit. Replay only
@@ -310,11 +310,12 @@ export class OpenCodeAgentAdapter extends AgentAdapter {
     try {
       const client = this.client && !this.closed ? this.client : await (temporary = new OpenCodeServer()).start(this.profile, this.cwd, {}, undefined, this.options.env);
       const [{ data: session }, { data: messages }] = await Promise.all([client.session.get({ sessionID: nativeSessionId }), client.session.messages({ sessionID: nativeSessionId })]);
+      if (!session || !messages) throw new AppError("OPENCODE_SNAPSHOT_INVALID", "OpenCode 未返回会话或消息。", { status: 502 });
       if (!sameDirectory(session.directory, this.cwd)) throw new AppError("OPENCODE_SESSION_DIRECTORY_MISMATCH", "原生会话不属于当前项目目录。", { status: 409 });
       const events: OpenCodeEvent[] = [];
       let parentId: string | null = null;
       const projector = new OpenCodeTrace((event) => events.push({ ...event, payload: { ...event.payload, nativeParentId: parentId } }), () => this.userTurns.get(parentId!) ?? null);
-      for (const message of messages as OpenCodeMessage[]) {
+      for (const message of messages) {
         parentId = message.info.role === "user" ? message.info.id : message.info.parentID;
         if (message.info.role === "user") events.push({ type: "user.message", turnId: this.userTurns.get(parentId) ?? null,
           payload: { nativeItemId: parentId, nativeParentId: parentId, text: message.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n") } });
