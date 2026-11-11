@@ -6,13 +6,13 @@ import { ResearchDialog } from "@/features/research/components/ResearchUi";
 import { text } from "@/features/research/model";
 import type { ResearchObjectRef, ResearchNode, Group } from "@/features/research/model";
 import { objectKey, sameObject } from "@domain/research/object-ref";
+import { relationTypes as types } from "./relationTypes";
 
 export type ResearchRelation = { id: string; from: ResearchObjectRef; to: ResearchObjectRef; type: string; label?: string | { zh?: string; en?: string }; revision: number };
-export function RelationEditor({ owner, label, en, initial, onClose, onSaved }: { owner: ResearchObjectRef; label: string; en: boolean; initial?: ResearchRelation; onClose: () => void; onSaved: () => void }) {
+export function RelationEditor({ owner, label, en, initial, initialTarget, onClose, onSaved }: { owner: ResearchObjectRef; label: string; en: boolean; initial?: ResearchRelation; initialTarget?: ResearchObjectRef; onClose: () => void; onSaved: () => void }) {
   const query = useQuery({ queryKey: ["topology", projectId()], queryFn: () => api<{ nodes: ResearchNode[]; groups: Group[] }>("/api/topology") });
-  const [target, setTarget] = useState(""), [search, setSearch] = useState(""), [type, setType] = useState(initial?.type ?? "supports"), [direction, setDirection] = useState("out"), [description, setDescription] = useState(text(initial?.label, en)), [error, setError] = useState(""), [saving, setSaving] = useState(false);
+  const [target, setTarget] = useState(initialTarget ? objectKey(initialTarget) : ""), [search, setSearch] = useState(""), [type, setType] = useState(initial?.type ?? "supports"), [direction, setDirection] = useState("out"), [description, setDescription] = useState(text(initial?.label, en)), [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const objects = [...(query.data?.nodes ?? []).map(node => ({ object: { kind: "node", id: node.id } as ResearchObjectRef, label: text(node.label, en), revision: Number(node.data?.researchRevision ?? 1) })), ...(query.data?.groups ?? []).map(group => ({ object: { kind: "group", id: group.id } as ResearchObjectRef, label: group.core.nodeName, revision: group.revision }))];
-  const types: Record<string, [string, string]> = { supports:["支持","Supports"],contradicts:["反驳","Contradicts"],depends_on:["依赖","Depends on"],tested_by:["由实验检验","Tested by"],compared_against:["对照","Compared against"],informs:["提供参考","Informs"],summarized_by:["由此总结","Summarized by"],requires:["需要","Requires"],resolves:["解决","Resolves"] };
   return <ResearchDialog title={(en ? initial ? "Edit relation: " : "Add research relation: " : initial ? "编辑关系：" : "添加科研关系：")+label}  onClose={onClose}><form className="research-form" onSubmit={async event => {
     event.preventDefault(); setSaving(true); setError("");
     try {

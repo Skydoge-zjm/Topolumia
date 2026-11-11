@@ -6,14 +6,17 @@ import {
   AXIS_INK,
   CHART_COLORS,
   GRID_INK,
+  assignRunColors,
   buildFacetedData,
+  canvasUsable,
   format,
   lineLabel,
+  metricSections,
   nearestPoint,
   pointIndex,
-  runColor,
   runKey,
   seriesByMetric,
+  smoothPoints,
   tickFormat,
   type RecordLine,
 } from "./chartModel";
@@ -33,11 +36,40 @@ export type RecordPlot = {
 export function ExperimentPlots({
   plot,
   en,
+  colors,
+  hidden: controlledHidden,
+  onToggle,
+  emphasis = null,
+  showLegend = true,
+  smoothing = 0,
+  logScale = false,
+  filter = "",
+  columns = 0,
 }: {
   plot: RecordPlot;
   en: boolean;
+  /** Colour index per run key; supplied when a run ledger beside the charts uses the same colours. */
+  colors?: Map<string, number>;
+  /** Run keys hidden in every chart. Controlled together with `onToggle`. */
+  hidden?: string[];
+  onToggle?: (key: string) => void;
+  /** The run to bring forward in every chart. */
+  emphasis?: string | null;
+  showLegend?: boolean;
+  /** Moving-average weight in [0, 1); 0 draws the recorded values. */
+  smoothing?: number;
+  logScale?: boolean;
+  /** Show only metrics whose name contains this text. */
+  filter?: string;
+  /** Charts per row; 0 fits as many as the width allows. */
+  columns?: number;
 }) {
-  const groups = useMemo(() => seriesByMetric(plot.series), [plot.series]);
+  const allGroups = useMemo(() => seriesByMetric(plot.series), [plot.series]);
+  const needle = filter.trim().toLowerCase();
+  const groups = useMemo(() => needle ? allGroups.filter(([metric]) => metric.toLowerCase().includes(needle)) : allGroups, [allGroups, needle]);
+  const sections = useMemo(() => metricSections(groups), [groups]);
+  const ownColors = useMemo(() => assignRunColors(plot.series), [plot.series]);
+  const colorOf = useCallback((line: { nodeId: string; blockId?: string; runId: string }) => (colors ?? ownColors).get(runKey(line)) ?? ownColors.get(runKey(line)) ?? 0, [colors, ownColors]);
   // One toggle per run, acting on every metric at once: repeating the same three
   // series above each chart only buried the curves.
   const multiNode = useMemo(
@@ -50,7 +82,9 @@ export function ExperimentPlots({
     ],
     [plot.series],
   );
-  const [hidden, setHidden] = useState<string[]>([]);
+  const [ownHidden, setOwnHidden] = useState<string[]>([]);
+  const hidden = controlledHidden ?? ownHidden;
+  const toggle = onToggle ?? ((key: string) => setOwnHidden((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]));
   const [hoverX, setHoverX] = useState<number | null>(null);
   const hoverFrame = useRef<number | null>(null);
   const pendingHover = useRef<number | null>(null);
@@ -91,7 +125,7 @@ export function ExperimentPlots({
     ]);
   }
   return (
-    <div className="experiment-plots" translate="no">
+    <div className="experiment-plots" translate="no" data-columns={columns || undefined} style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}>
       {grouped.size > 0 && (
         <details className="experiment-plot-warning" role="alert">
           <summary>
@@ -114,7 +148,7 @@ export function ExperimentPlots({
           </ul>
         </details>
       )}
-      {legendEntries.length > 1 && (
+      {showLegend && legendEntries.length > 1 && (
         <div
           className="experiment-plot-legend"
           role="group"
@@ -122,7 +156,7 @@ export function ExperimentPlots({
         >
           {legendEntries.map((line) => {
             const key = runKey(line),
-              style = runColor(line.nodeId, line.runId, line.blockId),
+              style = colorOf(line),
               shown = !hidden.includes(key);
             return (
               <button
@@ -130,13 +164,7 @@ export function ExperimentPlots({
                 key={key}
                 aria-pressed={shown}
                 className="experiment-chart-legend"
-                onClick={() =>
-                  setHidden((current) =>
-                    current.includes(key)
-                      ? current.filter((item) => item !== key)
-                      : [...current, key],
-                  )
-                }
+                onClick={() => toggle(key)}
               >
                 <svg width="24" height="12" aria-hidden="true">
                   <path
@@ -151,20 +179,35 @@ export function ExperimentPlots({
           })}
         </div>
       )}
-      {groups.map(([metric, metricLines]) => (
-        <MetricChart
-          key={metric}
-          metric={metric}
-          lines={metricLines}
-          en={en}
-          hidden={hidden}
-          hoverX={hoverX}
-          onHoverX={onHoverX}
-        />
-      ))}
+      {sections.map((section) => [
+        sections.length > 1 && (
+          <h4 className="experiment-plot-section" key={"section:" + section.prefix}>
+            {section.prefix || (en ? "Other metrics" : "其他指标")}
+            <span className="count">{section.items.length}</span>
+          </h4>
+        ),
+        ...section.items.map(([metric, metricLines]) => (
+          <MetricChart
+            key={metric}
+            metric={metric}
+            title={sections.length > 1 && section.prefix ? metric.slice(section.prefix.length + 1) : metric}
+            lines={metricLines}
+            en={en}
+            hidden={hidden}
+            hoverX={hoverX}
+            onHoverX={onHoverX}
+            colorOf={colorOf}
+            emphasis={emphasis}
+            smoothing={smoothing}
+            logScale={logScale}
+          />
+        )),
+      ])}
       {!groups.length && (
         <p className="research-empty">
-          {en ? "No metric curves available." : "暂无指标曲线。"}
+          {allGroups.length
+            ? en ? "No metric matches this search." : "没有匹配的指标。"
+            : en ? "No metric curves available." : "暂无指标曲线。"}
         </p>
       )}
     </div>
@@ -179,36 +222,31 @@ function chartWidth(host: HTMLElement) {
   );
 }
 
-function canvasUsable() {
-  if (
-    typeof window === "undefined" ||
-    typeof document === "undefined" ||
-    typeof window.HTMLCanvasElement === "undefined"
-  )
-    return false;
-  if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent))
-    return false;
-  try {
-    return Boolean(document.createElement("canvas").getContext("2d"));
-  } catch {
-    return false;
-  }
-}
-
 function MetricChart({
   metric,
+  title,
   lines,
   en,
   hidden,
   hoverX,
   onHoverX,
+  colorOf,
+  emphasis,
+  smoothing,
+  logScale,
 }: {
   metric: string;
+  /** The name under its section heading; the figure keeps the full metric name. */
+  title: string;
   lines: RecordLine[];
   en: boolean;
   hidden: string[];
   hoverX: number | null;
   onHoverX: (value: number | null) => void;
+  colorOf: (line: RecordLine) => number;
+  emphasis: string | null;
+  smoothing: number;
+  logScale: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const live = useRef<HTMLSpanElement>(null);
@@ -250,7 +288,16 @@ function MetricChart({
     [lines],
   );
   const xAxisLabel = xKeys.join(" / ");
-  const data = useMemo(() => buildFacetedData(visible), [visible]);
+  // Smoothing changes what is drawn; the tooltip keeps reading the recorded values.
+  const data = useMemo(
+    () => buildFacetedData(smoothing > 0 ? visible.map((line) => ({ ...line, points: smoothPoints(line.points, smoothing) })) : visible),
+    [visible, smoothing],
+  );
+  // A log axis cannot place zero or negative values; such a metric stays linear.
+  const canLog = useMemo(
+    () => logScale && visible.length > 0 && visible.every((line) => line.points.every((point) => point.y > 0)),
+    [logScale, visible],
+  );
   const hoverIndices = useMemo(
     () => data.map(([xs, ys]) => pointIndex(xs, ys)),
     [data],
@@ -269,7 +316,9 @@ function MetricChart({
   currentData.current = data;
   currentSeries.current = { visible, label };
   currentHoverIndices.current = hoverIndices;
-  const structure = JSON.stringify(visible.map(line => [line.nodeId, line.runId, line.key, line.xKey, line.runLabel, line.nodeName, line.points.length === 1]));
+  const structure = JSON.stringify(visible.map(line => [line.nodeId, line.runId, line.key, line.xKey, line.runLabel, line.nodeName, line.points.length === 1, colorOf(line)]));
+  const currentColor = useRef(colorOf);
+  currentColor.current = colorOf;
   useEffect(() => {
     if (!canvas || !inView || !container.current) return;
     const host = container.current;
@@ -287,7 +336,8 @@ function MetricChart({
         },
       },
       legend: { show: false },
-      scales: { x: { time: false } },
+      focus: { alpha: 0.22 },
+      scales: { x: { time: false }, y: canLog ? { distr: 3 } : {} },
       axes: [
         {
           stroke: AXIS_INK,
@@ -310,7 +360,7 @@ function MetricChart({
       series: [
         {},
         ...visible.map((line) => {
-          const style = runColor(line.nodeId, line.runId, line.blockId);
+          const style = currentColor.current(line);
           return {
             label: label(line),
             stroke: CHART_COLORS[style],
@@ -388,8 +438,18 @@ function MetricChart({
     structure,
     xAxisLabel,
     onHoverX,
+    canLog,
     // Series metadata is captured by structure; data is updated on the existing instance.
   ]);
+
+  // Bring one run forward when the ledger points at it.
+  useEffect(() => {
+    const instance = chart.current;
+    if (!instance) return;
+    const index = emphasis ? visible.findIndex((line) => runKey(line) === emphasis) : -1;
+    if (index >= 0) instance.setSeries(index + 1, { focus: true });
+    else instance.setSeries(null, { focus: false });
+  }, [emphasis, visible, structure, inView, canLog]);
 
   useEffect(() => {
     const instance = chart.current;
@@ -399,7 +459,7 @@ function MetricChart({
       instance.setData(data as unknown as uPlot.AlignedData, true);
       if (lockedRange.current && range) instance.setScale("x", range);
     });
-  }, [data, structure, inView]);
+  }, [data, structure, inView, canLog]);
 
   useEffect(() => {
     const instance = chart.current;
@@ -450,8 +510,9 @@ function MetricChart({
     >
       <figcaption>
         <div className="experiment-chart-title">
-          <strong>{metric}</strong>
+          <strong title={metric}>{title}</strong>
           <span>{xKeys.join(" / ")}</span>
+          {logScale && <span className="experiment-chart-scale">{canLog ? (en ? "log" : "对数") : (en ? "linear: has values ≤ 0" : "线性：含非正值")}</span>}
         </div>
         <div className="experiment-chart-actions">
           <button
@@ -517,13 +578,11 @@ function MetricChart({
         )}
       </div>
       <span ref={live} className="visually-hidden" aria-live="polite" />
-      <div className="experiment-chart-metadata">
-        {lines.some((line) => line.sampled) && (
-          <span className="research-badge">
-            {en ? "Sampled display" : "曲线展示已采样"}
-          </span>
-        )}
-      </div>
+      {lines.some((line) => line.sampled) && (
+        <div className="experiment-chart-metadata">
+          <span className="experiment-chart-note">{en ? "Sampled display" : "曲线展示已采样"}</span>
+        </div>
+      )}
     </figure>
   );
 }

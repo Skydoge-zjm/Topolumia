@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Link2, Trash2 } from "lucide-react";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { api, projectId } from "@/shared/lib/api";
 import { ResearchDialog } from "@/features/research/components/ResearchUi";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
@@ -10,16 +9,16 @@ import {
   type ContentBlock,
 } from "@/features/topology/details/ContentBlockRenderer";
 import { AssetTableRowFields, AssetTableRowView } from "./AssetTableRows";
-import { RunStatusDot } from "./RunStatusDot";
-import { CHART_COLORS, runColor } from "./chartModel";
 import type {
   ExperimentRun,
   ExperimentMaterialLink,
   MaterialSelection,
 } from "@domain/research/experiment-records";
-import "./experiment-records.css";
+import { runStatusNames as statuses, runStatusLabel } from "./runPresentation";
 
 export type ExperimentRunOverview = ExperimentRun & {
+  blockId?: string;
+  firstWatermark?: number;
   records: {
     blockId: string;
     blockRevision: number;
@@ -30,291 +29,20 @@ export type ExperimentRunOverview = ExperimentRun & {
     status: string;
   }[];
 };
+export type ExperimentMaterialLinkView = ExperimentMaterialLink & {
+  title: string;
+  currentRevision: number | null;
+  archived: boolean;
+  item?: any;
+};
 export type ExperimentOverview = {
   nodeId: string;
   revision: number;
   runs: ExperimentRunOverview[];
-  materialLinks: (ExperimentMaterialLink & {
-    title: string;
-    currentRevision: number | null;
-    archived: boolean;
-    item?: any;
-  })[];
+  materialLinks: ExperimentMaterialLinkView[];
 };
-import { runStatusNames as statuses, runStatusLabel } from "./runPresentation";
 
-const providerLabel = (provider: string) =>
-  provider === "wandb" ? "W&B" : provider === "tensorboard" ? "TensorBoard" : provider === "mlflow" ? "MLflow" : provider;
-const shortSource = (value: string) => (value.length > 14 ? value.slice(0, 14) + "…" : value);
-const PAGE_SIZE = 20;
-
-export function ExperimentRunsPanel({
-  nodeId,
-  blockId,
-  blocks,
-  en,
-  canEdit,
-  onChanged,
-}: {
-  nodeId: string;
-  blockId?: string;
-  blocks: ContentBlock[];
-  en: boolean;
-  canEdit: boolean;
-  onChanged: () => void;
-}) {
-  const [viewMaterial, setViewMaterial] = useState<ExperimentOverview["materialLinks"][number] | null>(null);
-  const [removing, setRemoving] = useState<ExperimentRunOverview | null>(null);
-  const client = useQueryClient(),
-    [editor, setEditor] = useState<ExperimentRun | "new" | null>(null),
-    [linkRun, setLinkRun] = useState<string | null>(null),
-    [error, setError] = useState(""),
-    [page, setPage] = useState(0);
-  const query = useQuery({
-    queryKey: ["experiment-runs", projectId(), nodeId, blockId],
-    queryFn: () => api<ExperimentOverview>("/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment?blockId=" + encodeURIComponent(blockId ?? "")),
-  });
-  const save = async (patch: object, expectedRevision = query.data!.revision) => {
-    const result = await api<ExperimentOverview>("/api/research-nodes/" + encodeURIComponent(nodeId) + "/experiment", {
-      method: "PATCH",
-      body: JSON.stringify({ blockId, expectedExperimentRevision: expectedRevision, patch }),
-    });
-    client.setQueryData(["experiment-runs", projectId(), nodeId, blockId], result);
-    void client.invalidateQueries({ queryKey: ["research-experiments", projectId()] });
-    onChanged();
-  };
-  if (query.isPending)
-    return <LoadingSkeleton layout="rows" label={en ? "Loading runs…" : "正在读取运行记录…"} />;
-  if (!query.data)
-    return (
-      <div className="experiment-rail-body">
-        <p role="alert">
-          {query.error?.message}
-          <button className="button" onClick={() => void query.refetch()}>
-            {en ? "Retry" : "重试"}
-          </button>
-        </p>
-      </div>
-    );
-  const data = query.data;
-  const pages = Math.max(1, Math.ceil(data.runs.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pages - 1);
-  const visible = data.runs.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
-  const removedRun = removing ? removing : null;
-  return (
-    <div className="experiment-rail-body">
-      <div className="experiment-run-toolbar">
-        {canEdit && (
-          <button className="button primary" onClick={() => setEditor("new")}>
-            <Plus size={15} />
-            {en ? "Add run" : "添加运行"}
-          </button>
-        )}
-      </div>
-      <div className="experiment-run-summary">
-        <span>
-          {data.runs.length} {en ? "runs" : "次运行"}
-        </span>
-      </div>
-      {(error || query.error) && (
-        <p role="alert" className="experiment-record-error">
-          {error || query.error?.message}
-          <button
-            className="button"
-            onClick={() => {
-              setError("");
-              void query.refetch();
-            }}
-          >
-            {en ? "Reload" : "载入最新内容"}
-          </button>
-        </p>
-      )}
-      <ul className="experiment-run-list">
-        {visible.map((run) => {
-          const links = data.materialLinks.filter((link) => link.runId === run.id);
-          const providers = [...new Set(run.sources.map((source) => providerLabel(source.provider)))];
-          const runStyle = runColor(nodeId, run.id, blockId);
-          return (
-            <li key={run.id} className="experiment-run-item">
-              <div className="experiment-run-toggle">
-                <svg className="experiment-run-swatch" width="18" height="10" aria-hidden="true">
-                  <path
-                    d="M1 5 H17"
-                    stroke={CHART_COLORS[runStyle]}
-                    strokeWidth="2.4"
-                  />
-                </svg>
-                <strong>{run.label}</strong>
-              </div>
-              <span className="experiment-run-facts">
-                <RunStatusDot status={run.status} en={en} />
-                <span className="experiment-run-source">
-                  {providers.length ? providers.join(" · ") : en ? "Hand-recorded" : "手工记录"}
-                  {run.sources[0] && ` · ${shortSource(run.sources[0].sourceId)}`}
-                </span>
-                <span className="experiment-run-counts">
-                  {en ? "Materials" : "材料"} {links.length}
-                  {run.records.length > 0 && ` · ${en ? "records" : "记录"} ${run.records.length}`}
-                </span>
-              </span>
-              {run.note && <p className="experiment-run-note">{run.note}</p>}
-              <span className="experiment-run-actions">
-                {canEdit && <button
-                  className="research-icon-button"
-                  aria-label={en ? "Link material" : "关联材料"}
-                  title={en ? "Link material" : "关联材料"}
-                  onClick={() => setLinkRun(run.id)}
-                >
-                  <Link2 size={15} />
-                </button>}
-                {canEdit && (
-                  <button
-                    className="research-icon-button"
-                    aria-label={(en ? "Edit " : "编辑 ") + run.label}
-                    onClick={() => setEditor(run)}
-                  >
-                    <Pencil size={15} />
-                  </button>
-                )}
-                {canEdit && (
-                  <button
-                    className="research-icon-button"
-                    aria-label={(en ? "Delete " : "删除 ") + run.label}
-                    onClick={() => setRemoving(run)}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                )}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      {!data.runs.length && (
-        <p className="research-empty">
-          {canEdit
-            ? en
-              ? "No runs recorded. Add a run or import a record block."
-              : "尚无运行记录。添加运行，或导入实验记录内容块。"
-            : en
-              ? "No runs recorded."
-              : "尚无运行记录。"}
-        </p>
-      )}
-      {pages > 1 && (
-        <div className="research-pagination">
-          <button className="button" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>
-            {en ? "Previous" : "上一页"}
-          </button>
-          <span>
-            {currentPage + 1} / {pages}
-          </span>
-          <button className="button" disabled={currentPage + 1 >= pages} onClick={() => setPage(currentPage + 1)}>
-            {en ? "Next" : "下一页"}
-          </button>
-        </div>
-      )}
-      {data.materialLinks.length > 0 && (
-        <section className="experiment-material-section" aria-labelledby="experiment-material-heading">
-          <h2 id="experiment-material-heading">{en ? "Material associations" : "材料关联"}</h2>
-          <ul className="experiment-material-list">
-            {data.materialLinks.map((link) => (
-              <li key={link.id} className="experiment-material-link">
-                <div className="experiment-material-link-title">
-                  <button className="button" onClick={() => setViewMaterial(link)}>
-                    {link.title}
-                  </button>
-                  <span className="experiment-material-link-meta">
-                    {data.runs.find((run) => run.id === link.runId)?.label}
-                    <span aria-hidden="true">·</span>
-                    {link.selection.kind === "row" || link.selection.kind === "assetRow"
-                      ? (en ? "Row " : "第 ") + (link.selection.rowIndex + 1) + (en ? "" : " 行")
-                      : link.selection.kind === "asset"
-                        ? (link.item?.label ?? (en ? "File" : "文件"))
-                        : en
-                          ? "Block"
-                          : "内容块"}
-                    <span aria-hidden="true">·</span>v{link.blockRevision}
-                  </span>
-                </div>
-                <span className="experiment-material-link-actions">
-                  {link.archived && <span className="research-badge">{en ? "Archived" : "已归档"}</span>}
-                  {canEdit && (
-                    <button
-                      className="research-icon-button"
-                      aria-label={(en ? "Unlink " : "解除关联 ") + link.title}
-                      onClick={() => {
-                        void save({ removeLinkIds: [link.id] }).catch((cause) => setError(cause.message));
-                      }}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {editor && (
-        <RunEditor
-          run={editor === "new" ? undefined : editor}
-          en={en}
-          revision={data.revision}
-          onClose={() => {
-            setEditor(null);
-            void query.refetch();
-          }}
-          onSave={async (value, revision) => {
-            await save(editor === "new" ? { addRuns: [value] } : { updateRuns: [{ ...value, id: editor.id }] }, revision);
-            setEditor(null);
-          }}
-        />
-      )}
-      {removedRun && (
-        <RemoveRunDialog
-          run={removedRun}
-          links={data.materialLinks.filter((link) => link.runId === removedRun.id)}
-          en={en}
-          revision={data.revision}
-          onClose={() => setRemoving(null)}
-          onConfirm={async (alsoRemoveLinks) => {
-            await save({
-              ...(alsoRemoveLinks && removedRun.records.length === 0
-                ? { removeLinkIds: data.materialLinks.filter((link) => link.runId === removedRun.id).map((link) => link.id) }
-                : {}),
-              removeRunIds: [removedRun.id],
-            });
-            setRemoving(null);
-            void query.refetch();
-          }}
-        />
-      )}
-      {linkRun && (
-        <MaterialEditor
-          run={data.runs.find((run) => run.id === linkRun)!}
-          blocks={blocks}
-          en={en}
-          revision={data.revision}
-          onClose={() => {
-            setLinkRun(null);
-            void query.refetch();
-          }}
-          onSave={async (value, revision) => {
-            await save({ addLinks: [value] }, revision);
-            setLinkRun(null);
-          }}
-        />
-      )}
-      {viewMaterial && (
-        <MaterialVersionViewer nodeId={nodeId} link={viewMaterial} en={en} onClose={() => setViewMaterial(null)} />
-      )}
-    </div>
-  );
-}
-
-function RemoveRunDialog({
+export function RemoveRunDialog({
   run,
   links,
   en,
@@ -323,7 +51,7 @@ function RemoveRunDialog({
   onClose,
 }: {
   run: ExperimentRunOverview;
-  links: ExperimentOverview["materialLinks"];
+  links: ExperimentMaterialLinkView[];
   en: boolean;
   revision: number;
   onConfirm: (alsoRemoveLinks: boolean) => Promise<void>;
@@ -361,7 +89,7 @@ function RemoveRunDialog({
           </button>
           <button
             type="button"
-            className="button"
+            className="button danger"
             disabled={saving || blocked}
             onClick={async () => {
               setSaving(true);
@@ -384,7 +112,7 @@ function RemoveRunDialog({
   );
 }
 
-function RunEditor({
+export function RunEditor({
   run,
   en,
   revision,
@@ -458,7 +186,7 @@ function RunEditor({
   );
 }
 
-function MaterialEditor({
+export function MaterialEditor({
   run,
   blocks,
   en,
@@ -621,14 +349,14 @@ function MaterialEditor({
   );
 }
 
-function MaterialVersionViewer({
+export function MaterialVersionViewer({
   nodeId,
   link,
   en,
   onClose,
 }: {
   nodeId: string;
-  link: ExperimentOverview["materialLinks"][number];
+  link: ExperimentMaterialLinkView;
   en: boolean;
   onClose: () => void;
 }) {

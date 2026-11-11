@@ -176,3 +176,72 @@ export function buildFacetedData(
     }),
   ];
 }
+
+/** uPlot needs a real 2D canvas; test environments and locked-down browsers fall back to data views. */
+export function canvasUsable() {
+  if (typeof window === "undefined" || typeof document === "undefined" || typeof window.HTMLCanvasElement === "undefined") return false;
+  if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent)) return false;
+  try { return Boolean(document.createElement("canvas").getContext("2d")); } catch { return false; }
+}
+
+type RunIdentity = { nodeId: string; blockId?: string; runId: string };
+/**
+ * Colours for the runs shown together. Each run starts from its identity colour; when two runs
+ * of the same view would share one, the later key moves to the next free colour. The result
+ * depends only on the set of runs, so a ledger and its charts agree.
+ */
+export function assignRunColors(runs: RunIdentity[]): Map<string, number> {
+  const keys = [...new Map(runs.map((run) => [runKey(run), run])).entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const assigned = new Map<string, number>(), taken = new Set<number>();
+  for (const [key, run] of keys) {
+    let colour = runColor(run.nodeId, run.runId, run.blockId);
+    if (taken.size < CHART_COLORS.length) while (taken.has(colour)) colour = (colour + 1) % CHART_COLORS.length;
+    taken.add(colour);
+    assigned.set(key, colour);
+  }
+  return assigned;
+}
+
+/** Exponential moving average with start-up bias correction; `weight` in [0, 1). */
+export function smoothPoints(points: { x: number; y: number }[], weight: number) {
+  if (!(weight > 0) || points.length < 3) return points;
+  let average = 0, correction = 1;
+  return points.map((point) => {
+    average = average * weight + point.y * (1 - weight);
+    correction *= weight;
+    return { x: point.x, y: average / (1 - correction) };
+  });
+}
+
+/** Metrics that share a prefix ("train/loss", "train/accuracy") read as one section. */
+export function metricSections<T>(groups: [string, T][]): { prefix: string; items: [string, T][] }[] {
+  const sections = new Map<string, [string, T][]>();
+  for (const group of groups) {
+    const cut = group[0].lastIndexOf("/"), prefix = cut > 0 ? group[0].slice(0, cut) : "";
+    if (!sections.has(prefix)) sections.set(prefix, []);
+    sections.get(prefix)!.push(group);
+  }
+  return [...sections].map(([prefix, items]) => ({ prefix, items }));
+}
+
+/** The most recent observation of a line, by x. */
+export function lastPoint(points: { x: number; y: number }[]) {
+  let last: { x: number; y: number } | null = null;
+  for (const point of points) if (!last || point.x >= last.x) last = point;
+  return last;
+}
+
+export type LedgerMetric = { key: string; values: Map<string, number> };
+
+/** The most recent recorded value of each metric for each run. */
+export function latestValues(series: RecordLine[], limit = 6, filter = ""): LedgerMetric[] {
+  const needle = filter.trim().toLowerCase(), metrics = new Map<string, Map<string, number>>();
+  for (const line of series) {
+    if (needle && !line.key.toLowerCase().includes(needle)) continue;
+    let values = metrics.get(line.key);
+    if (!values) { if (metrics.size >= limit) continue; metrics.set(line.key, (values = new Map())); }
+    const key = runKey(line), point = lastPoint(line.points);
+    if (point && !values.has(key)) values.set(key, point.y);
+  }
+  return [...metrics].map(([key, values]) => ({ key, values }));
+}

@@ -8,3 +8,7 @@ export const runStatusNames = {
 };
 export const runStatusLabel = (status: string, en: boolean) =>
   runStatusNames[status as keyof typeof runStatusNames]?.[en ? 1 : 0] ?? status;
+/** Reading order for summaries: what is happening now, what failed, then the rest. */
+export const runStatusOrder = ["running", "queued", "failed", "succeeded", "cancelled", "unknown"];
+export const providerLabel = (provider: string) =>
+  provider === "wandb" ? "W&B" : provider === "tensorboard" ? "TensorBoard" : provider === "mlflow" ? "MLflow" : provider;

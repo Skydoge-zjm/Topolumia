@@ -27,6 +27,22 @@ const aliases: Record<string, string> = {
   yml: "yaml",
 };
 const codeCache = new Map<string, string>();
+const extensions: Record<string, string> = {
+  py: "python", js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript",
+  sh: "bash", bash: "bash", zsh: "bash", json: "json", jsonl: "json", yaml: "yaml", yml: "yaml", r: "r", sql: "sql",
+};
+/** The registered highlighter language for a declared language or a file name, if any. */
+export function codeLanguage(language?: string, filename?: string): string | undefined {
+  const declared = (language ?? "").trim().toLowerCase(), extension = /\.([a-z0-9]+)$/i.exec(filename ?? "")?.[1]?.toLowerCase();
+  for (const name of [aliases[declared] ?? declared, extension ? extensions[extension] : ""]) if (name && hljs.getLanguage(name)) return name;
+  return undefined;
+}
+/** Escaped HTML for a code listing; unknown languages and very long listings stay plain. */
+export function highlightCode(code: string, language?: string): string {
+  return language && code.length < 40_000 && hljs.getLanguage(language)
+    ? hljs.highlight(code, { language, ignoreIllegals: true }).value
+    : escapeHtml(code);
+}
 const math = (value: string, displayMode = false) =>
   katex.renderToString(value, {
     displayMode,

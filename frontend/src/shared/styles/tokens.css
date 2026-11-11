@@ -43,6 +43,15 @@
   --font-body: 14px;
   --font-label: 14px;
   --font-meta: 12px;
+  /* Code, configuration, metric keys and identifiers only; prose and numbers stay in the UI face. */
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+  /* Research object kinds. Colour marks identity; it never decorates. */
+  --kind-paper: #9a6b14;
+  --kind-experiment: #2f5fd0;
+  --kind-note: #8e3a8c;
+  --kind-group: #178d70;
+  --color-paper: #f4f6f3;
+  --shadow-float: 0 12px 32px rgb(18 51 43 / 14%), 0 2px 6px rgb(18 51 43 / 8%);
 }
 
 * { box-sizing: border-box; }

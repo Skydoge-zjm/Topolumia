@@ -20,9 +20,6 @@
 .research-dialog header, .dialog-actions { flex-wrap: wrap; }
 .research-workspace .research-section-heading { align-items: center; }
 .research-record-labels { display: flex; flex-wrap: wrap; gap: 8px; }
-.topology-container-header { gap: 12px; }
-.topology-container-count { color: var(--color-muted); font-size: 12px; white-space: nowrap; }
-.topology-group-preview .topology-group-preview-heading > strong { font-size: 16px; color: var(--color-ink); text-transform: none; letter-spacing: normal; }
 
 @media (max-width: 1100px) {
   .page-title { gap: 16px; }
@@ -84,9 +81,6 @@
   .research-records-page .research-toolbar .select-menu-trigger { gap: 4px; padding-inline: 8px; font-size: 12px; }
   .research-records-page .research-toolbar .select-menu-trigger > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .research-records-page .research-toolbar .select-menu-trigger > svg { width: 12px; }
-  .research-topology-layout { min-width: 0; }
-  .research-group-rail { max-height: 220px; overflow: auto; }
-  .research-graph-canvas { max-width: 100%; }
   .research-dialog, .dialog-content { width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 20px; }
   .research-dialog > header { gap: 12px; }
   .research-member-list, .research-dialog form { min-width: 0; }

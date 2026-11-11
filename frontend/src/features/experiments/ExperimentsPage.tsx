@@ -10,15 +10,10 @@ import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { ExperimentCompareDialog } from "./ExperimentCompareDialog";
 import type { ExperimentIndex } from "./ExperimentCompareDialog";
-import { RunStatusDot } from "./RunStatusDot";
+import { RunStrip } from "./RunStrip";
 import { TrainingRecordsView } from "./TrainingRecordsView";
 import "./experiment-records.css";
 
-const summarize = (runs: { status: string }[]) => ({
-  succeeded: runs.filter((run) => run.status === "succeeded").length,
-  failed: runs.filter((run) => run.status === "failed").length,
-  last: runs.at(-1)?.status ?? "unknown",
-});
 
 export function ExperimentsPage() {
   const [params, setParams] = useSearchParams();
@@ -34,8 +29,7 @@ export function ExperimentsPage() {
   const items = useMemo(
     () =>
       (experiments.data?.items ?? []).filter((node) => {
-        const summary = summarize(node.runs);
-        if (filter === "failed") return summary.failed > 0;
+        if (filter === "failed") return node.runs.some((run) => run.status === "failed");
         if (filter === "no-runs") return !node.runs.length;
         if (filter === "running") return node.runs.some((run) => ["running", "queued"].includes(run.status));
         return true;
@@ -87,7 +81,6 @@ export function ExperimentsPage() {
       )}
       <div className="research-card">
         {items.map((node) => {
-          const summary = summarize(node.runs);
           return (
             <Link className="research-object-row experiment-index-row" key={node.id} to={nodeUrl(node.id)}>
               <span>
@@ -95,15 +88,9 @@ export function ExperimentsPage() {
                 {node.summary && <small>{node.summary}</small>}
               </span>
               <span className="experiment-index-meta">
-                <RunStatusDot status={summary.last} en={en} />
-                <span className="research-badge">
-                  {node.runs.length} {en ? "runs" : "次运行"}
-                </span>
-                {summary.failed > 0 && (
-                  <span className="research-badge is-alert">
-                    {summary.failed} {en ? "failed" : "失败"}
-                  </span>
-                )}
+                {node.runs.length > 0
+                  ? <><RunStrip runs={node.runs} en={en} max={16} /><span className="count">{node.runs.length} {en ? "runs" : "次运行"}</span></>
+                  : <span className="count">{en ? "No runs yet" : "尚无运行"}</span>}
               </span>
             </Link>
           );

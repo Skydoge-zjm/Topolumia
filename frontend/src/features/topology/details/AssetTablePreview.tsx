@@ -1,4 +1,7 @@
 import type { ResearchObjectRef } from "@/features/research/model";
+import { useState } from "react";
+import * as Tabs from "@radix-ui/react-tabs";
+import { CopyButton } from "@/features/research/components/CopyButton";
 import { useQuery } from "@tanstack/react-query";
 import { Download, FileSpreadsheet } from "lucide-react";
 import { api, projectId } from "@/shared/lib/api";
@@ -37,7 +40,7 @@ export function AssetTablePreview({ owner, assetId, en, blockId, table, blockRev
     },
   } : preview;
   return <Tabs.Root className="imported-table-preview" value={selectedView} onValueChange={view => setSelection({ assetId, view })}>
-    <header><span><FileSpreadsheet size={15} />{originalName || (en ? "Imported table" : "导入的表格")}</span><span>{preview.sheetName || preview.sourceFormat.toUpperCase()}{preview.truncated ? (en ? " · preview limited" : " · 仅预览部分行") : ""}</span></header>
+    <header><span><FileSpreadsheet size={15} />{originalName || (en ? "Imported table" : "导入的表格")}</span><span className="imported-table-facts"><span>{preview.sheetName || (preview.sourceFormat === "manual" ? (en ? "Entered by hand" : "手工录入") : preview.sourceFormat.toUpperCase())}</span>{preview.truncated && <span>{en ? "Preview limited" : "仅预览部分行"}</span>}</span></header>
     {hasRenderedPreview && <Tabs.List className="table-preview-tabs" aria-label={en ? "Table display mode" : "表格展示方式"}>
       <Tabs.Trigger value="rendered">{en ? "Rendered preview" : "渲染预览"}</Tabs.Trigger>
       <Tabs.Trigger value="data">{en ? "Table data" : "表格数据"}</Tabs.Trigger>
@@ -48,11 +51,9 @@ export function AssetTablePreview({ owner, assetId, en, blockId, table, blockRev
     </Tabs.Content>}
     <Tabs.Content value="data" className="table-preview-panel"><PresentedTable preview={dataPreview} en={en} /></Tabs.Content>
     {preview.grid?.warnings?.map(warning => <p className="research-hint" key={warning}>{warning}</p>)}
-    <footer><span>{preview.totalRows} {en ? "rows" : "行"}</span><div>{assetHref && <a href={assetHref}><Download size={14} />{en ? "Original" : "原文件"}</a>}{compiled?.state === "ready" && <a href={assetBase + "/content?variant=compiledPdf&" + projectQuery} target="_blank" rel="noopener noreferrer"><Download size={14} />PDF</a>}{blockId && <><TableExport candidateId={candidateId} owner={owner} blockId={blockId} revision={blockRevision} representationId={representationId} format="xlsx" en={en}/><TableExport candidateId={candidateId} owner={owner} blockId={blockId} revision={blockRevision} representationId={representationId} format="tex" en={en}/></>}</div></footer>
+    <footer><span>{preview.totalRows} {en ? "rows" : "行"}</span><div>{preview.columns.length > 0 && <CopyButton en={en} label={en ? "Copy table" : "复制表格"} text={() => [preview.columns.map(column => column.label).join("\t"), ...preview.rows.map(row => preview.columns.map(column => String(row[column.key] ?? "")).join("\t"))].join("\n")} />}{assetHref && <a href={assetHref}><Download size={14} />{en ? "Original" : "原文件"}</a>}{compiled?.state === "ready" && <a href={assetBase + "/content?variant=compiledPdf&" + projectQuery} target="_blank" rel="noopener noreferrer"><Download size={14} />PDF</a>}{blockId && <><TableExport candidateId={candidateId} owner={owner} blockId={blockId} revision={blockRevision} representationId={representationId} format="xlsx" en={en}/><TableExport candidateId={candidateId} owner={owner} blockId={blockId} revision={blockRevision} representationId={representationId} format="tex" en={en}/></>}</div></footer>
   </Tabs.Root>;
 }
-import { useState } from "react";
-import * as Tabs from "@radix-ui/react-tabs";
 
 function TableExport({owner,blockId,revision,representationId,format,en,candidateId}:{owner: ResearchObjectRef;blockId:string;revision?:number;representationId?:string;format:string;en:boolean;candidateId?:string}){
   const [busy,setBusy]=useState(false),[error,setError]=useState("");
