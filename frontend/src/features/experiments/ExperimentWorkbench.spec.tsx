@@ -43,8 +43,10 @@ it("edits and deletes an experiment record through the shared versioned block ac
   await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
   const update = fetch.mock.calls.find(([, options]) => options?.method === "PATCH")!;
   expect(JSON.parse(String(update[1]?.body))).toEqual({ patch: { title: "Renamed" }, expectedRevision: 3 });
-  vi.spyOn(window, "confirm").mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Delete content block" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Delete block: Record" });
+  expect(changed).toHaveBeenCalledTimes(1);
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Delete block" }));
   await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
   const deletion = fetch.mock.calls.find(([, options]) => options?.method === "DELETE")!;
   expect(JSON.parse(String(deletion[1]?.body))).toEqual({ expectedRevision: 3 });

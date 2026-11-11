@@ -5,7 +5,7 @@ import { api, projectId } from "@/shared/lib/api";
 import { ResearchDialog } from "@/features/research/components/ResearchUi";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import { ExperimentPlots } from "./ExperimentPlots";
-import type { RecordPlot } from "./ExperimentPlots";
+import { useFilteredExperimentPlot } from "./useFilteredExperimentPlot";
 import { ChartControls } from "./ChartControls";
 import { useChartPrefs } from "./chartPrefs";
 import { RunLedger, type LedgerRun } from "./RunLedger";
@@ -29,10 +29,11 @@ export function ExperimentCompareDialog({ nodeIds, en, onClose }: { nodeIds?: st
   const [prefs, setPrefs] = useChartPrefs();
   const index = useQuery({ queryKey: ["research-experiments", projectId()], queryFn: ({ signal }) => api<ExperimentIndex>("/api/research-experiments", { signal }) });
   const selectedItems = useMemo(() => index.data?.items.filter((item) => selected.includes(item.id)) ?? [], [index.data?.items, selected]);
-  const plot = useQuery({
+  const { plot, metricKeys, omittedMetricCount } = useFilteredExperimentPlot({
     queryKey: ["temporary-experiment-compare", projectId(), selected],
     enabled: selected.length >= 2 && !picking,
-    queryFn: ({ signal }) => api<RecordPlot>("/api/research/experiments/plot", { method: "POST", signal, body: JSON.stringify({ nodeIds: selected }) }),
+    input: { nodeIds: selected },
+    filter,
   });
   const toggleExperiment = (id: string) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   const series = plot.data?.series;
@@ -79,12 +80,12 @@ export function ExperimentCompareDialog({ nodeIds, en, onClose }: { nodeIds?: st
       {!picking && selected.length < 2 && <p className="research-empty">{en ? "Select at least two experiments." : "请选择至少两个实验。"}</p>}
       {!picking && selected.length >= 2 && plot.isPending && <LoadingSkeleton layout="cards" label={en ? "Loading comparison…" : "正在读取对比…"} />}
       {!picking && plot.error && <p role="alert">{plot.error.message}<button className="button" onClick={() => void plot.refetch()}>{en ? "Retry" : "重试"}</button></p>}
-      {!picking && selected.length >= 2 && plot.data && <>
+      {!picking && selected.length >= 2 && (plot.data || metricKeys.length > 0) && <>
         {withoutRecords.length > 0 && <p className="research-hint">{(en ? "No run records to compare in: " : "以下实验没有可比较的运行记录：") + withoutRecords.map((item) => item.name).join(en ? ", " : "、")}</p>}
         {runs.length > 0 && <RunLedger runs={runs} colors={colors} hidden={hidden} metrics={metrics} en={en} onToggle={toggle} onOnly={only} onShowAll={() => setHidden([])} onEmphasis={setEmphasis} />}
-        <div className="record-view-bar"><ChartControls prefs={prefs} onChange={setPrefs} filter={filter} onFilter={setFilter} metricCount={plot.data.metricKeys.length} en={en} /></div>
-        <ExperimentPlots plot={plot.data} en={en} colors={colors} hidden={hidden} onToggle={toggle} emphasis={emphasis} showLegend={false} smoothing={prefs.smoothing} logScale={prefs.logScale} columns={prefs.columns} filter={filter} />
-        {plot.data.omittedMetricCount > 0 && <p className="research-hint">{en ? `${plot.data.omittedMetricCount} more metrics are not drawn here.` : `另有 ${plot.data.omittedMetricCount} 项指标未在此绘制。`}</p>}
+        <div className="record-view-bar"><ChartControls prefs={prefs} onChange={setPrefs} filter={filter} onFilter={setFilter} metricCount={metricKeys.length} en={en} /></div>
+        {plot.data && <ExperimentPlots plot={plot.data} en={en} colors={colors} hidden={hidden} onToggle={toggle} emphasis={emphasis} showLegend={false} smoothing={prefs.smoothing} logScale={prefs.logScale} columns={prefs.columns} filter={filter} />}
+        {plot.data && omittedMetricCount > 0 && <p className="research-hint">{en ? `${omittedMetricCount} more metrics are available through the metric filter.` : `另有 ${omittedMetricCount} 项指标，可筛选查看。`}</p>}
       </>}
     </ResearchDialog>
   );

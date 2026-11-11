@@ -36,6 +36,7 @@ export function InlineField({ value, label, placeholder, multiline = false, requ
     onChange: (event: { target: { value: string } }) => setDraft(event.target.value),
     onBlur: () => { if (!saving && !error) void commit(); },
     onKeyDown: (event: React.KeyboardEvent) => {
+      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); }
       else if (event.key === "Enter" && (!multiline || event.ctrlKey || event.metaKey)) { event.preventDefault(); void commit(); }
     },
@@ -71,7 +72,7 @@ export function TagEditor({ tags, canEdit, en, onSave }: { tags: string[]; canEd
         {tags.map(tag => <li key={tag}>{tag}{canEdit && <button type="button" disabled={busy} aria-label={(en ? "Remove tag " : "移除标签 ") + tag} onClick={() => void save(tags.filter(item => item !== tag))}><X size={12} /></button>}</li>)}
       </ul>
       {canEdit && (adding
-        ? <input ref={input} className="tag-editor-input" aria-label={en ? "New tag" : "新标签"} placeholder={en ? "Tag" : "标签"} maxLength={80} value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} onBlur={() => void add()} onKeyDown={event => { if (event.key === "Enter" || event.key === "," || event.key === "，") { event.preventDefault(); void add(); } else if (event.key === "Escape") { event.stopPropagation(); setDraft(""); setAdding(false); } }} />
+        ? <input ref={input} className="tag-editor-input" aria-label={en ? "New tag" : "新标签"} placeholder={en ? "Tag" : "标签"} maxLength={80} value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} onBlur={() => void add()} onKeyDown={event => { if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return; if (event.key === "Enter" || event.key === "," || event.key === "，") { event.preventDefault(); void add(); } else if (event.key === "Escape") { event.stopPropagation(); setDraft(""); setAdding(false); } }} />
         : <button type="button" className="tag-editor-add" onClick={() => setAdding(true)}><Plus size={12} />{en ? "Tag" : "标签"}</button>)}
       {error && <p role="alert">{error}</p>}
     </div>

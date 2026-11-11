@@ -41,6 +41,8 @@
 
 [TopologyCanvas](../../../../frontend/src/features/topology/TopologyCanvas.tsx) 与 [layout worker](../../../../frontend/src/features/topology/topology-layout.worker.ts) 管布局。保持既有位置和视口，不因检索、来源更新或节点内容修改不断重排。
 
+[TopologyPage](../../../../frontend/src/features/topology/TopologyPage.tsx) 协调顶栏筛选、左侧大纲、画布选择和右侧预览。单击预览，双击或回车进入详情；修饰键多选用于组成节点组与实验比较，拖线复用关系编辑器。节点详情把材料置于正文、材料大纲与关系置于右栏，名称/摘要/标签就地编辑；正文草稿保护沿用共同离开确认机制。
+
 自动布局的层次来自有向边，而不再预设“问题→假说→实验→结论”的类型顺序。节点类型、标签与便捷创建入口不自动生成科研关系。
 
 ## 验证

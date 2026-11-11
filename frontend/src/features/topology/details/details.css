@@ -65,6 +65,7 @@
 .block-outline > li > button > svg { flex: none; color: var(--color-muted); }
 .block-outline > li > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .block-outline > li > button:hover { background: var(--color-paper); color: var(--color-ink); }
+.block-outline > li > button:disabled { opacity: .45; cursor: not-allowed; }
 .block-outline-grip { flex: none; width: 18px; color: #a8b6ae; opacity: 0; cursor: grab; }
 .block-outline > li:hover .block-outline-grip { opacity: 1; }
 .block-outline > li.is-dragging { opacity: .4; }

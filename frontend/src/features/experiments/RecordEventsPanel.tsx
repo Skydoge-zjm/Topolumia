@@ -15,25 +15,23 @@ const names = {
 };
 export function RecordEventsPanel({
   blockId,
+  snapshotId,
   en,
 }: {
   blockId: string;
+  snapshotId?: string;
   en: boolean;
 }) {
   const [kind, setKind] = useState("config"),
     [after, setAfter] = useState(0),
     [history, setHistory] = useState<number[]>([]);
   const query = useQuery<any>({
-    queryKey: ["record-events", projectId(), blockId, kind, after],
+    queryKey: ["record-events", projectId(), blockId, snapshotId, kind, after],
     queryFn: ({ signal }) =>
       api(
         "/api/research/record-blocks/" +
           encodeURIComponent(blockId) +
-          "/events?kind=" +
-          kind +
-          "&after=" +
-          after +
-          "&limit=20",
+          "/events?" + new URLSearchParams({ kind, after: String(after), limit: "20", ...(snapshotId ? { snapshotId } : {}) }),
         { signal },
       ),
   });
@@ -63,6 +61,7 @@ export function RecordEventsPanel({
           key={item.watermark}
           item={item}
           blockId={blockId}
+          snapshotId={snapshotId}
           en={en}
         />
       ))}
@@ -98,10 +97,12 @@ export function RecordEventsPanel({
 function RecordEvent({
   item,
   blockId,
+  snapshotId,
   en,
 }: {
   item: any;
   blockId: string;
+  snapshotId?: string;
   en: boolean;
 }) {
   const event = item.event,
@@ -115,8 +116,7 @@ function RecordEvent({
     encodeURIComponent(blockId) +
     "/attachments/" +
     hash +
-    "?projectId=" +
-    encodeURIComponent(projectId());
+    "?" + new URLSearchParams({ projectId: projectId(), ...(snapshotId ? { snapshotId } : {}) });
   const body = JSON.stringify(
     data.update ??
       (event.kind === "extension"

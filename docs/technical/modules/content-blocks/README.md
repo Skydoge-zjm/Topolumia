@@ -22,7 +22,9 @@
 
 内容块的 payload 表达可编辑内容，representations 表达原文件或补充表示，sourceRefs 表达证据定位；三者不能互相覆盖替代。默认主表示影响展示，不代表可以删除其他表示。
 
-`experimentRecord` 仅用于实验节点，记录块拥有独立集合，提供 run、来源接收、曲线、准确数据、快照及跨材料引用。节点可只包含结果表格、图片或指标；只有添加记录块才启用工作台，多个块不隐式共享身份。累计记录与附件独立存储，payload 只保存来源与导入绑定；首版不提供共享集合。机制见[实验模块](../experiments-and-sources/README.md#内容块归属)。通用 chart 仍是明确显示未实现的占位，与实验记录曲线分别定义。
+`experimentRecord` 仅用于实验节点，记录块拥有独立集合，提供 run、来源接收、曲线、准确数据、快照及跨材料引用。节点可只包含结果表格、图片或指标；只有添加记录块才启用工作台，多个块不隐式共享身份。累计记录与附件独立存储，payload 只保存来源与导入绑定；首版不提供共享集合。机制见[实验模块](../experiments-and-sources/README.md#内容块归属)。
+
+通用 [ChartBlock](../../../../frontend/src/features/topology/details/ChartBlock.tsx) 按 dataBlockId 读取同一 owner 的内联表格，通过 config.x/config.y 指定列，未指定时使用首列和数值列。支持折线、柱状、散点和面积图，最多 8 个系列；分类横轴绘制有限行并提示截断。来源缺失、无内联数据或无数值列时明确反馈，不生成示例曲线。它与实验记录的过程曲线分别定义。
 
 研究笔记的默认正文采用 `role: body` 的 `richText` 块，由 [NoteBodyWorkspace](../../../../frontend/src/features/topology/details/NoteBodyWorkspace.tsx) 提供直接写作入口。正文与附加块共用版本和顺序；归档主正文不会把附加文字静默提升为正文。
 
@@ -30,6 +32,6 @@
 
 [节点组模块](../node-groups/README.md) 定义 `owner: ResearchObjectRef`，正文的校验、编辑、来源、版本、预览与导出共用一套能力。块只属于一个对象；把节点加入组不复制块，组正文也不自动汇总成员全文。
 
-共同归属需要贯穿路由、候选、查询、下载/导出目标和历史，不能只在编辑器增加 groupId 后继续由后端按 nodeId 查找。组材料使用现有类型与渲染器，不额外扩大图表等占位能力的交付范围。
+共同归属需要贯穿路由、候选、查询、下载/导出目标和历史，不能只在编辑器增加 groupId 后继续由后端按 nodeId 查找。组材料使用相同类型、渲染器和图表读取规则。
 
 修改方法见 [新增内容能力](../../../playbooks/add-content-block.md)；共享验证入口见 [测试指南](../../../playbooks/testing.md)。

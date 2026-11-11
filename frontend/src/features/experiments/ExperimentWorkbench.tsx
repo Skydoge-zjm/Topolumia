@@ -7,7 +7,8 @@ import { SelectMenu } from "@/shared/ui/SelectMenu";
 import { LoadingSkeleton } from "@/shared/ui/LoadingSkeleton";
 import type { ContentBlock } from "@/features/topology/details/ContentBlockRenderer";
 import { ExperimentDataWorkspace } from "./ExperimentDataWorkspace";
-import { ExperimentPlots, type RecordPlot } from "./ExperimentPlots";
+import { ExperimentPlots } from "./ExperimentPlots";
+import { useFilteredExperimentPlot } from "./useFilteredExperimentPlot";
 import { RecordEventsPanel } from "./RecordEventsPanel";
 import { RecordActionsMenu } from "./RecordSelectionActions";
 import { ChartControls } from "./ChartControls";
@@ -92,18 +93,16 @@ export function ExperimentWorkbench({ nodeId, block, en, candidateId }: { nodeId
   const runIds = useMemo(() => candidateId
     ? [...new Set<string>((block.payload?.runs ?? []).map((run: { runId?: string }) => run.runId).filter(Boolean))]
     : [...new Set((snapshotId ? pinned.data ?? [] : liveRuns).map((run) => run.id))], [candidateId, block.payload?.runs, snapshotId, pinned.data, liveRuns]);
-  const plot = useQuery<RecordPlot>({
-    gcTime: 0,
+  const { plot, metricKeys, omittedMetricCount } = useFilteredExperimentPlot({
     queryKey: ["experiment-record-plot", projectId(), nodeId, block.id, block.revision, candidateId, runIds, snapshotId ?? watermark],
+    readScope: [projectId(), nodeId, block.id, block.revision, candidateId, snapshotId],
     enabled: runIds.length > 0,
-    placeholderData: (previous) => previous,
-    queryFn: ({ signal }) => api<RecordPlot>("/api/research/experiments/plot", {
-      method: "POST", signal,
-      body: JSON.stringify(snapshotId
-        // A saved version is read through explicit selections so every run is pinned to it.
-        ? { blockId: block.id, selections: runIds.map((runId) => ({ nodeId, blockId: block.id, runId, snapshotId })) }
-        : { nodeId, blockId: block.id, blockRevision: block.revision, candidateId }),
-    }),
+    filter,
+    retainWhileUpdating: true,
+    // A saved version is read through explicit selections so every run is pinned to it.
+    input: snapshotId
+      ? { blockId: block.id, selections: runIds.map((runId) => ({ nodeId, blockId: block.id, runId, snapshotId })) }
+      : { nodeId, blockId: block.id, blockRevision: block.revision, candidateId },
   });
 
   const identity = (runId: string) => runKey({ nodeId, blockId: block.id, runId });
@@ -176,15 +175,15 @@ export function ExperimentWorkbench({ nodeId, block, en, candidateId }: { nodeId
           <nav className="segmented" aria-label={en ? "Record workspace" : "记录工作区"}>
             {tabs.map(([value, label]) => <button key={value} className={tab === value ? "is-active" : ""} aria-pressed={tab === value} onClick={() => { if (confirmUnsavedChanges()) setTab(value); }}>{label}</button>)}
           </nav>
-          {tab === "curves" && plot.data && <ChartControls prefs={prefs} onChange={setPrefs} filter={filter} onFilter={setFilter} metricCount={new Set(plot.data.series.map((line) => line.key)).size} en={en} />}
+          {tab === "curves" && metricKeys.length > 0 && <ChartControls prefs={prefs} onChange={setPrefs} filter={filter} onFilter={setFilter} metricCount={metricKeys.length} en={en} />}
         </div>
         <div hidden={tab !== "curves"}>
           {plot.isPending ? <LoadingSkeleton layout="cards" label={en ? "Loading curves…" : "正在读取曲线…"} />
             : plot.data && <ExperimentPlots plot={plot.data} en={en} colors={colors} hidden={hidden} onToggle={toggle} emphasis={emphasis} showLegend={false} smoothing={prefs.smoothing} logScale={prefs.logScale} columns={prefs.columns} filter={filter} />}
-          {plot.data && plot.data.omittedMetricCount > 0 && <p className="research-hint">{en ? `${plot.data.omittedMetricCount} more metrics are available in the data table.` : `另有 ${plot.data.omittedMetricCount} 项指标，可在数据表中查看。`}</p>}
+          {plot.data && omittedMetricCount > 0 && <p className="research-hint">{en ? `${omittedMetricCount} more metrics are available through the metric filter or data table.` : `另有 ${omittedMetricCount} 项指标，可筛选指标或在数据表中查看。`}</p>}
         </div>
         {tab === "data" && <ExperimentDataWorkspace key={snapshotId ?? "current"} nodeId={nodeId} blockId={block.id} snapshotId={snapshotId} latestWatermark={watermark} en={en} onLatest={() => setSnapshotId(undefined)} />}
-        {tab === "records" && <RecordEventsPanel blockId={block.id} en={en} />}
+        {tab === "records" && <RecordEventsPanel key={snapshotId ?? "current"} blockId={block.id} snapshotId={snapshotId} en={en} />}
       </>}
 
       {editor && overview.data && <RunEditor run={editor === "new" ? undefined : editor} en={en} revision={overview.data.revision} onClose={() => { setEditor(null); void overview.refetch(); }}

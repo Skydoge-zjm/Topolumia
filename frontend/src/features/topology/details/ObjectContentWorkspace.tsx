@@ -62,8 +62,9 @@ export function ObjectContentWorkspace({ owner, en, canEdit, allowAdd = true, co
     ids.splice(to, 0, ...ids.splice(from, 1)); void reorder(ids);
   };
   const jump = (id: string) => {
-    const index = materialBlocks.findIndex(block => block.id === id);
-    if (index >= 0 && Math.floor(index / PAGE_SIZE) !== currentPage && initialBlocks) setPage(Math.floor(index / PAGE_SIZE));
+    const targetPage = pages.findIndex(items => items.some(block => block.id === id));
+    if (targetPage < 0 || targetPage !== currentPage && (adding || editing)) return;
+    if (targetPage !== currentPage) setPage(targetPage);
     requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView?.({ block: "start", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
   };
   const complete = initialBlocks !== undefined || !directory.hasNextPage, loaded = initialBlocks === undefined ? !directory.isPending : true;
@@ -113,7 +114,7 @@ export function ObjectContentWorkspace({ owner, en, canEdit, allowAdd = true, co
                 onDragEnd={() => { setDragging(null); setDropTarget(null); }}
                 onDrop={event => { event.preventDefault(); dropOn(block.id); }}>
                 {sortable && <GripVertical size={13} className="block-outline-grip" aria-hidden="true" />}
-                <button type="button" onClick={() => jump(block.id)} title={block.title}><Icon size={13} aria-hidden="true" /><span>{block.title}</span></button>
+                <button type="button" disabled={busy && !visible.some(item => item.id === block.id)} onClick={() => jump(block.id)} title={block.title}><Icon size={13} aria-hidden="true" /><span>{block.title}</span></button>
               </li>
             ); })}
           </ol>
