@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -201,9 +202,9 @@ test("large archived records keep charts and raw-data rendering bounded", async 
     expect(requests[1].pointOffset).toBe(100);
     await expect(page.getByRole("columnheader")).toHaveCount(13);
     expect(errors).toEqual([]);
-    await mkdir("runtime/self-review", { recursive: true });
+    await mkdir(runtimeArtifact("self-review"), { recursive: true });
     await writeFile(
-      "runtime/self-review/experiment-browser-performance.json",
+      runtimeArtifact("self-review/experiment-browser-performance.json"),
       JSON.stringify(
         {
           runs: 80,
@@ -219,7 +220,7 @@ test("large archived records keep charts and raw-data rendering bounded", async 
       ),
     );
     await page.screenshot({
-      path: "runtime/self-review/experiment-performance-data.png",
+      path: runtimeArtifact("self-review/experiment-performance-data.png"),
       fullPage: true,
     });
   } finally {

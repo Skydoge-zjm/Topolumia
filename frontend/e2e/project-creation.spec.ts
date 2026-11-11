@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -53,7 +54,7 @@ test("project creation links an existing directory and shows the default workspa
       .fill("关联已有代码");
     await expect(page.getByRole("textbox", { name: "项目 ID" })).toHaveCount(0);
     await page.screenshot({
-      path: "runtime/self-review/project-create-desktop.png",
+      path: runtimeArtifact("self-review/project-create-desktop.png"),
       fullPage: true,
     });
     await page
@@ -79,7 +80,7 @@ test("project creation links an existing directory and shows the default workspa
       browser.getByRole("button", { name: "选择此目录", exact: true }),
     ).toBeEnabled();
     await browser.screenshot({
-      path: "runtime/self-review/project-directory-browser.png",
+      path: runtimeArtifact("self-review/project-directory-browser.png"),
     });
     await browser
       .getByRole("button", { name: "选择此目录", exact: true })
@@ -141,7 +142,7 @@ test("project creation links an existing directory and shows the default workspa
       ),
     ).toBe(true);
     await page.screenshot({
-      path: "runtime/self-review/project-create-mobile.png",
+      path: runtimeArtifact("self-review/project-create-mobile.png"),
       fullPage: true,
     });
     expect(errors).toEqual([]);

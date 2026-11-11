@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { fixture } from "../../dist/tests/research/interface/helpers.js";
@@ -61,7 +62,7 @@ test("reading results persist after review; node deletion protects and reloads r
     await expect(page.getByRole("cell",{name:"Qualitative comparison",exact:true})).toBeVisible();
     await expect.poll(()=>page.getByRole("img",{name:"Synthetic research framework",exact:true}).evaluate(image=>(image as HTMLImageElement).naturalWidth)).toBe(420);
     expect(f.runtime.researchCommands.nodes.blocks(identity.nodes[0].nodeId).filter(block=>block.type==="richText").map(block => block.payload.body)).toEqual([firstText, secondText]);
-    await page.screenshot({ path: path.resolve("runtime/agent-interface-evaluation/accepted-reading-node.png"), fullPage: true });
+    await page.screenshot({ path: runtimeArtifact("agent-interface-evaluation/accepted-reading-node.png"), fullPage: true });
 
     // The node changes after the page was read: protect it, then reload and delete via the actual dialog.
     const nodeId=identity.nodes[0].nodeId;

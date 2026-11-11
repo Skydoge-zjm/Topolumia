@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -165,7 +166,7 @@ test("message navigation previews and jumps to repeated questions without follow
   await page.getByRole("heading", { name: "Message navigation audit" }).hover();
   await second.hover();
   await expect(preview).toBeVisible();
-  await page.screenshot({ path: "runtime/tools-preview/agent-message-navigation-verified.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("tools-preview/agent-message-navigation-verified.png"), fullPage: true });
 });
 
 test("Claude continuation after restart keeps one session, its history and its native binding", async ({ page }) => {

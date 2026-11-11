@@ -93,7 +93,7 @@ node scripts/diagnostics/benchmark-experiment-performance.mjs runtime/experiment
 
 区分类型检查、构建、逻辑测试、浏览器行为与真实科研质量。后端[检查配置](../../tsconfig.backend.check.json)以 strict 覆盖全部 src/**/*.ts，包含 noImplicitAny、noImplicitThis 与严格空值检查，不按目录排除生产模块。build:backend 先执行该检查，再用[转译配置](../../tsconfig.backend.json)生成源码、测试、fixture 和脚本产物；测试与脚本本身不属于生产源码 strict 的验收范围。CI 同样执行全量后端 typecheck。
 
-通过的定向检查无需无理由反复运行。验证记录写范围与结果，不把过往通过数固化进长期文档；截图和日志放临时输出位置，完成审阅后清理。
+通过的定向检查无需无理由反复运行。验证记录写范围与结果，不把过往通过数固化进长期文档。浏览器测试的手动截图、性能记录和生成材料通过[产物路径入口](../../frontend/e2e/support/runtime-artifacts.ts)写入仓库根 runtime，路径不依赖启动目录；完成审阅后清理。
 
 
 ## 实验持续接收验证

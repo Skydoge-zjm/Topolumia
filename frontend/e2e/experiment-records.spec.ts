@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -420,9 +421,9 @@ test("notes, multi-run records, versioned material links and temporary compariso
     await expect(dialog.locator('figure[data-series-count="28"]')).toHaveCount(
       4,
     );
-    await mkdir("runtime/self-review", { recursive: true });
+    await mkdir(runtimeArtifact("self-review"), { recursive: true });
     await page.screenshot({
-      path: "runtime/self-review/experiment-record-comparison.png",
+      path: runtimeArtifact("self-review/experiment-record-comparison.png"),
       fullPage: true,
     });
     await dialog
@@ -435,7 +436,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
       app.url + "/#/topology/nodes/" + encodeURIComponent(experiment.id),
     );
     await page.screenshot({
-      path: "runtime/self-review/experiment-record-desktop.png",
+      path: runtimeArtifact("self-review/experiment-record-desktop.png"),
       fullPage: true,
     });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -449,7 +450,7 @@ test("notes, multi-run records, versioned material links and temporary compariso
       ),
     ).toBe(true);
     await page.screenshot({
-      path: "runtime/self-review/experiment-record-mobile.png",
+      path: runtimeArtifact("self-review/experiment-record-mobile.png"),
       fullPage: true,
     });
     page.once("dialog", dialog => dialog.accept());

@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -57,7 +58,7 @@ test("researchers write independent minutes, multiline participants and revision
   await page.getByRole("option", { name: /^v1/ }).click();
   await expect(page.locator("main")).toContainText("复现需要增加三个随机种子。");
   await expect(page.getByRole("button", { name: "编辑记录", exact: true })).toHaveCount(0);
-  await page.screenshot({ path: "runtime/research-record-detail.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("research-record-detail.png"), fullPage: true });
 });
 test("groups collapse to a group node, expand, and open editable scientific details", async ({ page }) => {
   await page.goto(app.url + "/#/topology");
@@ -98,7 +99,7 @@ test("groups collapse to a group node, expand, and open editable scientific deta
   await page.getByRole("button", { name: "曲线", exact: true }).click();
   await page.getByRole("button", { name: "运行与材料", exact: true }).click();
   await expect(page.locator(".experiment-run-item").filter({ hasText: "Training run 1" })).toBeVisible();
-  await page.screenshot({ path: "runtime/research-experiment-results.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("research-experiment-results.png"), fullPage: true });
 });
 test("recurring monthly activities create distinct planned occurrences without generated minutes", async ({ page }) => {
   await page.goto(app.url + "/#/records");

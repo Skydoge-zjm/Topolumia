@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -198,9 +199,9 @@ test("optional record blocks update an existing chart and preserve fixed data sn
     await expect(card.getByRole("button", { name: "Discovered retry", exact: true })).toBeVisible();
     await card.getByRole("button", { name: "固定当前版本", exact: true }).click();
     await expect(card.getByRole("button", { name: "读取最新数据", exact: true })).toBeVisible();
-    await card.screenshot({ path: "runtime/self-review/managed-record-workspace.png" });
+    await card.screenshot({ path: runtimeArtifact("self-review/managed-record-workspace.png") });
     await page.setViewportSize({ width: 390, height: 844 });
-    await card.screenshot({ path: "runtime/self-review/managed-record-mobile.png" });
+    await card.screenshot({ path: runtimeArtifact("self-review/managed-record-mobile.png") });
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth + 1,

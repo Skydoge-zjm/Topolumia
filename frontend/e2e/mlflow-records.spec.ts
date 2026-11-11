@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -110,7 +111,7 @@ test("imports MLflow records through the browser and reads durable curves and ex
     const dialog = page.getByRole("dialog", { name: "从 MLflow 导入", exact: true });
     await dialog.getByRole("checkbox", { name: runLabel, exact: true }).check();
     await expect(dialog.getByRole("checkbox", { name: "不应导入的运行", exact: true })).not.toBeChecked();
-    const screenshots = path.resolve("runtime/self-review/backend-types");
+    const screenshots = runtimeArtifact("self-review/backend-types");
     await mkdir(screenshots, { recursive: true });
     await page.screenshot({ path: path.join(screenshots, "mlflow-import-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });

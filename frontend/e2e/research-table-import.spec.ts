@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -81,7 +82,7 @@ test("imports real TeX and XLSX table files and renders both in a literature nod
     await expect(xlsxPreview.getByRole("cell", { name: "SR3", exact: true })).toBeVisible();
     await expect(xlsxPreview.getByRole("cell", { name: "26.4", exact: true })).toBeVisible();
     await expect(xlsxPreview.getByText("SR3 Table 2", { exact: true })).toBeVisible();
-    await page.screenshot({ path: path.resolve("runtime/research-node-tex-xlsx-preview.png"), fullPage: true });
+    await page.screenshot({ path: runtimeArtifact("research-node-tex-xlsx-preview.png"), fullPage: true });
   } finally {
     for (const item of app.runtimes.values()) { await item.agentSessionGateway.closeAll(); await item.toolEnvironment.catalog.close(); await item.toolEnvironment.research.close(); }
     await app.sshEnvironments.close(); await app.sshConnections.close(); app.server.closeAllConnections();
@@ -93,7 +94,7 @@ test("imports real TeX and XLSX table files and renders both in a literature nod
 test("merged and styled TeX/XLSX retain their real layout, bold text, colors and numeric display", async ({ page }) => {
   test.setTimeout(90_000);
   const root = await mkdtemp(path.join(os.tmpdir(), "topolumia-styled-table-browser-"));
-  const artifacts = path.resolve("runtime/research-table-preview-fixtures");
+  const artifacts = runtimeArtifact("research-table-preview-fixtures");
   await mkdir(artifacts, { recursive: true });
   const texPath = path.join(artifacts, "sr3-styled.tex"), xlsxPath = path.join(artifacts, "sr3-styled.xlsx");
   await writeFile(texPath, styledTexFixture(), "utf8");
@@ -156,7 +157,7 @@ test("merged and styled TeX/XLSX retain their real layout, bold text, colors and
     await expect(xlsx.locator('[data-cell="E5"]')).toHaveText("0.762");
     await expect(xlsx.getByRole("table")).toHaveCount(1);
     await xlsx.getByRole("tab", { name: "渲染预览", exact: true }).click();
-    await page.screenshot({ path: path.resolve("runtime/research-node-styled-tables.png"), fullPage: true });
+    await page.screenshot({ path: runtimeArtifact("research-node-styled-tables.png"), fullPage: true });
   } finally {
     for (const item of app.runtimes.values()) { await item.agentSessionGateway.closeAll(); await item.toolEnvironment.catalog.close(); await item.toolEnvironment.research.close(); }
     await app.sshEnvironments.close(); await app.sshConnections.close(); app.server.closeAllConnections();

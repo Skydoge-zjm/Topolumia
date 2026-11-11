@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -98,7 +99,7 @@ test("composer switches between stop and queue, persists pending messages and sh
   const queue = page.getByRole("region", { name: "待发送消息" });
   await expect(queue).toContainText("2 条待发送");
   await expect(page.locator(".message.user")).toHaveCount(1);
-  await page.screenshot({ path: "runtime/tools-preview/agent-composer-queue-verified.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("tools-preview/agent-composer-queue-verified.png"), fullPage: true });
   await page.reload();
   await expect(queue).toContainText("2 条待发送");
   await page.getByRole("button", { name: "允许本次", exact: true }).click();
@@ -174,7 +175,7 @@ test("motion follows real work, keeps a single presence indicator and does not r
   await expect(page.locator(".conversation-body")).toHaveAttribute("data-motion-enabled", "false");
   await page.getByRole("button", { name: "关闭研究上下文" }).click();
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.screenshot({ path: "runtime/tools-preview/agent-motion-production-verified.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("tools-preview/agent-motion-production-verified.png"), fullPage: true });
 });
 
 test("research workspace navigation and topology controls work", async ({ page }) => {
