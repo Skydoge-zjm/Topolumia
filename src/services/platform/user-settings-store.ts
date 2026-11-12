@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { AppConfig } from "../../config.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { AppError } from "../../lib/errors.js";
 import { isPathInside } from "../../adapters/sources/filesystem-adapter.js";
@@ -6,29 +7,29 @@ import { isPathInside } from "../../adapters/sources/filesystem-adapter.js";
 export const USER_SETTINGS_SCHEMA_VERSION = "workbench-user-settings.v1";
 
 const MODEL_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._:/@+~-]{0,159}$/u;
-const SAFE_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N} ._:/@+~\-]{0,159}$/u;
+const SAFE_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N} ._:/@+~-]{0,159}$/u;
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 const APPROVAL_POLICIES = ["never", "on-request"];
 
-function clone(value) {
-  return value === undefined ? undefined : structuredClone(value);
+function clone<T>(value: T): T {
+  return structuredClone(value);
 }
 
-function isObject(value) {
+function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function deepMerge(base, override) {
+function deepMerge<T>(base: T, override: unknown): T {
   if (!isObject(override)) return clone(base);
-  const result = isObject(base) ? clone(base) : {};
+  const result: Record<string, unknown> = isObject(base) ? clone(base) : {};
   for (const [key, value] of Object.entries(override)) {
     result[key] = isObject(value) ? deepMerge(result[key], value) : clone(value);
   }
-  return result;
+  return result as T;
 }
 
-function number(value, fallback, min, max, field, integer = true) {
+function number(value: unknown, fallback: number, min: number, max: number, field: string, integer = true) {
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed) || (integer && !Number.isInteger(parsed)) || parsed < min || parsed > max) {
     throw new AppError("USER_SETTINGS_INVALID", `${field} 必须是 ${min} 到 ${max} 之间的${integer ? "整数" : "数字"}。`, { status: 422, detail: { field, value, min, max } });
@@ -36,7 +37,7 @@ function number(value, fallback, min, max, field, integer = true) {
   return parsed;
 }
 
-function text(value, fallback, field, { max = 240, pattern = null, allowEmpty = false } = {}) {
+function text(value: unknown, fallback: unknown, field: string, { max = 240, pattern = null, allowEmpty = false }: { max?: number; pattern?: RegExp | null; allowEmpty?: boolean } = {}) {
   const result = String(value ?? fallback ?? "").trim();
   if (!allowEmpty && !result) throw new AppError("USER_SETTINGS_INVALID", `${field} 不能为空。`, { status: 422, detail: { field } });
   if (result.length > max || (pattern && result && !pattern.test(result))) {
@@ -45,19 +46,19 @@ function text(value, fallback, field, { max = 240, pattern = null, allowEmpty = 
   return result;
 }
 
-function bool(value, fallback) {
+function bool(value: unknown, fallback: boolean) {
   if (value === undefined) return Boolean(fallback);
   if (typeof value !== "boolean") throw new AppError("USER_SETTINGS_INVALID", "布尔设置值无效。", { status: 422 });
   return value;
 }
 
-function enumValue(value, fallback, allowed, field) {
+function enumValue(value: unknown, fallback: string, allowed: readonly string[], field: string): string {
   const result = value ?? fallback;
-  if (!allowed.includes(result)) throw new AppError("USER_SETTINGS_INVALID", `${field} 不在允许范围内。`, { status: 422, detail: { field, allowed } });
+  if (typeof result !== "string" || !allowed.includes(result)) throw new AppError("USER_SETTINGS_INVALID", `${field} 不在允许范围内。`, { status: 422, detail: { field, allowed } });
   return result;
 }
 
-function endpoint(value, fallback, field) {
+function endpoint(value: unknown, fallback: string, field: string) {
   const result = text(value, fallback, field, { max: 500, allowEmpty: true });
   if (!result) return "";
   let parsed;
@@ -70,7 +71,7 @@ function endpoint(value, fallback, field) {
   return parsed.toString().replace(/\/$/, "");
 }
 
-function relativePath(value, fallback, config, field, { allowEmpty = false } = {}) {
+function relativePath(value: unknown, fallback: unknown, config: AppConfig, field: string, { allowEmpty = false } = {}) {
   const result = text(value, fallback, field, { max: 500, allowEmpty });
   if (!result) return "";
   const resolved = path.resolve(config.project.root, result);
@@ -80,7 +81,7 @@ function relativePath(value, fallback, config, field, { allowEmpty = false } = {
   return path.relative(config.project.root, resolved).split(path.sep).join("/") || ".";
 }
 
-function relativeRoots(values, fallback, config) {
+function relativeRoots(values: unknown, fallback: string[], config: AppConfig) {
   if (values === undefined) values = fallback;
   if (!Array.isArray(values) || values.length < 1 || values.length > 20) {
     throw new AppError("USER_SETTINGS_INVALID", "filesystem roots 必须包含 1 到 20 个目录。", { status: 422 });
@@ -88,19 +89,20 @@ function relativeRoots(values, fallback, config) {
   return [...new Set(values.map((value, index) => relativePath(value, null, config, `sources.filesystem.roots[${index}]`)))];
 }
 
-function profileDefaults(config) {
+function profileDefaults(config: AppConfig) {
   const profiles = config.agentSessions?.profiles ?? [];
-  const profileModels = {};
+  const profileModels: Record<string, string> = {};
   for (const profile of profiles) if (profile.model) profileModels[profile.id] = profile.model;
   const preferred = profiles.find((profile) => profile.id === "codex-acp") ?? profiles.find((profile) => profile.provider === "codex") ?? profiles.find((profile) => profile.source !== "bundled") ?? profiles[0];
   return { profileIds: profiles.map((profile) => profile.id), profileModels, defaultProfileId: preferred?.id ?? "" };
 }
 
-export function defaultUserSettings(config) {
+export function defaultUserSettings(config: AppConfig) {
   const profile = profileDefaults(config);
-  const relativeRoot = (root) => path.relative(config.project.root, root).split(path.sep).join("/") || ".";
+  const relativeRoot = (root: string) => path.relative(config.project.root, root).split(path.sep).join("/") || ".";
   return {
     schemaVersion: USER_SETTINGS_SCHEMA_VERSION,
+    workspaceRevision: config.project.workspace?.revision ?? 0,
     interface: {
       locale: "zh",
       topologyLayout: "elk",
@@ -176,54 +178,34 @@ export function defaultUserSettings(config) {
         entity: config.wandb?.entity ?? "",
         project: config.wandb?.project ?? "",
         timeoutSeconds: Math.round((config.wandb?.timeoutMs ?? 4_000) / 1_000),
-        pageSize: config.wandb?.pageSize ?? 100,
-        maxRuns: config.wandb?.maxRuns ?? 300,
       },
       tensorboard: {
         pythonCommand: config.tensorboard?.pythonCommand ?? "python",
         logdir: config.tensorboard?.logdir ? relativePath(config.tensorboard.logdir, "", config, "sources.tensorboard.logdir", { allowEmpty: true }) : "",
-        parserTimeoutSeconds: Math.round((config.tensorboard?.parserTimeoutMs ?? 10_000) / 1_000),
-        maxDepth: config.tensorboard?.maxDepth ?? 4,
-        maxRuns: config.tensorboard?.maxRuns ?? 300,
       },
     },
-    researchEnvironment: { kind: "default", prefix: "", pythonCommand: "python", ...config.researchEnvironment },
-    researchLocation: "local",
-    remoteEnvironment: null,
-    tools: Object.fromEntries(Object.entries({ conda: "conda", uv: "uv", nvidia: "nvidia-smi", cuda: "nvcc" }).map(([id, command]) => [id, { command: config.toolCommands?.[id] ?? command }])),
+    researchEnvironment: { ...config.researchEnvironment },
+    researchLocation: config.project.workspace?.kind === "ssh" ? "ssh" : "local",
+    remoteEnvironment: null as RemoteEnvironment | null,
+    tools: Object.fromEntries(Object.entries({ conda: "conda", uv: "uv", nvidia: "nvidia-smi", cuda: "nvcc" }).map(([id, command]) => [id, { command: config.toolCommands?.[id as keyof AppConfig["toolCommands"]] ?? command }])),
     execution: {
       dockerEnabled: config.docker?.executionEnabled ?? false,
       dockerHealthTimeoutSeconds: Math.round((config.docker?.healthTimeoutMs ?? 5_000) / 1_000),
       dockerRunTimeoutSeconds: Math.round((config.docker?.runTimeoutMs ?? 20_000) / 1_000),
     },
-    experimentGateway: {
-      listTtlSeconds: Math.round((config.experimentGateway?.listTtlMs ?? 15_000) / 1_000),
-      detailTtlSeconds: Math.round((config.experimentGateway?.detailTtlMs ?? 30_000) / 1_000),
-      seriesTtlSeconds: Math.round((config.experimentGateway?.seriesTtlMs ?? 30_000) / 1_000),
-      contextTtlSeconds: Math.round((config.experimentGateway?.contextTtlMs ?? 30_000) / 1_000),
-      descriptorTtlSeconds: Math.round((config.experimentGateway?.descriptorTtlMs ?? 30_000) / 1_000),
-      maxListRuns: config.experimentGateway?.maxListRuns ?? 300,
-      maxCacheEntries: config.experimentGateway?.maxCacheEntries ?? 256,
-      maxIngestionRuns: config.experimentGateway?.maxIngestionRuns ?? 32,
-      maxIngestionEventsPerRun: config.experimentGateway?.maxIngestionEventsPerRun ?? 300_000,
-      maxIngestionBatchEvents: config.experimentGateway?.maxIngestionBatchEvents ?? 300_000,
-    },
-    simulation: {
-      totalSteps: 50_000,
-      logEvery: 100,
-      batchSteps: 500,
-      seed: 42,
-      group: "G1",
-      runId: "sr3-g1-seed42",
-      conditioning: "degradation_encoder",
-      noiseSchedule: "baseline",
-      dataset: "DIV2K-valid-x4",
-    },
+
   };
 }
 
-export function normalizeUserSettings(input, config, base = defaultUserSettings(config)) {
+export function normalizeUserSettings(input: unknown, config: AppConfig, base = defaultUserSettings(config)) {
   const merged = deepMerge(base, input ?? {});
+  const workspaceRevision = config.project.workspace?.revision ?? 0;
+  if ((merged.workspaceRevision ?? 0) !== workspaceRevision) {
+    merged.researchLocation = config.project.workspace?.kind === "ssh" ? "ssh" : "local";
+    merged.remoteEnvironment = null;
+    merged.researchEnvironment = { ...config.researchEnvironment };
+    merged.sources.filesystem.roots = ["."];
+  }
   const profiles = profileDefaults(config);
   const result = defaultUserSettings(config);
   result.interface = {
@@ -233,7 +215,7 @@ export function normalizeUserSettings(input, config, base = defaultUserSettings(
   };
   result.project.name = text(merged.project?.name, result.project.name, "project.name", { max: 120, pattern: SAFE_NAME_PATTERN });
   result.agent = {
-    defaultProfileId: enumValue(merged.agent?.defaultProfileId, profiles.defaultProfileId, profiles.profileIds, "agent.defaultProfileId"),
+    defaultProfileId: enumValue(merged.agent?.defaultProfileId, profiles.defaultProfileId, profiles.profileIds.length ? profiles.profileIds : [""], "agent.defaultProfileId"),
     profileModels: {},
     reasoningEffort: enumValue(merged.agent?.reasoningEffort, result.agent.reasoningEffort, EFFORTS, "agent.reasoningEffort"),
     approvalPolicy: enumValue(merged.agent?.approvalPolicy, result.agent.approvalPolicy, APPROVAL_POLICIES, "agent.approvalPolicy"),
@@ -280,7 +262,7 @@ export function normalizeUserSettings(input, config, base = defaultUserSettings(
     timeoutSeconds: number(merged.git?.timeoutSeconds, result.git.timeoutSeconds, 1, 120, "git.timeoutSeconds"),
     maxOutputMb: number(merged.git?.maxOutputMb, result.git.maxOutputMb, 1, 64, "git.maxOutputMb"),
   };
-  const fs = merged.sources?.filesystem ?? {};
+  const fs = merged.sources.filesystem;
   result.sources.filesystem = {
     roots: relativeRoots(fs.roots, result.sources.filesystem.roots, config),
     allowedExtensions: Array.isArray(fs.allowedExtensions) ? [...new Set(fs.allowedExtensions.map((value, index) => text(value, null, `sources.filesystem.allowedExtensions[${index}]`, { max: 12, pattern: /^\.[a-z0-9]{1,10}$/i })))] : result.sources.filesystem.allowedExtensions,
@@ -304,15 +286,10 @@ export function normalizeUserSettings(input, config, base = defaultUserSettings(
     entity: text(merged.sources?.wandb?.entity, result.sources.wandb.entity, "sources.wandb.entity", { max: 120, pattern: SAFE_NAME_PATTERN }),
     project: text(merged.sources?.wandb?.project, result.sources.wandb.project, "sources.wandb.project", { max: 160, pattern: SAFE_NAME_PATTERN }),
     timeoutSeconds: number(merged.sources?.wandb?.timeoutSeconds, result.sources.wandb.timeoutSeconds, 1, 120, "sources.wandb.timeoutSeconds"),
-    pageSize: number(merged.sources?.wandb?.pageSize, result.sources.wandb.pageSize, 1, 500, "sources.wandb.pageSize"),
-    maxRuns: number(merged.sources?.wandb?.maxRuns, result.sources.wandb.maxRuns, 1, 2_000, "sources.wandb.maxRuns"),
   };
   result.sources.tensorboard = {
     pythonCommand: text(merged.sources?.tensorboard?.pythonCommand, result.sources.tensorboard.pythonCommand, "sources.tensorboard.pythonCommand", { max: 500 }),
     logdir: relativePath(merged.sources?.tensorboard?.logdir, result.sources.tensorboard.logdir, config, "sources.tensorboard.logdir", { allowEmpty: true }),
-    parserTimeoutSeconds: number(merged.sources?.tensorboard?.parserTimeoutSeconds, result.sources.tensorboard.parserTimeoutSeconds, 1, 300, "sources.tensorboard.parserTimeoutSeconds"),
-    maxDepth: number(merged.sources?.tensorboard?.maxDepth, result.sources.tensorboard.maxDepth, 1, 20, "sources.tensorboard.maxDepth"),
-    maxRuns: number(merged.sources?.tensorboard?.maxRuns, result.sources.tensorboard.maxRuns, 1, 2_000, "sources.tensorboard.maxRuns"),
   };
   result.execution = {
     dockerEnabled: bool(merged.execution?.dockerEnabled, result.execution.dockerEnabled),
@@ -330,51 +307,23 @@ export function normalizeUserSettings(input, config, base = defaultUserSettings(
   result.researchLocation = enumValue(merged.researchLocation, "local", ["local", "ssh"], "researchLocation");
   if (merged.remoteEnvironment !== null && merged.remoteEnvironment !== undefined) {
     const remote = merged.remoteEnvironment;
-    result.remoteEnvironment = Object.fromEntries(["ownerId", "connectionId", "environmentId", "name", "source", "prefix", "pythonCommand", "hostLabel"].map(key => [key, text(remote[key], "", `remoteEnvironment.${key}`, { max: 600 })]));
+    result.remoteEnvironment = { ownerId: "", connectionId: "", environmentId: "", name: "", source: "", prefix: "", pythonCommand: "", hostLabel: "", revision: 1, ...Object.fromEntries(["ownerId", "connectionId", "environmentId", "name", "source", "prefix", "pythonCommand", "hostLabel"].map(key => [key, text(remote[key as keyof RemoteEnvironment], "", `remoteEnvironment.${key}`, { max: 600 })])) };
     result.remoteEnvironment.revision = number(remote.revision, 1, 1, 1000000, "remoteEnvironment.revision");
   }
-  if (result.researchLocation === "ssh" && !result.remoteEnvironment) throw new AppError("USER_SETTINGS_INVALID", "远程环境引用不完整。", { status: 422 });
+  if (result.researchLocation === "ssh" && !result.remoteEnvironment && config.project.workspace?.kind !== "ssh") throw new AppError("USER_SETTINGS_INVALID", "远程环境引用不完整。", { status: 422 });
   if (result.researchEnvironment.kind === "conda" && !path.isAbsolute(result.researchEnvironment.prefix)) {
     throw new AppError("USER_SETTINGS_INVALID", "Conda 环境必须使用完整目录路径。", { status: 422 });
   }
-  const gateway = merged.experimentGateway ?? {};
-  result.experimentGateway = {
-    listTtlSeconds: number(gateway.listTtlSeconds, result.experimentGateway.listTtlSeconds, 1, 86_400, "experimentGateway.listTtlSeconds"),
-    detailTtlSeconds: number(gateway.detailTtlSeconds, result.experimentGateway.detailTtlSeconds, 1, 86_400, "experimentGateway.detailTtlSeconds"),
-    seriesTtlSeconds: number(gateway.seriesTtlSeconds, result.experimentGateway.seriesTtlSeconds, 1, 86_400, "experimentGateway.seriesTtlSeconds"),
-    contextTtlSeconds: number(gateway.contextTtlSeconds, result.experimentGateway.contextTtlSeconds, 1, 86_400, "experimentGateway.contextTtlSeconds"),
-    descriptorTtlSeconds: number(gateway.descriptorTtlSeconds, result.experimentGateway.descriptorTtlSeconds, 1, 86_400, "experimentGateway.descriptorTtlSeconds"),
-    maxListRuns: number(gateway.maxListRuns, result.experimentGateway.maxListRuns, 1, 2_000, "experimentGateway.maxListRuns"),
-    maxCacheEntries: number(gateway.maxCacheEntries, result.experimentGateway.maxCacheEntries, 16, 5_000, "experimentGateway.maxCacheEntries"),
-    maxIngestionRuns: number(gateway.maxIngestionRuns, result.experimentGateway.maxIngestionRuns, 1, 200, "experimentGateway.maxIngestionRuns"),
-    maxIngestionEventsPerRun: number(gateway.maxIngestionEventsPerRun, result.experimentGateway.maxIngestionEventsPerRun, 1_000, 1_000_000, "experimentGateway.maxIngestionEventsPerRun"),
-    maxIngestionBatchEvents: number(gateway.maxIngestionBatchEvents, result.experimentGateway.maxIngestionBatchEvents, 1_000, 1_000_000, "experimentGateway.maxIngestionBatchEvents"),
-  };
-  const simulation = merged.simulation ?? {};
-  result.simulation = {
-    totalSteps: number(simulation.totalSteps, result.simulation.totalSteps, 10, 100_000, "simulation.totalSteps"),
-    logEvery: number(simulation.logEvery, result.simulation.logEvery, 1, 100_000, "simulation.logEvery"),
-    batchSteps: number(simulation.batchSteps, result.simulation.batchSteps, 1, 10_000, "simulation.batchSteps"),
-    seed: number(simulation.seed, result.simulation.seed, 0, 1_000_000_000, "simulation.seed"),
-    group: text(simulation.group, result.simulation.group, "simulation.group", { max: 80, pattern: SAFE_NAME_PATTERN }),
-    runId: text(simulation.runId, result.simulation.runId, "simulation.runId", { max: 120, pattern: /^[A-Za-z0-9_-]+$/ }),
-    conditioning: text(simulation.conditioning, result.simulation.conditioning, "simulation.conditioning", { max: 120, pattern: SAFE_NAME_PATTERN }),
-    noiseSchedule: text(simulation.noiseSchedule, result.simulation.noiseSchedule, "simulation.noiseSchedule", { max: 120, pattern: SAFE_NAME_PATTERN }),
-    dataset: text(simulation.dataset, result.simulation.dataset, "simulation.dataset", { max: 160, pattern: SAFE_NAME_PATTERN }),
-  };
   if (result.sourceRefresh.freshForSeconds > result.sourceRefresh.intervalSeconds) {
     throw new AppError("USER_SETTINGS_INVALID", "来源 freshness window 不能大于自动检查间隔。", { status: 422 });
-  }
-  if (result.simulation.logEvery > result.simulation.totalSteps) {
-    throw new AppError("USER_SETTINGS_INVALID", "simulation.logEvery 不能大于 totalSteps。", { status: 422 });
   }
   result.schemaVersion = USER_SETTINGS_SCHEMA_VERSION;
   return result;
 }
 
-export function applyUserSettings(config, settings) {
+export function applyUserSettings(config: AppConfig, settings: UserSettings) {
   config.researchEnvironment = { ...settings.researchEnvironment };
-  config.toolCommands = Object.fromEntries(Object.entries(settings.tools).map(([id, tool]) => [id, tool.command]));
+  for (const id of ["conda", "uv", "nvidia", "cuda"] as const) config.toolCommands[id] = settings.tools[id].command;
   config.project.name = settings.project.name;
   config.sourceRefresh.enabled = settings.sourceRefresh.enabled;
   config.sourceRefresh.intervalMs = settings.sourceRefresh.intervalSeconds * 1_000;
@@ -402,13 +351,8 @@ export function applyUserSettings(config, settings) {
   config.wandb.entity = settings.sources.wandb.entity;
   config.wandb.project = settings.sources.wandb.project;
   config.wandb.timeoutMs = settings.sources.wandb.timeoutSeconds * 1_000;
-  config.wandb.pageSize = settings.sources.wandb.pageSize;
-  config.wandb.maxRuns = settings.sources.wandb.maxRuns;
   config.tensorboard.logdir = settings.sources.tensorboard.logdir ? path.resolve(config.project.root, settings.sources.tensorboard.logdir) : "";
   config.tensorboard.pythonCommand = settings.sources.tensorboard.pythonCommand;
-  config.tensorboard.parserTimeoutMs = settings.sources.tensorboard.parserTimeoutSeconds * 1_000;
-  config.tensorboard.maxDepth = settings.sources.tensorboard.maxDepth;
-  config.tensorboard.maxRuns = settings.sources.tensorboard.maxRuns;
   config.curator.enabled = settings.curator.enabled;
   config.curator.model = settings.curator.model;
   config.curator.reasoningEffort = settings.curator.reasoningEffort;
@@ -428,28 +372,15 @@ export function applyUserSettings(config, settings) {
   config.agentSessions.profiles = config.agentSessions.profiles.map((profile) => ({
     ...profile,
     model: settings.agent.profileModels[profile.id] || profile.model,
-    reasoningEffort: profile.driver === "opencode-server" ? undefined : settings.agent.reasoningEffort,
+    reasoningEffort: profile.provider === "opencode" ? undefined : settings.agent.reasoningEffort,
     ...(["codex", "opencode", "claude"].includes(profile.provider) ? { approvalPolicy: settings.agent.approvalPolicy } : {}),
     ...(profile.provider === "codex" ? { sandbox: settings.agent.sandbox } : {}),
     ...(profile.provider === "claude" ? { permissionMode: settings.agent.approvalPolicy === "never" ? "dontAsk" : "default" } : {}),
   }));
-  config.experimentGateway = {
-    ...config.experimentGateway,
-    listTtlMs: settings.experimentGateway.listTtlSeconds * 1_000,
-    detailTtlMs: settings.experimentGateway.detailTtlSeconds * 1_000,
-    seriesTtlMs: settings.experimentGateway.seriesTtlSeconds * 1_000,
-    contextTtlMs: settings.experimentGateway.contextTtlSeconds * 1_000,
-    descriptorTtlMs: settings.experimentGateway.descriptorTtlSeconds * 1_000,
-    maxListRuns: settings.experimentGateway.maxListRuns,
-    maxCacheEntries: settings.experimentGateway.maxCacheEntries,
-    maxIngestionRuns: settings.experimentGateway.maxIngestionRuns,
-    maxIngestionEventsPerRun: settings.experimentGateway.maxIngestionEventsPerRun,
-    maxIngestionBatchEvents: settings.experimentGateway.maxIngestionBatchEvents,
-  };
   return config;
 }
 
-export function publicSettingsSchema(config) {
+export function publicSettingsSchema(config: AppConfig) {
   const profiles = (config.agentSessions?.profiles ?? []).map((profile) => ({ id: profile.id, label: profile.label, provider: profile.provider, driver: profile.driver ?? "acp-stdio" }));
   return {
     schemaVersion: USER_SETTINGS_SCHEMA_VERSION,
@@ -472,8 +403,6 @@ export function publicSettingsSchema(config) {
       sources: ["filesystem.*", "mlflow.*", "wandb.*", "tensorboard.*"],
       tools: ["conda.command", "uv.command", "nvidia.command", "cuda.command"],
       execution: ["dockerEnabled", "dockerHealthTimeoutSeconds", "dockerRunTimeoutSeconds"],
-      experimentGateway: ["*"],
-      simulation: ["*"],
     },
     locked: [
       { key: "deployment.listen", reason: "服务端监听地址和端口由启动环境管理。" },
@@ -486,11 +415,20 @@ export function publicSettingsSchema(config) {
   };
 }
 
+export type RemoteEnvironment = { ownerId: string; connectionId: string; environmentId: string; name: string; source: string; prefix: string; pythonCommand: string; hostLabel: string; revision: number };
+export type UserSettings = ReturnType<typeof defaultUserSettings>;
 export class UserSettingsStore {
-  constructor({ filePath, config }) {
+  filePath: string;
+  config: AppConfig;
+  settings: UserSettings;
+  source = "defaults";
+  updatedAt: string | null = null;
+  lastError: { code: string; message: string } | null = null;
+  writeChain = Promise.resolve();
+  constructor({ filePath, config }: { filePath: string; config: AppConfig }) {
     this.filePath = filePath;
     this.config = config;
-    this.settings = null;
+    this.settings = defaultUserSettings(config);
     this.source = "defaults";
     this.updatedAt = null;
     this.lastError = null;
@@ -501,12 +439,13 @@ export class UserSettingsStore {
     const defaults = defaultUserSettings(this.config);
     try {
       const payload = JSON.parse(await readFile(this.filePath, "utf8"));
-      this.settings = normalizeUserSettings(payload.settings ?? payload, this.config, defaults);
+      this.settings = normalizeUserSettings({ workspaceRevision: 0, ...(payload.settings ?? payload) }, this.config, defaults);
       this.source = "workspace";
       this.updatedAt = payload.updatedAt ?? null;
     } catch (error) {
-      if (error.code !== "ENOENT") {
-        this.lastError = { code: error.code ?? "USER_SETTINGS_LOAD_FAILED", message: error.message };
+      const code = error instanceof Error && "code" in error ? String(error.code) : "USER_SETTINGS_LOAD_FAILED";
+      if (code !== "ENOENT") {
+        this.lastError = { code, message: error instanceof Error ? error.message : String(error) };
       }
       this.settings = defaults;
       this.source = "defaults";
@@ -514,7 +453,7 @@ export class UserSettingsStore {
     return this.snapshot();
   }
 
-  snapshot({ schema = null } = {}) {
+  snapshot({ schema = null }: { schema?: boolean | null } = {}) {
     return {
       schemaVersion: USER_SETTINGS_SCHEMA_VERSION,
       settings: clone(this.settings),
@@ -525,7 +464,7 @@ export class UserSettingsStore {
     };
   }
 
-  async update(patch) {
+  async update(patch: unknown) {
     const next = normalizeUserSettings(patch, this.config, this.settings ?? defaultUserSettings(this.config));
     this.settings = next;
     this.source = "workspace";

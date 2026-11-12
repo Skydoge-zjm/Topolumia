@@ -1,6 +1,7 @@
-import { readJson, sendJson } from "../../../lib/http.js";
+import type { RouteContext } from "../../route-context.js";
+import { readJsonObject, sendJson, requiredString, headerValue } from "../../../lib/http.js";
 
-export async function handlePlatformAuthRoutes(context) {
+export async function handlePlatformAuthRoutes(context: RouteContext) {
   const {
     request,
     response,
@@ -9,7 +10,7 @@ export async function handlePlatformAuthRoutes(context) {
     requestActor,
     collaboration,
     config,
-  } = context;
+  }: RouteContext = context;
 
   if (pathname === "/api/health" && request.method === "GET") {
     sendJson(response, 200, {
@@ -20,9 +21,9 @@ export async function handlePlatformAuthRoutes(context) {
     return true;
   }
   if (pathname === "/api/auth/bootstrap" && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const user = collaboration.bootstrapAdmin(body);
-    const login = collaboration.login(body.username, body.password, {
+    const login = collaboration.login(requiredString(body.username), requiredString(body.password), {
       ttlMs: config.collaboration.sessionTtlMs,
     });
     response.setHeader(
@@ -45,8 +46,8 @@ export async function handlePlatformAuthRoutes(context) {
     return true;
   }
   if (pathname === "/api/auth/login" && request.method === "POST") {
-    const body = await readJson(request);
-    const login = collaboration.login(body?.username, body?.password, {
+    const body = await readJsonObject(request);
+    const login = collaboration.login(requiredString(body.username), requiredString(body.password), {
       ttlMs: config.collaboration.sessionTtlMs,
     });
     response.setHeader(
@@ -58,7 +59,7 @@ export async function handlePlatformAuthRoutes(context) {
   }
   if (pathname === "/api/auth/logout" && request.method === "POST") {
     const token =
-      request.headers["x-rw-session"] ||
+      headerValue(request, "x-rw-session") ||
       (request.headers.cookie ?? "")
         .split(";")
         .map((part) => part.trim())

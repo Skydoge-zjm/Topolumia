@@ -1,17 +1,17 @@
+import type { RouteContext } from "../route-context.js";
 import { AppError } from "../../lib/errors.js";
-import { readJson, sendJson } from "../../lib/http.js";
+import { readJsonObject, sendJson } from "../../lib/http.js";
 
 
-export async function handleTopologyRoutes(context) {
+export async function handleTopologyRoutes(context: RouteContext) {
   const {
     request,
     response,
     url,
     pathname,
     topologyLayoutService,
-    state,
     curatorTriggerCoordinator,
-  } = context;
+  }: RouteContext = context;
 
   if (
     pathname === "/api/topology/curation/status" &&
@@ -24,7 +24,7 @@ export async function handleTopologyRoutes(context) {
     pathname === "/api/topology/curation/trigger" &&
     request.method === "POST"
   ) {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const triggered = await curatorTriggerCoordinator.trigger(body ?? {});
     const statusCode =
       triggered.status === "queued"
@@ -54,7 +54,7 @@ export async function handleTopologyRoutes(context) {
     sendJson(
       response,
       200,
-      await topologyLayoutService.layout(state.topology, {
+      await topologyLayoutService.layout(context.requestRuntime.researchCommands.formalTopology(), {
         engine: requestedEngine,
       }),
     );
@@ -64,7 +64,7 @@ export async function handleTopologyRoutes(context) {
     pathname === "/api/topology/curation/preview" &&
     request.method === "POST"
   ) {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const triggered = await curatorTriggerCoordinator.trigger({
       ...(body ?? {}),
       mode: "manual",

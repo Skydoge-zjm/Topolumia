@@ -4,19 +4,24 @@
 
 ## 运行与配置
 
-基础启动见 [开发指南](development.md)。配置文件使用 [topolumia.config.example.json](../../config/topolumia.config.example.json) 的结构；本机值放 config/topolumia.config.json，不提交真实值。
+基础启动见[开发指南](development.md)。所有配置与应用数据默认收在 ~/.topolumia，Windows 同样使用用户主目录中的 .topolumia。全局配置为 ~/.topolumia/topolumia.config.json，结构参考[配置样例](../../config/topolumia.config.example.json)；前后端读取同一文件，TOPOLUMIA_CONFIG 可明确指定隔离实例配置，源码内 config/topolumia.config.json 不自动加载。
+
 
 后端同时服务前端构建，生产式本机运行使用 5510；5610 用于 Vite 开发。修改端口后同时检查代理 apiUrl，并重启受影响服务。
+
+[静态资源服务](../../src/http/static.ts) 对可压缩文本协商 Brotli/gzip，按内容生成表示对应的 ETag，并支持条件 GET/HEAD。Vite assets 中带内容哈希的文件使用一年 immutable 缓存，HTML 和非哈希入口必须验证；内存缓存同时限制条数和字节体积。前端更新通过 HTML 引用的新哈希文件生效。
 
 当前 [config.ts](../../src/config.ts) 仍有部分历史环境变量覆盖入口。排查配置不生效时检查进程是否带有覆盖，但用户常规配置采用文件，不继续扩展旧环境变量命名。
 
 Agent 原生配置在各项目应用数据目录编辑与保存，使用配置页或 [配置模块](../technical/modules/agent-workbench/configuration.md) 的机制，不能替换为改用户主目录全局文件。
 
+配置、数据、缓存和默认工作区统一在用户主目录 ~/.topolumia 下，按子目录组织，权威规则见[存储架构](../technical/architecture/data-and-storage.md)。新科研工作区位于 ~/.topolumia/workspaces/<项目 ID>，前端预览完整路径。新默认不会修改 SQLite 中已有项目目录；已有实例变更存储配置时，先备份并明确原数据库和设置位置，不能通过创建空数据库代替原实例。
+
 ## 健康检查与排障
 
 访问 /api/health 检查后端；同时确认页面实际来自构建版还是 Vite。排查前确定进程 PID、端口、工作目录与配置来源，避免把旧 dist 或另一个服务误认为当前实现。
 
-日志放 runtime 等忽略目录，避免写入请求凭据或完整原生配置。Agent 问题按 [排障方法](agent-debugging.md) 沿原生事件、统一投影、存储和前端定位。
+日志放用户缓存目录或显式指定的忽略目录，避免写入请求凭据或完整原生配置。Agent 问题按 [排障方法](agent-debugging.md) 沿原生事件、统一投影、存储和前端定位。
 
 ## 备份
 
@@ -25,7 +30,7 @@ Agent 原生配置在各项目应用数据目录编辑与保存，使用配置�
 最简单可靠的本机操作是：
 
 1. 记录实际数据路径并让应用正常关闭，确保检查点与数据库连接结束。
-2. 将数据库及相关文件复制到独立备份位置，记录时间和代码版本。
+2. 将 ~/.topolumia 复制到独立备份位置，包含配置、data 中的数据库、资产和会话及 workspaces 中的默认项目；显式关联的外部科研目录另行备份。记录时间和代码版本。
 3. 校验文件完整性，恢复到隔离位置检查，再用于真实恢复。
 
 运行中不能只复制一个 .sqlite 文件并忽略 WAL；如需在线备份，应使用 SQLite 正规备份机制。不要把候选、媒体或历史当作可随意重建的缓存。

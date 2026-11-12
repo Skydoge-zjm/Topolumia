@@ -1,8 +1,12 @@
+import type { AgentProfile, NativeConfig } from "../../../domain/agents/agent-types.js";
+import { openCodeV1Format, initialOpenCodeV1Config } from "../../../adapters/agents/opencode/v1/opencode-native-config.js";
+import { openCodeV2Format, initialOpenCodeV2Config, openCodeV2Model, validateOpenCodeV2Config } from "../../../adapters/agents/opencode/v2/opencode-native-config.js";
+import type { ParseError } from "jsonc-parser";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
 import { AppError } from "../../../lib/errors.js";
 
-export const nativeFormats = {
+export const nativeFormats: Record<string, { filename: string; format: string; schemaUrl: string; docsUrl: string; schemaFile?: string }> = {
   codex: {
     filename: "config.toml",
     format: "toml",
@@ -15,20 +19,16 @@ export const nativeFormats = {
     schemaUrl: "https://json.schemastore.org/claude-code-settings.json",
     docsUrl: "https://code.claude.com/docs/en/settings",
   },
-  opencode: {
-    filename: "opencode.jsonc",
-    format: "jsonc",
-    schemaUrl: "https://opencode.ai/config.json",
-    docsUrl: "https://opencode.ai/docs/config/",
-  },
+  opencode: openCodeV1Format,
+  "opencode-v2": openCodeV2Format,
 };
-const invalid = (message, detail = null) => {
+const invalid = (message: string, detail: unknown = null): never => {
   throw new AppError("AGENT_NATIVE_CONFIG_INVALID", message, {
     status: 422,
     detail,
   });
 };
-function validateTree(value, depth = 0) {
+function validateTree(value: unknown, depth = 0) {
   if (depth > 32) invalid("配置嵌套不能超过 32 层。");
   if (typeof value === "number" && !Number.isFinite(value))
     invalid("配置中的数值必须是有限数。");
@@ -43,25 +43,26 @@ function validateTree(value, depth = 0) {
     validateTree(item, depth + 1);
   }
 }
-export function parseNativeConfig(provider, content) {
+export function parseNativeConfig(provider: string, content: string): NativeConfig {
   if (!nativeFormats[provider]) invalid("未知的 Agent 配置格式。");
   if (typeof content !== "string" || Buffer.byteLength(content) > 524288)
     invalid("配置文件须为不超过 512 KiB 的文本。");
-  let value;
+  let value: NativeConfig = {};
   if (provider === "codex") {
     try {
-      value = parseToml(content.replace(/^\uFEFF/, ""));
-    } catch (error) {
+      value = parseToml(content.replace(/^\uFEFF/, "")) as NativeConfig;
+    } catch (problem) {
+      const error = problem as { line?: number; column?: number };
       invalid("TOML 语法无效，请检查标记位置。", {
         line: error.line ?? null,
         column: error.column ?? null,
       });
     }
   } else {
-    const errors = [];
+    const errors: ParseError[] = [];
     value = parseJsonc(content.replace(/^\uFEFF/, ""), errors, {
-      allowTrailingComma: provider === "opencode",
-      disallowComments: provider !== "opencode",
+      allowTrailingComma: nativeFormats[provider].format === "jsonc",
+      disallowComments: nativeFormats[provider].format !== "jsonc",
       allowEmptyContent: false,
     });
     if (errors.length) {
@@ -70,7 +71,7 @@ export function parseNativeConfig(provider, content) {
         lines = prefix.split(/\r?\n/);
       invalid("JSON 配置语法无效，请检查标记位置。", {
         line: lines.length,
-        column: lines.at(-1).length + 1,
+        column: lines.at(-1)!.length + 1,
         code: printParseErrorCode(error.error),
       });
     }
@@ -79,51 +80,57 @@ export function parseNativeConfig(provider, content) {
     invalid("配置根节点必须是对象。");
   validateTree(value);
   for (const key of ["model", "model_provider", "model_reasoning_effort"])
-    if (value[key] !== undefined && typeof value[key] !== "string")
+    if (!(provider === "opencode-v2" && key === "model" && value.model && typeof value.model === "object") && value[key] !== undefined && typeof value[key] !== "string")
       invalid(`${key} 必须是字符串。`, { path: key });
   if (
-    value.model !== undefined &&
-    (!value.model.trim() || value.model.length > 160)
+    typeof value.model === "string" &&
+    (!value.model!.trim() || value.model.length > 160)
   )
     invalid("model 必须为 1–160 字符的模型标识。", { path: "model" });
-  if (provider === "claude" && value.permissions !== undefined) {
+  const permissions = value.permissions;
+  if (provider === "claude" && permissions !== undefined) {
     if (
-      !value.permissions ||
-      typeof value.permissions !== "object" ||
-      Array.isArray(value.permissions)
+      !permissions ||
+      typeof permissions !== "object" ||
+      Array.isArray(permissions)
     )
       invalid("permissions 必须是对象。", { path: "permissions" });
     for (const key of ["allow", "deny", "ask"])
       if (
-        value.permissions[key] !== undefined &&
-        (!Array.isArray(value.permissions[key]) ||
-          value.permissions[key].some((rule) => typeof rule !== "string"))
+        (permissions as Record<string, unknown>)[key] !== undefined &&
+        (!Array.isArray((permissions as Record<string, unknown>)[key]) ||
+          ((permissions as Record<string, unknown>)[key] as unknown[]).some((rule) => typeof rule !== "string"))
       )
         invalid(`permissions.${key} 必须是字符串数组。`, {
           path: `permissions.${key}`,
         });
   }
+  if (provider === "opencode-v2") validateOpenCodeV2Config(value);
   return value;
 }
-export function serializeNativeConfig(provider, value) {
+export function serializeNativeConfig(provider: string, value: NativeConfig) {
   return provider === "codex"
-    ? stringifyToml(value)
+    ? stringifyToml(value as Parameters<typeof stringifyToml>[0])
     : JSON.stringify(value, null, 2) + "\n";
 }
-export function nativeProfile(profile, config) {
+export function nativeProfile(profile: AgentProfile, config: NativeConfig): AgentProfile {
   const result = { ...profile };
-  result.model = config.model;
+  result.model = typeof config.model === "string" ? config.model : undefined;
   if (profile.provider === "codex") {
     result.reasoningEffort = config.model_reasoning_effort;
     result.approvalPolicy = config.approval_policy;
     result.sandbox = config.sandbox_mode;
   } else if (profile.provider === "claude") {
     result.reasoningEffort = config.effortLevel;
-    result.permissionMode = config.permissions?.defaultMode;
+    result.permissionMode = (!Array.isArray(config.permissions) ? config.permissions?.defaultMode : undefined);
   }
+  if (nativeConfigKey(profile) === "opencode-v2") Object.assign(result, openCodeV2Model(config));
   return result;
 }
-export function initialNativeConfig(profile) {
+export function nativeConfigKey(profile: Pick<AgentProfile, "provider" | "driver">): string {
+  return profile.provider === "opencode" && profile.driver === "opencode-server-v2" ? "opencode-v2" : profile.provider;
+}
+export function initialNativeConfig(profile: AgentProfile): NativeConfig {
   const common = profile.model ? { model: profile.model } : {};
   if (profile.provider === "codex")
     return {
@@ -138,13 +145,9 @@ export function initialNativeConfig(profile) {
       effortLevel: profile.reasoningEffort ?? "low",
       permissions: { defaultMode: profile.permissionMode ?? "default" },
     };
-  return {
-    $schema: nativeFormats.opencode.schemaUrl,
-    ...common,
-    permission: profile.approvalPolicy === "never" ? "allow" : "ask",
-  };
+  return nativeConfigKey(profile) === "opencode-v2" ? initialOpenCodeV2Config(profile) : initialOpenCodeV1Config(profile);
 }
-export function tomlValue(value) {
+export function tomlValue(value: unknown): string | undefined {
   if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value)) return `[${value.map(tomlValue).join(",")}]`;
   if (value && typeof value === "object")
@@ -153,7 +156,7 @@ export function tomlValue(value) {
       .join(",")}}`;
   return JSON.stringify(value);
 }
-export function codexConfigurationArgs(config = {}) {
+export function codexConfigurationArgs(config: NativeConfig = {}) {
   return Object.entries(config)
     .filter(([key]) => key !== "$schema")
     .flatMap(([key, value]) => ["-c", `${key}=${tomlValue(value)}`]);

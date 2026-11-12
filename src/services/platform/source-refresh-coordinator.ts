@@ -1,8 +1,18 @@
-function asDate(value) {
+import type { AdapterRegistry } from "./adapter-registry.js";
+import type { TopologyService } from "../topology/topology-service.js";
+import type { ResearchState } from "../research/research-state.js";
+import type { SourceSnapshot } from "../../domain/research/types.js";
+export type SourceRefreshResult = { schemaVersion: string; outcome: string; reason: string; changed: boolean; previousStateVersion: string | null; stateVersion: string | null; checkedAt: string | null; snapshot: SourceSnapshot | null };
+type RefreshOptions = { registry: AdapterRegistry; topologyService: TopologyService; state: ResearchState; intervalMs?: number; freshForMs?: number; enabled?: boolean; isBlocked?: () => boolean; onResult?: ((result: SourceRefreshResult) => unknown) | null; now?: () => Date | string | number };
+function asDate(value: Date | string | number) {
   return value instanceof Date ? value : new Date(value);
 }
 
 export class SourceRefreshCoordinator {
+  registry: AdapterRegistry; topologyService: TopologyService; state: ResearchState;
+  intervalMs: number; freshForMs: number; enabled: boolean; isBlocked: () => boolean;
+  onResult: RefreshOptions["onResult"]; now: NonNullable<RefreshOptions["now"]>;
+  inFlight: Promise<SourceRefreshResult> | null; timer: ReturnType<typeof setInterval> | null;
   constructor({
     registry,
     topologyService,
@@ -13,7 +23,7 @@ export class SourceRefreshCoordinator {
     isBlocked = () => false,
     onResult = null,
     now = () => new Date(),
-  }) {
+  }: RefreshOptions) {
     this.registry = registry;
     this.topologyService = topologyService;
     this.state = state;
@@ -74,7 +84,7 @@ export class SourceRefreshCoordinator {
     return Number.isFinite(checkedAt) && asDate(this.now()).getTime() - checkedAt < Math.max(0, maxAgeMs);
   }
 
-  result(outcome, reason, details = {}) {
+  result(outcome: string, reason: string, details: Partial<Pick<SourceRefreshResult, "previousStateVersion" | "stateVersion" | "checkedAt">> = {}): SourceRefreshResult {
     const hasPreviousStateVersion = Object.hasOwn(details, "previousStateVersion");
     const hasStateVersion = Object.hasOwn(details, "stateVersion");
     return {
@@ -82,8 +92,8 @@ export class SourceRefreshCoordinator {
       outcome,
       reason,
       changed: outcome === "updated",
-      previousStateVersion: hasPreviousStateVersion ? details.previousStateVersion : (this.state.snapshot?.stateVersion ?? null),
-      stateVersion: hasStateVersion ? details.stateVersion : (this.state.snapshot?.stateVersion ?? null),
+      previousStateVersion: hasPreviousStateVersion ? details.previousStateVersion ?? null : (this.state.snapshot?.stateVersion ?? null),
+      stateVersion: hasStateVersion ? details.stateVersion ?? null : (this.state.snapshot?.stateVersion ?? null),
       checkedAt: details.checkedAt ?? this.state.sourceRefresh.lastCheckedAt,
       snapshot: this.state.snapshot,
     };
@@ -100,7 +110,7 @@ export class SourceRefreshCoordinator {
       return this.result("deferred", reason);
     }
     if (!force && this.isFresh(maxAgeMs)) {
-      const checkedAt = this.state.sourceRefresh.lastCheckedAt;
+      const checkedAt = this.state.sourceRefresh.lastCheckedAt ?? asDate(this.now()).toISOString();
       this.state.completeSourceRefresh({ outcome: "skipped_fresh", reason, checkedAt, changed: false });
       const skipped = this.result("skipped_fresh", reason, { checkedAt });
       try { Promise.resolve(this.onResult?.(skipped)).catch(() => {}); } catch { /* observers must not break refresh */ }

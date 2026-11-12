@@ -1,9 +1,10 @@
 import { AppError } from "../../lib/errors.js";
 import { runCommand, summarizeCommandFailure } from "../../lib/command.js";
 import { sha256, stableStringify } from "../../lib/hash.js";
+import type { AppConfig } from "../../config.js";
 
-function assertEnum(value, allowed, field) {
-  if (!allowed.includes(value)) {
+function assertEnum(value: unknown, allowed: string[], field: string): string {
+  if (typeof value !== "string" || !allowed.includes(value)) {
     throw new AppError("INVALID_EXECUTION_INPUT", `${field} 不在允许范围内。`, {
       status: 422,
       detail: { field, allowed },
@@ -12,8 +13,8 @@ function assertEnum(value, allowed, field) {
   return value;
 }
 
-function assertInteger(value, field, min, max) {
-  if (!Number.isInteger(value) || value < min || value > max) {
+function assertInteger(value: unknown, field: string, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
     throw new AppError("INVALID_EXECUTION_INPUT", `${field} 必须是 ${min}-${max} 的整数。`, {
       status: 422,
       detail: { field, min, max },
@@ -22,14 +23,19 @@ function assertInteger(value, field, min, max) {
   return value;
 }
 
-function assertSeeds(value) {
+function assertSeeds(value: unknown): number[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 8) {
     throw new AppError("INVALID_EXECUTION_INPUT", "seeds 必须包含 1-8 个整数。", { status: 422 });
   }
   return value.map((seed) => assertInteger(seed, "seed", 0, 2_147_483_647));
 }
 
-function commonFlags(limits) {
+type Limits = { network: string; cpus: number; memory: string; pids: number; gpus: string | null; timeoutMs: number };
+type TemplateInputs = { dataset?: string; steps?: number; seeds?: number[] };
+type Template = { id: string; previewOnly: boolean; image: string; limits: Limits; normalize: (input?: Record<string, unknown>) => TemplateInputs; build: (input: TemplateInputs) => string[] };
+export type ExecutionPreview = { schemaVersion: string; id: string; adapter: string; templateId: string; image: string; argv: string[]; inputs: TemplateInputs; limits: Limits; previewOnly: boolean; imageLockedByDigest: boolean; createdAt: string };
+export type ExecutionRecord = Awaited<ReturnType<DockerAdapter["run"]>>;
+function commonFlags(limits: Limits) {
   const flags = [
     "run",
     "--rm",
@@ -47,11 +53,11 @@ function commonFlags(limits) {
 }
 
 export class DockerAdapter {
-  constructor(config) {
-    this.config = config;
-    this.id = "docker-local";
-    this.previews = new Map();
-    this.templates = new Map([
+  readonly id = "docker-local";
+  previews = new Map<string, ExecutionPreview>();
+  templates: Map<string, Template>;
+  constructor(public config: AppConfig) {
+    this.templates = new Map<string, Template>([
       ["diffusion-sr-factorial-preview", {
         id: "diffusion-sr-factorial-preview",
         previewOnly: true,
@@ -67,11 +73,11 @@ export class DockerAdapter {
           "--workdir", "/workspace",
           "nvidia/cuda:12.8.1-base-ubuntu24.04",
           "python", "scripts/run_factorial.py",
-          "--dataset", inputs.dataset,
+          "--dataset", inputs.dataset!,
           "--conditioning", "off,on",
           "--schedule", "baseline,corrected",
           "--steps", String(inputs.steps),
-          "--seeds", inputs.seeds.join(","),
+          "--seeds", inputs.seeds!.join(","),
           "--output", "/workspace/artifacts/G3",
         ],
       }],
@@ -121,7 +127,7 @@ export class DockerAdapter {
     };
   }
 
-  preview(templateId, rawInputs = {}) {
+  preview(templateId: string, rawInputs: Record<string, unknown> = {}) {
     const template = this.templates.get(templateId);
     if (!template) {
       throw new AppError("EXECUTION_TEMPLATE_NOT_FOUND", "未找到已登记的执行模板。", {
@@ -150,7 +156,7 @@ export class DockerAdapter {
     return preview;
   }
 
-  async run(previewId) {
+  async run(previewId: string) {
     const preview = this.previews.get(previewId);
     if (!preview) {
       throw new AppError("EXECUTION_PREVIEW_NOT_FOUND", "执行前必须先生成有效 preview。", {
@@ -174,9 +180,9 @@ export class DockerAdapter {
       maxOutputBytes: 262_144,
     });
     const completedAt = new Date().toISOString();
-    let output = result.stdout.trim();
+    let output: unknown = result.stdout.trim();
     try {
-      output = output ? JSON.parse(output) : null;
+      output = output ? JSON.parse(String(output)) as unknown : null;
     } catch {
       // Preserve provider text when it is not JSON.
     }

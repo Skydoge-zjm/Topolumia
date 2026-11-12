@@ -1,3 +1,7 @@
+import type { ApplicationOptions } from "./application/project-runtime.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { CollaborationActor } from "./services/platform/collaboration-store.js";
+import type { RouteContext } from "./http/route-context.js";
 import { createProjectRuntimeRegistry } from "./application/project-runtime.js";
 import { sendStatic } from "./http/static.js";
 
@@ -10,6 +14,11 @@ import { handleResearchCommandsRoutes } from "./http/routes/research/commands.js
 import { handleTopologyRoutes } from "./http/routes/topology.js";
 import { handleNotebookRoutes } from "./http/routes/research/notebook.js";
 import { handleResearchNodeRoutes } from "./http/routes/research/nodes.js";
+import { handleRecordIngestionRoutes, handleRecordAttachmentRead } from "./http/routes/research/record-ingestion.js";
+import { handleManagedRecordRoutes } from "./http/routes/managed-records.js";
+import { ManagedRecordCollectors } from "./services/environments/managed-record-collectors.js";
+import { ProjectWorkspaceService } from "./services/platform/project-workspace-service.js";
+import { handleExperimentRecordRoutes } from "./http/routes/research/experiment-records.js";
 import { handleResearchGroupRoutes } from "./http/routes/research/groups.js";
 import { handleResearchObjectRoutes } from "./http/routes/research/objects.js";
 import { handlePlatformSettingsRoutes } from "./http/routes/platform/settings.js";
@@ -27,7 +36,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { loadConfig } from "./config.js";
 import { AppError, asAppError, errorPayload } from "./lib/errors.js";
-import { sendJson } from "./lib/http.js";
+import { sendJson, headerValue } from "./lib/http.js";
 
 import { CollaborationStore } from "./services/platform/collaboration-store.js";
 
@@ -38,8 +47,12 @@ const routeHandlers = [
   handlePlatformAuthRoutes,
   handlePlatformCollaborationRoutes,
   handleAgentsConfigurationRoutes,
+  handleManagedRecordRoutes,
   handleEnvironmentsRoutes,
   handleResearchCommandsRoutes,
+  handleRecordIngestionRoutes,
+  handleRecordAttachmentRead,
+  handleExperimentRecordRoutes,
   handleResearchNodeRoutes,
   handleResearchGroupRoutes,
   handleResearchObjectRoutes,
@@ -54,7 +67,7 @@ const routeHandlers = [
   handleExecutionsRoutes,
 ];
 
-export async function createMvpApplication(options = {}) {
+export async function createMvpApplication(options: ApplicationOptions = {}) {
   const config = await loadConfig(options.config ?? {});
   if (options.testMode === true) config.collaboration.allowDevIdentity = true;
   config.collaboration.databaseFile = path.resolve(
@@ -66,6 +79,12 @@ export async function createMvpApplication(options = {}) {
           )
         : config.collaboration.databaseFile),
   );
+  if (options.port === 0 && !options.userSettingsFile && !options.config?.userSettings?.file) {
+    config.userSettings.file = path.join(path.dirname(config.collaboration.databaseFile), path.basename(config.collaboration.databaseFile) + ".runtime", "settings.json");
+  }
+  if (options.port === 0 && !options.config?.project?.workspacesRoot) {
+    config.project.workspacesRoot = path.join(path.dirname(options.userSettingsFile ?? config.userSettings.file), "workspaces");
+  }
   if (!config.collaboration.allowDevIdentity) {
     config.project = {
       ...config.project,
@@ -74,14 +93,11 @@ export async function createMvpApplication(options = {}) {
       root: path.join(config.project.workspacesRoot, "research-project"),
     };
     config.filesystem.roots = [config.project.root];
-    config.mlflow.fixtureFile = null;
-    config.wandb.fixtureFile = null;
-    config.tensorboard.fixtureFile = null;
     config.mlflow.baseUrl = "";
     config.wandb.baseUrl = "";
     config.tensorboard.logdir = "";
   }
-  const collaboration = new CollaborationStore({
+  const collaboration: CollaborationStore = new CollaborationStore({
     filePath: config.collaboration.databaseFile,
     defaultProject: {
       id: config.project.id,
@@ -109,16 +125,18 @@ export async function createMvpApplication(options = {}) {
     actorContext,
     runtimes,
     getRuntime,
+    replaceRuntime,
     defaultRuntime,
     baseTopologyService,
     topologyLayoutService,
     applyRuntimeSettings,
     refreshForContext,
   } = await createProjectRuntimeRegistry({ config, collaboration, options });
+  const projectWorkspaces = new ProjectWorkspaceService({ config, collaboration, sshConnections, replaceRuntime });
 
-  const handler = async (request, response) => {
+  const handler = async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(
-      request.url,
+      request.url ?? "/",
       `http://${request.headers.host || "127.0.0.1"}`,
     );
     const pathname = url.pathname;
@@ -129,7 +147,7 @@ export async function createMvpApplication(options = {}) {
         requestedProjectId = decodeURIComponent(
           url.searchParams.get("projectId") ||
             pathProjectMatch?.[1] ||
-            request.headers["x-rw-project-id"] ||
+            headerValue(request, "x-rw-project-id") ||
             config.project.id,
         );
       } catch {
@@ -146,17 +164,21 @@ export async function createMvpApplication(options = {}) {
         pathname === "/api/auth/logout" ||
         pathname === "/api/auth/bootstrap" ||
         pathname.startsWith("/api/schemas/");
-      let requestActor = null;
+      let requestActor: CollaborationActor = { isAgent: false };
       let requestRuntime = defaultRuntime;
       if (!isPublicApi) {
-        requestActor = collaboration.requireActor(request, requestedProjectId);
+        if (pathname.startsWith("/api/record-ingestion/")) {
+          requestRuntime = await getRuntime(requestedProjectId);
+          const token = String(request.headers.authorization ?? "").replace(/^Bearer /i, "");
+          requestActor = requestRuntime.researchCommands.ingestion.authenticate(token, (userId, projectId) => collaboration.actorForUser(userId, projectId));
+        } else requestActor = collaboration.requireActor(request, requestedProjectId);
         if (requestActor.isAgent && !pathname.startsWith("/api/research/"))
           throw new AppError(
             "AGENT_SCOPE_FORBIDDEN",
             "Agent 凭据仅可调用项目研究命令。",
             { status: 403 },
           );
-        const projectCollection = pathname === "/api/projects";
+        const projectCollection = pathname === "/api/projects" || pathname.startsWith("/api/project-workspaces");
         const invitationAcceptPath =
           /^\/api\/projects\/[^/]+\/invitations\/[^/]+\/accept$/.test(pathname);
         if (
@@ -174,21 +196,19 @@ export async function createMvpApplication(options = {}) {
         if (!noRuntime) requestRuntime = await getRuntime(requestedProjectId);
         const requiredPermission = requiredProjectPermission(
           pathname,
-          request.method,
+          request.method ?? "GET",
         );
         if (requiredPermission)
           collaboration.requirePermission(requestActor, requiredPermission, {
             projectId: requestedProjectId,
           });
       }
-      if (requestActor)
+      if (requestActor.user)
         response.setHeader("x-rw-project-id", requestedProjectId);
       return actorContext.run(requestActor, async () => {
         const {
           config,
           registry,
-          trainingSimulation,
-          researchExperiments,
           topologyCurator,
           researchCommands,
           state,
@@ -200,10 +220,10 @@ export async function createMvpApplication(options = {}) {
         const topologyService =
           requestRuntime.topologyService ?? baseTopologyService;
         const commandActor = requestActor;
-        const ensureFreshForContext = (reason) =>
+        const ensureFreshForContext = (reason: string) =>
           refreshForContext(reason, requestRuntime);
         try {
-          if (["POST", "PATCH", "DELETE"].includes(request.method)) {
+          if (["POST", "PATCH", "DELETE"].includes(request.method ?? "GET")) {
             const ownedSession = pathname.match(
               /^\/api\/agent-sessions\/([^/]+)(?:\/(?:turns|persist|attachments(?:\/[^/]+)?|cancel|resume|sync|close|notes|permissions\/reset|approvals\/[^/]+|queue\/[^/]+))?$/,
             );
@@ -219,7 +239,7 @@ export async function createMvpApplication(options = {}) {
               );
             }
           }
-          const routeContext = {
+          const routeContext: RouteContext = {
             request,
             response,
             url,
@@ -228,17 +248,17 @@ export async function createMvpApplication(options = {}) {
             requestActor,
             requestRuntime,
             collaboration,
+            projectWorkspaces,
             sshConnections,
             sshEnvironments,
+            recordCollectors,
             topologyLayoutService,
             runtimes,
             getRuntime,
             applyRuntimeSettings,
             config,
             registry,
-            trainingSimulation,
-            researchExperiments,
-            topologyCurator,
+              topologyCurator,
             researchCommands,
             state,
             curatorTriggerCoordinator,
@@ -256,16 +276,16 @@ export async function createMvpApplication(options = {}) {
               status: 404,
             });
           }
-          if (!["GET", "HEAD"].includes(request.method)) {
+          if (!["GET", "HEAD"].includes(request.method ?? "GET")) {
             throw new AppError("METHOD_NOT_ALLOWED", "该资源不支持此方法。", {
               status: 405,
             });
           }
           await sendStatic(
+            request,
             response,
             config.publicRoot,
             pathname,
-            request.method === "HEAD",
           );
         } catch (error) {
           const appError = asAppError(error);
@@ -289,20 +309,28 @@ export async function createMvpApplication(options = {}) {
       else response.end();
     });
   });
-  server.on("close", () => {
-    void sshEnvironments
-      .close()
-      .finally(() => sshConnections.close())
-      .catch(() => {});
+  const recordCollectors = new ManagedRecordCollectors({ runtimes, sshConnections, sshEnvironments, collaboration, dataDirectory: options.recordCollectorDataDirectory, address: () => { const address = server.address(); return typeof address === "object" && address ? { port: address.port, host: address.address === "::1" ? "::1" : "127.0.0.1" } : null; } });
+  server.once("listening", () => void recordCollectors.reconcile());
+  let disposal: Promise<void> | null = null;
+  const dispose = () => disposal ??= (async () => {
+    await recordCollectors.close().catch(() => {});
+    await sshEnvironments.close().catch(() => {});
+    await sshConnections.close().catch(() => {});
     for (const runtime of runtimes.values()) {
       runtime.sourceRefresh.stop();
-      void runtime.toolEnvironment.research.close();
-      void runtime.toolEnvironment.catalog.close();
       runtime.curatorTriggerCoordinator.stop();
-      void runtime.agentSessionGateway.closeAll().catch(() => {});
     }
-    void Promise.allSettled([...runtimes.values()].map(runtime => runtime.researchCommands.assets.close())).then(() => collaboration.close());
-  });
+    await Promise.allSettled([...runtimes.values()].map(runtime => runtime.dispose()));
+    collaboration.close();
+  })();
+  server.on("close", () => { void dispose(); });
+  const close = async () => {
+    if (server.listening) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+    await dispose();
+  };
 
   return {
     ...defaultRuntime,
@@ -313,11 +341,14 @@ export async function createMvpApplication(options = {}) {
     topologyLayoutService,
     sshConnections,
     sshEnvironments,
+    recordCollectors,
     server,
+    projectWorkspaces,
+    close,
   };
 }
 
-export async function startMvpServer(options = {}) {
+export async function startMvpServer(options: ApplicationOptions = {}) {
   const requestedPort =
     options.port ?? (await loadConfig(options.config ?? {})).server.port;
   const app = await createMvpApplication({
@@ -326,7 +357,7 @@ export async function startMvpServer(options = {}) {
   });
   const host = options.host ?? app.config.server.host;
   const port = options.port ?? app.config.server.port;
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     app.server.once("error", reject);
     app.server.listen(port, host, resolve);
   });

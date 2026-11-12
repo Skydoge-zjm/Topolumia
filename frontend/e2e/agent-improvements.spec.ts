@@ -11,7 +11,7 @@ test.beforeAll(async () => {
   const workspace = path.join(root, "workspace"); await mkdir(workspace);
   await writeFile(path.join(workspace, "README.md"), "# Control protocol\n\nScientific evidence must retain its source version and exact character range.\n", "utf8");
   app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"),
-    config: { project: { root: workspace, name: "Workbench UI verification" }, sourceRefresh: { enabled: false }, agentSessions: { profiles: [{
+    config: { project: { root: workspace, workspacesRoot: path.join(root, "workspaces"), name: "Workbench UI verification" }, sourceRefresh: { enabled: false }, agentSessions: { profiles: [{
       id: "workbench-claude", label: "Claude Code", provider: "claude", driver: "claude-cli-stream", command: process.execPath,
       launcherArgs: [path.resolve("dist/fixtures/native/claude-cli.js")], model: "gpt-6-luna", models: [{ id: "gpt-6-luna", label: "Luna" }],
     }] } } });
@@ -113,13 +113,15 @@ test("scientific replies expose real source evidence, copyable code and reviewab
   await expect(page.locator(".evidence-read").filter({ hasText: "来源内容" })).toContainText("file:README.md");
   await page.getByRole("button", { name: "关闭研究上下文" }).click(); await answer.hover();
   await answer.getByRole("button", { name: "整理为科研笔记", exact: true }).click(); await expect(answer).toContainText("已提交研究变更审阅");
-  await page.getByRole("button", { name: "上下文", exact: true }).click(); await page.getByRole("tab", { name: "研究变更", exact: true }).click();
-  await expect(page.locator(".candidate-change")).toContainText("Scientific record"); await page.getByRole("button", { name: "接受", exact: true }).click();
-  const topology = await (await page.request.get(app.url + "/api/topology")).json();
-  const note = topology.nodes.find(node => node.data?.noteMarkdown?.includes("结果需要进一步复核")); expect(note).toBeTruthy();
-  await page.goto(app.url + "/#/topology/nodes/" + encodeURIComponent(note.id));
-  await expect(page.locator(".research-markdown")).toContainText("结果需要进一步复核");
-  await expect(page.locator(".research-markdown .katex")).toHaveCount(1); await page.screenshot({ path: "test-results/agent-scientific-note.png", fullPage: true });
+  const candidate = page.getByRole("region", { name: "本轮科研变更", exact: true }).getByRole("article", { name: "保存会话「Scientific record」的研究回复", exact: true });
+  await expect(candidate).toContainText("Scientific record");
+  await candidate.getByRole("button", { name: "接受并保存", exact: true }).click();
+  const saved = candidate.getByRole("link", { name: /^查看已保存对象/ });
+  await expect(saved).toBeVisible();
+  await saved.click();
+  await page.reload();
+  await expect(page.getByRole("main").getByText("结果需要进一步复核。", { exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByRole("math")).toHaveCount(1); await page.screenshot({ path: "test-results/agent-scientific-note.png", fullPage: true });
   await page.getByRole("link", { name: "研究记录", exact: true }).click();
   await page.getByRole("button", { name: "纪要与记录", exact: true }).click();
   await expect(page.locator(".research-record-timeline")).not.toContainText("结果需要进一步复核");

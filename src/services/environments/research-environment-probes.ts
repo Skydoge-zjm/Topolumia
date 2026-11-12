@@ -1,8 +1,9 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { bundledRoot } from "../../config.js";
-import { resolveExecutable, runCommand } from "../../lib/command.js";
+import { bundledRoot, type AppConfig } from "../../config.js";
+import { resolveExecutable, runCommand, type CommandRunner, type CommandOptions } from "../../lib/command.js";
+import { probeResultSchema, type PythonIdentity, type ProbeResult, type ComponentResult } from "./environment-types.js";
 
 const defaults = {
   conda: "conda",
@@ -11,21 +12,21 @@ const defaults = {
   cuda: "nvcc",
 };
 const marker = "TOPOLUMIA_PYTHON_PROBE:";
-const clip = (value, limit = 500) => String(value ?? "").slice(0, limit);
-const fact = (label, labelEn, value, valueEn = undefined) => ({
+const clip = (value: unknown, limit = 500) => String(value ?? "").slice(0, limit);
+const fact = (label: string, labelEn: string, value: unknown, valueEn: string | undefined = undefined) => ({
   label,
   labelEn,
   value: clip(value),
   ...(valueEn ? { valueEn } : {}),
 });
-const exists = async (value) =>
+const exists = async (value: string | undefined) =>
   value &&
   (await access(value).then(
     () => true,
     () => false,
   ));
 
-export function parseNvidiaGpuCsv(output) {
+export function parseNvidiaGpuCsv(output: string) {
   return output
     .trim()
     .split(/\r?\n/)
@@ -45,7 +46,7 @@ export function parseNvidiaGpuCsv(output) {
         !fields[2]
       )
         throw new Error("无法解析 NVIDIA GPU 信息。");
-      const memory = (value) =>
+      const memory = (value: string) =>
         /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : null;
       return {
         index: Number(fields[0]),
@@ -57,7 +58,7 @@ export function parseNvidiaGpuCsv(output) {
     });
 }
 
-export function parseNvccVersion(output) {
+export function parseNvccVersion(output: string) {
   const release = output.match(/release\s+(\d+\.\d+)/i)?.[1];
   const version = output.match(/\bV(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? release;
   if (!release || !version)
@@ -66,13 +67,10 @@ export function parseNvccVersion(output) {
 }
 
 export class ResearchEnvironmentProbes {
-  constructor(config, commandRunner = runCommand) {
-    this.config = config;
-    this.run = commandRunner;
-    this.identities = new Map();
-  }
+  identities = new Map<string, Promise<PythonIdentity>>();
+  constructor(public config: AppConfig, public run: CommandRunner = runCommand) {}
 
-  async executable(id) {
+  async executable(id: keyof typeof defaults): Promise<string> {
     const command = this.config.toolCommands?.[id] ?? defaults[id];
     if (this.config.remoteExecution) return command;
     const resolved = await resolveExecutable(command);
@@ -130,11 +128,11 @@ export class ResearchEnvironmentProbes {
     }
     if (path.isAbsolute(resolved) && !/\.bat$/i.test(resolved)) return resolved;
     for (const candidate of candidates)
-      if (await exists(candidate)) return candidate;
+      if (candidate && await exists(candidate)) return candidate;
     return resolved;
   }
 
-  async python(mode, timeoutMs = 8000) {
+  async python(mode: string, timeoutMs = 8000): Promise<ProbeResult> {
     const selection = this.config.researchEnvironment ?? { kind: "default", pythonCommand: "python" };
     const result = await this.environmentCommand(
       selection.kind === "conda" ? "python" : selection.pythonCommand,
@@ -167,7 +165,7 @@ export class ResearchEnvironmentProbes {
       .split(/\r?\n/)
       .findLast((line) => line.startsWith(marker));
     if (!line) throw new Error("Python 检测未返回有效结果。");
-    const payload = JSON.parse(line.slice(marker.length));
+    const payload = probeResultSchema.parse(JSON.parse(line.slice(marker.length)));
     if (
       !payload ||
       !["ready", "error", "not_installed"].includes(payload.status)
@@ -176,9 +174,9 @@ export class ResearchEnvironmentProbes {
     return payload;
   }
 
-  identity() {
+  identity(): Promise<PythonIdentity> {
     const key = `${JSON.stringify(this.config.researchEnvironment)}\0${this.config.project.root}`;
-    if (this.identities.has(key)) return this.identities.get(key);
+    if (this.identities.has(key)) return this.identities.get(key)!;
     const pending = this.python("identity")
       .then((result) => {
         if (
@@ -199,7 +197,7 @@ export class ResearchEnvironmentProbes {
     return pending;
   }
 
-  async environmentCommand(command, args, options = {}) {
+  async environmentCommand(command: string, args: string[], options: CommandOptions = {}) {
     const selection = this.config.researchEnvironment;
     if (selection?.kind === "conda") {
       return this.run(await this.executable("conda"),
@@ -214,10 +212,10 @@ export class ResearchEnvironmentProbes {
       cwd: this.config.project.root, timeoutMs: 12000, maxOutputBytes: 262144,
     });
     if (!result.ok) throw new Error("Conda 无法运行，请检查 Conda 可执行文件配置。");
-    let info;
+    let info: { root_prefix: string; envs: unknown[]; conda_version?: unknown };
     try { info = JSON.parse(result.stdout); } catch { throw new Error("Conda 未返回有效环境列表。"); }
     if (typeof info.root_prefix !== "string" || !Array.isArray(info.envs)) throw new Error("Conda 环境列表无效。");
-    const prefixes = [...new Set([info.root_prefix, ...info.envs].filter(p => typeof p === "string" && path.isAbsolute(p)))];
+    const prefixes = [...new Set([info.root_prefix, ...info.envs].filter((p): p is string => typeof p === "string" && path.isAbsolute(p)))];
     const environments = await Promise.all(prefixes.slice(0, 200).map(async prefix => ({
       name: prefix === info.root_prefix ? "base" : path.basename(prefix), prefix,
       hasPython: Boolean(await exists(path.join(prefix, process.platform === "win32" ? "python.exe" : "bin/python"))),
@@ -225,7 +223,7 @@ export class ResearchEnvironmentProbes {
     return { command, version: clip(info.conda_version, 80), environments, total: prefixes.length };
   }
 
-  async probe(id) {
+  async probe(id: string): Promise<ComponentResult> {
     if (id === "python") {
       const python = await this.identity();
       return this.describePython(python);
@@ -256,13 +254,14 @@ export class ResearchEnvironmentProbes {
       return {
         status: "ready",
         version: clip(result.version, 80),
-        location: clip(result.python.executable),
+        location: clip(result.python?.executable),
         detail: `${result.frontend} ${result.version}`,
         recovery: null,
         facts,
       };
     }
-    const command = await this.executable(id);
+    if (!(id in defaults)) throw new Error("Unknown environment diagnostic");
+    const command = await this.executable(id as keyof typeof defaults);
     const options = {
       cwd: this.config.project.root,
       timeoutMs: 8000,
@@ -276,7 +275,7 @@ export class ResearchEnvironmentProbes {
       );
       if (!result.ok)
         throw new Error("Conda 无法运行，请配置其可执行文件路径。");
-      let info;
+      let info: { conda_version: string; root_prefix: string; envs?: unknown[]; active_prefix?: string };
       try {
         info = JSON.parse(result.stdout);
       } catch {
@@ -311,7 +310,7 @@ export class ResearchEnvironmentProbes {
           ...environments.map((directory, index) =>
             fact(`环境 ${index + 1}`, `Environment ${index + 1}`, directory),
           ),
-          ...((info.envs?.length ?? 0) > environments.length ? [fact("其余环境数", "Additional environment count", info.envs.length - environments.length)] : []),
+          ...((info.envs?.length ?? 0) > environments.length ? [fact("其余环境数", "Additional environment count", (info.envs?.length ?? 0) - environments.length)] : []),
         ],
       };
     }
@@ -433,7 +432,7 @@ export class ResearchEnvironmentProbes {
     return { python, frameworks, checkedAt: new Date().toISOString() };
   }
 
-  describePython(python) {
+  describePython(python: PythonIdentity): ComponentResult {
     return {
       status: "ready",
       version: clip(python.version, 80),

@@ -40,7 +40,7 @@ async function run(input: string) {
   }
   if (input.includes("approval-settings")) {
     const settingsArg = indexOf("--settings") < 0 ? null : args[indexOf("--settings") + 1];
-    send({ type: "assistant", message: { id: "settings", content: [{ type: "text", text: JSON.stringify({ settings: settingsArg ? JSON.parse(settingsArg.startsWith("{") ? settingsArg : readFileSync(settingsArg, "utf8")) : null, settingsFile: settingsArg?.startsWith("{") ? null : settingsArg, settingsCount: args.filter(arg => arg === "--settings").length, permissionMode: args[indexOf("--permission-mode") + 1] }) }] } });
+    send({ type: "assistant", message: { id: "settings", content: [{ type: "text", text: JSON.stringify({ settings: settingsArg ? JSON.parse(settingsArg.startsWith("{") ? settingsArg : readFileSync(settingsArg, "utf8")) : null, settingsFile: settingsArg?.startsWith("{") ? null : settingsArg, settingsCount: args.filter(arg => arg === "--settings").length, permissionMode: args[indexOf("--permission-mode") + 1], toolSearch: process.env.ENABLE_TOOL_SEARCH ?? null }) }] } });
     send({ type: "result", subtype: "success", stop_reason: "end_turn" }); return;
   }
   if (input.includes("approval-check") || input.includes("approval-parallel") || input.includes("approval-withdraw") || input.includes("approval-edits")) {

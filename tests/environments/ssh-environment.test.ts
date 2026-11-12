@@ -164,7 +164,7 @@ test("SSH HTTP keeps browse independent, scopes project directories, deduplicate
     app.sshEnvironments.get(runtime, owner, profile.id),
     app.sshEnvironments.get(runtime, owner, profile.id),
   ]);
-  assert.equal(viewA, viewB);
+  assert.deepEqual(viewA, viewB);
   const catalog = await request(
     "/api/tools-environment/catalog/sources/conda",
     { ssh: profile.id },

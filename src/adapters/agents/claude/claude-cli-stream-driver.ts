@@ -1,3 +1,6 @@
+import type { AgentProfile, AgentDriverOptions, AgentStartInput, AgentPromptInput, AgentTurnResult, ResearchMcpBinding } from "../../../domain/agents/agent-types.js";
+import { claudePacketSchema } from "../shared/native-protocol.js";
+import type { ProcessCloseDetail } from "../shared/jsonl-process.js";
 import crypto from "node:crypto";
 import { AppError } from "../../../lib/errors.js";
 import { claudeTokenCounts, tokenCountDelta } from "../../../domain/agents/agent-usage.js";
@@ -9,7 +12,13 @@ import { claudeSettingsFile } from "../shared/native-config.js";
 import { promptImages } from "../shared/prompt-images.js";
 
 export class ClaudeCliStreamDriver extends AgentDriver {
-  constructor(profile, options = {}) {
+  child: JsonlProcess | null; trace: ClaudeTrace | null;
+  turnWait: { turnId: string; resolve: (result: AgentTurnResult) => void; reject: (error: unknown) => void } | null;
+  cancelRequested: boolean; sessionStarted: boolean;
+  previousUsage: ReturnType<typeof claudeTokenCounts> | undefined; previousCost: number | undefined;
+  sessionAllows: Set<string>; sessionDirectories: Set<string>; sessionPermissionMode: string | null;
+  developerInstructions?: string | null; researchMcp?: ResearchMcpBinding | null; permissionHost?: ClaudePermissionHost;
+  constructor(profile: AgentProfile, options: AgentDriverOptions = {}) {
     super(profile, options);
     this.child = null;
     this.turnWait = null;
@@ -19,12 +28,12 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     this.trace = null;
     this.previousUsage = claudeTokenCounts();
     this.previousCost = 0;
-    this.sessionAllows = new Set();
-    this.sessionDirectories = new Set();
+    this.sessionAllows = new Set<string>();
+    this.sessionDirectories = new Set<string>();
     this.sessionPermissionMode = null;
   }
 
-  async start({ cwd, resumeThreadId = null, developerInstructions = null, researchMcp = null } = {}) {
+  async start({ cwd, resumeThreadId = null, developerInstructions = null, researchMcp = null }: AgentStartInput = {}) {
     this.cwd = cwd ?? process.cwd();
     this.developerInstructions = developerInstructions;
     this.researchMcp = researchMcp;
@@ -41,18 +50,18 @@ export class ClaudeCliStreamDriver extends AgentDriver {
       session: { resume: true, close: true, sync: false },
       stream: true,
       cancel: true,
-      approval: { interactive: !["dontAsk", "bypassPermissions"].includes(this.profile.permissionMode), policy: this.profile.permissionMode ?? "default" },
+      approval: { interactive: !["dontAsk", "bypassPermissions"].includes(this.profile.permissionMode ?? ""), policy: this.profile.permissionMode ?? "default" },
     };
     this.authMethods = [];
     return {
-      nativeSessionId: this.nativeSessionId,
+      nativeSessionId: this.nativeSessionId!,
       capabilities: this.capabilities,
       agentInfo: this.agentInfo,
       authMethods: this.authMethods,
     };
   }
 
-  async prompt({ turnId, content, model, reasoningEffort }) {
+  async prompt({ turnId, content, model, reasoningEffort }: AgentPromptInput): Promise<AgentTurnResult> {
     if (this.closed) throw errorFromMessage("CLAUDE_SESSION_CLOSED", "Claude Code session 已关闭。", {}, 409);
     if (this.turnWait) throw errorFromMessage("AGENT_TURN_ALREADY_RUNNING", "Claude 当前已有运行中的 turn。", {}, 409);
     this.activeTurnId = turnId;
@@ -66,7 +75,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
       "--permission-prompt-tool=stdio",
       "--verbose",
       "--include-partial-messages",
-      ...((this.sessionPermissionMode ?? this.profile.permissionMode) ? ["--permission-mode", this.sessionPermissionMode ?? this.profile.permissionMode] : this.profile.nativeConfig ? [] : ["--permission-mode", "default"]),
+      ...((this.sessionPermissionMode ?? this.profile.permissionMode) ? ["--permission-mode", this.sessionPermissionMode ?? this.profile.permissionMode!] : this.profile.nativeConfig ? [] : ["--permission-mode", "default"]),
       "--allowed-tools", [...new Set([...(this.profile.nativeConfig ? [] : this.profile.allowedTools ?? ["Read", "Grep", "Glob"]), ...(this.researchMcp ? ["mcp__topolumia__*"] : [])])].join(","),
     ];
     const settingsFile = await claudeSettingsFile(this.profile, this.sessionAllows);
@@ -79,22 +88,21 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     if (selectedModel) args.push("--model", selectedModel);
     if (selectedEffort) args.push("--effort", selectedEffort);
     if (this.developerInstructions) args.push("--append-system-prompt", this.developerInstructions);
-    if (this.sessionStarted) args.push("--resume", this.nativeSessionId);
-    else args.push("--session-id", this.nativeSessionId);
+    if (this.sessionStarted) args.push("--resume", this.nativeSessionId!);
+    else args.push("--session-id", this.nativeSessionId!);
     args.push(...(this.profile.extraArgs ?? []));
-    const completion = new Promise((resolve, reject) => {
+    const completion = new Promise<AgentTurnResult>((resolve, reject) => {
       this.turnWait = { turnId, resolve, reject };
     });
     void completion.catch(() => {});
     // Each turn owns one short-lived Claude CLI process. Capture that process
     // in the callbacks so a late close event from the previous turn cannot
     // clear or settle the process that has already started for the next turn.
-    let processRef;
-    processRef = new JsonlProcess({
+    const processRef: JsonlProcess = new JsonlProcess({
       command: this.profile.command,
       args,
       cwd: this.cwd,
-      env: { ...this.environment, ...(this.researchMcp ? { ENABLE_TOOL_SEARCH: "false" } : {}) },
+      env: this.environment,
       label: this.profile.label,
       requestTimeoutMs: this.requestTimeoutMs,
       onMessage: (message) => this.#onMessage(message, processRef),
@@ -115,7 +123,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
       await processRef.start();
       if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
       const initialized = await host.initialize(Math.min(this.requestTimeoutMs, 60_000));
-      this.agentInfo = { ...this.agentInfo, version: initialized.claude_code_version ?? this.agentInfo.version };
+      this.agentInfo = { ...this.agentInfo, version: typeof initialized.claude_code_version === "string" ? initialized.claude_code_version : this.agentInfo.version };
       if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
       const images = await promptImages(content);
       if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
@@ -148,7 +156,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     timer.unref?.();
   }
 
-  async resolvePermission(requestId, optionId, cancelled = false) {
+  async resolvePermission(requestId: string, optionId: string | null, cancelled = false) {
     if (!this.permissionHost && !cancelled) throw new AppError("AGENT_APPROVAL_NOT_FOUND", "Claude 审批请求已失效。", { status: 404 });
     this.permissionHost?.resolve(requestId, optionId, cancelled);
   }
@@ -161,8 +169,14 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     await this.child?.kill();
   }
 
-  #onMessage(message, processRef) {
+  #onMessage(value: unknown, processRef: JsonlProcess) {
     if (this.child !== processRef) return;
+    const parsed = claudePacketSchema.safeParse(value);
+    if (!parsed.success) {
+      this.emit("provider.event", { kind: "protocol-error", detail: parsed.error.message });
+      return;
+    }
+    const message = parsed.data;
     if (this.permissionHost?.consume(message)) return;
     const type = message?.type;
     if (this.trace?.consume(message)) return;
@@ -184,7 +198,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
         const last = tokenCountDelta(total, this.previousUsage);
         this.emit("usage.updated", { provider: "claude", scope: "session", lastScope: last ? "turn" : null,
           tokenUsage: { total, ...(last ? { last } : {}) }, cost: message.total_cost_usd ?? null, costScope: "session",
-          turnCost: this.previousCost === undefined || message.total_cost_usd < this.previousCost ? null : message.total_cost_usd - this.previousCost,
+          turnCost: this.previousCost === undefined || message.total_cost_usd === undefined || message.total_cost_usd < this.previousCost ? null : message.total_cost_usd - this.previousCost,
           nativeUsage: message.usage, nativeModelUsage: message.modelUsage });
         this.previousUsage = total;
         this.previousCost = message.total_cost_usd;
@@ -198,7 +212,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
         const auth = /auth|login|credential|api key|unauthorized|logged in/i.test(joined);
         this.#settleTurn(null, errorFromMessage(auth ? "AGENT_AUTH_REQUIRED" : "CLAUDE_TURN_FAILED", joined, { subtype: message.subtype }, auth ? 503 : 502));
       } else {
-        const incomplete = ["max_tokens", "length"].includes(message.stop_reason);
+        const incomplete = ["max_tokens", "length"].includes(message.stop_reason ?? "");
         this.trace?.finish(this.cancelRequested ? "interrupted" : incomplete ? "incomplete" : "completed");
         this.#settleTurn({ stopReason: this.cancelRequested ? "cancelled" : incomplete ? "incomplete" : normalizeStopReason(message.stop_reason),
           usage: message.usage, cost: message.total_cost_usd, nativeSessionId: message.session_id ?? this.nativeSessionId });
@@ -209,7 +223,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     else this.emit("provider.event", { kind: "claude-message", message });
   }
 
-  #onClose(detail, processRef) {
+  #onClose(detail: ProcessCloseDetail, processRef: JsonlProcess) {
     const isCurrentProcess = this.child === processRef;
     if (isCurrentProcess) this.permissionHost?.close();
     // A previous turn may close after the next turn has already started. It
@@ -228,7 +242,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     if (isCurrentProcess) this.child = null;
   }
 
-  #settleTurn(result = null, error = null) {
+  #settleTurn(result: AgentTurnResult | null = null, error: unknown = null) {
     const wait = this.turnWait;
     if (!wait) return;
     this.turnWait = null;

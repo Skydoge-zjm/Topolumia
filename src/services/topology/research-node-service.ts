@@ -1,26 +1,23 @@
 import { nodeRef } from "../../domain/research/object-ref.js";
 import { deleteNodeInput } from "../../domain/research/changes/operations.js";
 import { fail } from "../../domain/research/access.js";
+import type { ResearchCommandService } from "../research/research-command-service.js";
+import type { ResearchActor, SourceReference } from "../../domain/research/types.js";
+type NodeRuntime = { researchCommands: ResearchCommandService; history: { list: (input:{objectId:string;limit:number}) => {items:{id:string}[]} } };
 
 export class ResearchNodeService {
-  constructor(runtime){this.runtime=runtime;this.commands=runtime.researchCommands;}
-  detail(id){return this.commands.nodes.detail(id);}
-  node(id){return this.commands.nodes.node(id);}
-  createNode(kind,core,actor,sourceRefs=[]){
-    const view=this.commands.changes.direct([{op:"addNode",clientRef:"node",kind,core,sourceRefs}],actor);
+  commands: ResearchCommandService;
+  constructor(public runtime: NodeRuntime){this.commands=runtime.researchCommands;}
+  detail(id: string){return this.commands.nodes.detail(id);}
+  node(id: string){return this.commands.nodes.node(id);}
+  createNode(kind: "paper"|"experiment"|"note", core: unknown, actor: ResearchActor, sourceRefs: SourceReference[] = [], body: string|undefined=undefined){
+    const operations: unknown[] = [{op:"addNode",clientRef:"node",kind,core,sourceRefs}];
+    if (kind === "note" && body !== undefined) operations.push({op:"addBlock",clientRef:"body",owner:nodeRef("@node"),title:"正文",type:"richText",role:"body",payload:{format:"markdown",body}});
+    const view=this.commands.changes.direct(operations,actor);
     return this.detail(view.allocation["node:node"]);
   }
-  async results(id){
-    const node=this.node(id);
-    if(node.kind!=="experiment")fail("NODE_NOT_EXPERIMENT","此节点不是实验。",422);
-    const blocks=this.commands.nodes.blocks(id);
-    const sources=[...(node.sourceRefs??[]),...blocks.flatMap(block=>block.sourceRefs??[])];
-    const runRefs=[...new Set(sources.map(source=>source.value).filter(value=>/^(mlflow|wandb|tensorboard|simulation):run:.+/.test(value)))];
-    const results=await Promise.allSettled(runRefs.slice(0,16).map(ref=>this.runtime.registry.experiments.detail(ref,{maxPoints:240})));
-    return {experiment:null,attempts:[],details:results.filter(result=>result.status==="fulfilled").map(result=>result.value),warnings:[...results.filter(result=>result.status==="rejected").map(result=>({message:result.reason?.message??"运行数据不可用"})),...(runRefs.length>16?[{message:`仅展示前 16 条运行引用，另有 ${runRefs.length-16} 条。`}]:[])],authoredMetrics:blocks.filter(block=>block.type==="metric").flatMap(block=>block.payload?.items??[]),links:blocks.flatMap(block=>[...(block.type==="link"&&block.payload?[block.payload]:[]),...(block.representations??[]).filter(rep=>rep.kind==="link")])};
-  }
-  updateCore(id,patch,actor,expectedCoreRevision){this.commands.changes.direct([{op:"updateCore",owner:nodeRef(id),expectedCoreRevision,patch}],actor);return this.detail(id);}
-  deleteNode(id,input,actor){
+  updateCore(id: string, patch: unknown, actor: ResearchActor, expectedCoreRevision: number){this.commands.changes.direct([{op:"updateCore",owner:nodeRef(id),expectedCoreRevision,patch}],actor);return this.detail(id);}
+  deleteNode(id: string, input: unknown, actor: ResearchActor){
     this.commands.check(actor,"research.withdrawOrSupersede");
     const value=this.commands.changes.validate(deleteNodeInput,input),node=this.node(id);
     if(node.revision!==value.expectedNodeRevision)fail("NODE_VERSION_CONFLICT","节点内容已更新，请重新载入并核对后再删除。",409,{nodeId:id,expected:value.expectedNodeRevision,current:node.revision});

@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { fixture } from "../../dist/tests/research/interface/helpers.js";
@@ -20,8 +21,8 @@ test("reading results persist after review; node deletion protects and reloads r
     await page.goto(`${f.app.url}/#/agents?candidate=${encodeURIComponent(identity.candidateId)}`);
     await expect(page.getByText("仅包含文献基础信息，没有阅读内容。接受此候选不会保存论文阅读结果。", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "接受并保存", exact: true }).click();
-    await page.getByRole("link", { name: "查看已保存节点", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "当前仅有文献基础信息", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "查看已保存对象 · Reading result browser fixture", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "暂无研究材料", exact: true })).toBeVisible();
 
     const firstText = "This fixture preserves the exact method explanation in the formal node, including its source limitation.";
     const secondText = "The result is a draft interpretation, not a verified scientific claim.";
@@ -35,7 +36,7 @@ test("reading results persist after review; node deletion protects and reloads r
     expect(proposal.researchContent.blockTypes).toMatchObject({richText:2,image:1,table:1});
     expect(proposal.researchContent.imageAssets).toBe(1);
     await page.reload();
-    await expect(page.getByRole("heading", { name: "待审研究内容", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "待审科研变更", exact: true })).toBeVisible();
     await expect(page.getByText(firstText, { exact: true })).toBeVisible();
     await expect(page.getByText(secondText, { exact: true })).toBeVisible();
     const previewImage=page.getByRole("img",{name:"Synthetic research framework",exact:true});
@@ -52,7 +53,7 @@ test("reading results persist after review; node deletion protects and reloads r
     expect(JSON.stringify(exported.rows)).toContain("Qualitative comparison");
     expect(f.runtime.researchCommands.nodes.blocks(identity.nodes[0].nodeId)).toHaveLength(0);
     await page.getByRole("button", { name: "接受并保存", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "待审研究内容", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "待审科研变更", exact: true })).toHaveCount(0);
     await expect(page.getByText(firstText, { exact: true })).toBeVisible();
     await expect(page.getByText(secondText, { exact: true })).toBeVisible();
     await page.reload();
@@ -61,7 +62,7 @@ test("reading results persist after review; node deletion protects and reloads r
     await expect(page.getByRole("cell",{name:"Qualitative comparison",exact:true})).toBeVisible();
     await expect.poll(()=>page.getByRole("img",{name:"Synthetic research framework",exact:true}).evaluate(image=>(image as HTMLImageElement).naturalWidth)).toBe(420);
     expect(f.runtime.researchCommands.nodes.blocks(identity.nodes[0].nodeId).filter(block=>block.type==="richText").map(block => block.payload.body)).toEqual([firstText, secondText]);
-    await page.screenshot({ path: path.resolve("runtime/agent-interface-evaluation/accepted-reading-node.png"), fullPage: true });
+    await page.screenshot({ path: runtimeArtifact("agent-interface-evaluation/accepted-reading-node.png"), fullPage: true });
 
     // The node changes after the page was read: protect it, then reload and delete via the actual dialog.
     const nodeId=identity.nodes[0].nodeId;
@@ -77,7 +78,9 @@ test("reading results persist after review; node deletion protects and reloads r
     await page.getByRole("button",{name:"确认删除",exact:true}).click();
     await expect(page).toHaveURL(/#\/records\/history\//);
     expect(f.runtime.researchCommands.store.get("nodes",nodeId).deleted).toBe(true);
-    expect(f.runtime.researchCommands.store.all("blocks").filter(block=>block.nodeId===nodeId).every(block=>block.lifecycle==="archived")).toBe(true);
+    const archivedBlocks=f.runtime.researchCommands.store.all("blocks").filter(block=>block.owner.kind==="node"&&block.owner.id===nodeId);
+    expect(archivedBlocks.length).toBeGreaterThan(0);
+    expect(archivedBlocks.every(block=>block.lifecycle==="archived")).toBe(true);
     expect(f.runtime.state.topology.nodes.some(node=>node.id===nodeId)).toBe(false);
   } finally { await cleanup!(); }
 });

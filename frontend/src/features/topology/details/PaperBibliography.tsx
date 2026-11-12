@@ -19,7 +19,7 @@ export function PaperBibliography({ core, en, initialExpanded }: { core: Record<
   const tags = (Array.isArray(core.tags) ? core.tags : []).map(cleanText).filter(Boolean);
   const other = (Array.isArray(core.identifiers?.other) ? core.identifiers.other : []).map(cleanText).filter(Boolean);
   if (!authors.length && !abstract && !field && !urls.length && !tags.length && !other.length) return null;
-  return <details className="research-card research-bibliography" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
+  return <details className="research-bibliography" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
     <summary><Rows3 size={17} /><span><strong>{en ? "Bibliographic information" : "文献基础信息"}</strong></span><ChevronDown size={17} className="research-bibliography-toggle" /></summary>
     {abstract && <p className="research-abstract-text">{abstract}</p>}
     <dl className="research-field-details">
@@ -27,7 +27,7 @@ export function PaperBibliography({ core, en, initialExpanded }: { core: Record<
       {field && <div><dt>{en ? "Research field" : "研究领域"}</dt><dd>{field}</dd></div>}
       {urls.length > 0 && <div><dt>{en ? "Original links" : "原文链接"}</dt><dd>{urls.map(url => <a key={url} href={url} target="_blank" rel="noopener noreferrer">{url}</a>)}</dd></div>}
       {other.length > 0 && <div><dt>{en ? "Other identifiers" : "其他标识"}</dt><dd>{other.join(" · ")}</dd></div>}
-      {tags.length > 0 && <div className="research-wide"><dt>{en ? "Tags" : "标签"}</dt><dd className="research-tag-list">{tags.map(tag => <span key={tag}>{tag}</span>)}</dd></div>}
+      {tags.length > 0 && <div className="research-wide"><dt>{en ? "Tags" : "标签"}</dt><dd><ul className="tag-list">{tags.map(tag => <li key={tag}>{tag}</li>)}</ul></dd></div>}
     </dl>
   </details>;
 }

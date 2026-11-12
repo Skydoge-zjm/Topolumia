@@ -1,6 +1,7 @@
 import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
 import { parse as jsonParse, printParseErrorCode } from "jsonc-parser";
 export type NativeConfigDocument = {
+  configKey?: string;
   provider: string;
   filename: string;
   format: string;

@@ -9,7 +9,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-function fixture(provider = "codex") {
+function fixture(provider = "codex", configKey = provider) {
   const content =
     provider === "codex"
       ? '# keep\nmodel = "gpt-6-luna"\n[features]\nenabled = true\n'
@@ -18,6 +18,7 @@ function fixture(provider = "codex") {
         : '{"model":"gpt-6-luna","env":{"PROVIDER":"lab"}}';
   let document = {
     provider,
+    configKey,
     filename:
       provider === "codex"
         ? "config.toml"
@@ -218,4 +219,22 @@ it("protects unsaved native edits when closing", async () => {
   await f.user.click(screen.getByRole("button", { name: "关闭配置" }));
   expect(f.onClose).toHaveBeenCalledTimes(1);
   confirm.mockRestore();
+});
+
+it("edits V2 default permission without deleting ordered exceptions or provider settings", async () => {
+  const f = fixture("opencode", "opencode-v2");
+  const source = await screen.findByLabelText("配置文件内容");
+  const custom = { model: { providerID: "lab", model: "reasoner", variant: "high" }, permissions: [
+    { action: "*", resource: "*", effect: "ask" },
+    { action: "shell", resource: "git push *", effect: "deny" },
+  ], providers: { lab: { settings: { baseURL: "https://fixture.invalid" } } } };
+  await f.user.clear(source); await f.user.click(source); await f.user.paste(JSON.stringify(custom));
+  expect(screen.getByRole("combobox", { name: "默认模型" })).toHaveValue("lab/reasoner#high");
+  await f.user.click(screen.getByRole("button", { name: "工具权限" }));
+  await f.user.click(screen.getByRole("option", { name: "自动允许" }));
+  const parsed = JSON.parse((source as HTMLTextAreaElement).value);
+  expect(parsed.permissions).toEqual([{ action: "*", resource: "*", effect: "allow" }, custom.permissions[1]]);
+  expect(parsed.providers).toEqual(custom.providers); expect(parsed.model).toEqual(custom.model);
+  await f.user.click(screen.getByRole("button", { name: "保存配置" }));
+  await waitFor(() => expect(f.onSaved).toHaveBeenCalled());
 });

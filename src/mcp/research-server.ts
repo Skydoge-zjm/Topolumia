@@ -13,9 +13,26 @@ import {
 } from "../domain/research/research-mcp-contract.js";
 import { ResearchCliRunner, executionError } from "./cli-runner.js";
 import { inputIssues } from "../domain/research/interfaces/input-errors.js";
+import { isResearchToolName, type ResearchToolInputs, type ResearchToolName } from "../domain/research/interfaces/tools.js";
+import type { ResearchMcpBinding } from "../domain/agents/agent-types.js";
+import type { CliRunnerOptions, CliExecution } from "./cli-runner.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { clientError, researchResultSchema, wireErrorSchema } from "../client/research-response.js";
+import * as z from "zod/v4";
+
+const controlResponseSchema = z.looseObject({ permissions: z.array(z.string()).optional(), researchInterface: z.string().optional(), cliContract: z.string().optional(), error: wireErrorSchema.optional() });
+interface QueueTask {
+  write: boolean; signal?: AbortSignal; timer?: ReturnType<typeof setTimeout>; abort: () => void;
+  resolve: (release: () => void) => void; reject: (error: unknown) => void;
+}
+type Runner = Pick<ResearchCliRunner, "run" | "checkContract" | "close">;
+function researchCommand<K extends ResearchToolName>(name: K, value: ResearchToolInputs[K]) { return researchTools[name].command(value); }
 
 export class ResearchMcpServer {
-  constructor(binding, options = {}) {
+  binding: Pick<ResearchMcpBinding, "env" | "cwd">; runner: Runner;
+  queue: QueueTask[]; activeReads: number; activeWrites: number; closed: boolean; server: Server;
+  constructor(binding: Pick<ResearchMcpBinding, "env" | "cwd">, options: CliRunnerOptions & { runner?: Runner } = {}) {
     this.binding = binding;
     this.runner = options.runner ?? new ResearchCliRunner(binding, options);
     this.queue = [];
@@ -28,7 +45,7 @@ export class ResearchMcpServer {
     );
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       const access = await this.control("access");
-      return { tools: toolDefinitions(access.permissions) };
+      return { tools: toolDefinitions(access.permissions).map(tool => ({ ...tool, inputSchema: { ...tool.inputSchema, type: "object" as const } })) };
     });
     this.server.setRequestHandler(
       CallToolRequestSchema,
@@ -40,7 +57,7 @@ export class ResearchMcpServer {
         ),
     );
   }
-  async control(endpoint, body, signal) {
+  async control(endpoint: string, body?: unknown, signal?: AbortSignal) {
     let response;
     try {
       response = await fetch(
@@ -61,7 +78,7 @@ export class ResearchMcpServer {
     } catch {
       throw executionError("MCP_CONTROL_UNAVAILABLE", "科研授权服务不可用。");
     }
-    const data = await response.json().catch(() => ({}));
+    const data = controlResponseSchema.parse(await response.json().catch(() => ({})));
     if (!response.ok)
       throw executionError(
         data.error?.code ?? "MCP_AUTHORIZATION_FAILED",
@@ -70,7 +87,7 @@ export class ResearchMcpServer {
       );
     return data;
   }
-  async connect(transport) {
+  async connect(transport: Transport) {
     const access = await this.control("access");
     if (
       access.researchInterface !== RESEARCH_INTERFACE ||
@@ -83,7 +100,7 @@ export class ResearchMcpServer {
     };
     await this.server.connect(transport);
   }
-  acquire(write, signal) {
+  acquire(write: boolean, signal?: AbortSignal): Promise<() => void> {
     if (this.closed || signal?.aborted)
       return Promise.reject(
         executionError("MCP_CANCELLED", "科研调用已取消。"),
@@ -92,8 +109,8 @@ export class ResearchMcpServer {
       return Promise.reject(
         executionError("MCP_QUEUE_FULL", "科研调用队列已满，请稍后重试。"),
       );
-    return new Promise((resolve, reject) => {
-      const task = { write, resolve, reject, signal, timer: null, abort: null };
+    return new Promise<() => void>((resolve, reject) => {
+      const task: QueueTask = { write, resolve, reject, signal, abort: () => {} };
       task.abort = () => {
         const index = this.queue.indexOf(task);
         if (index >= 0) this.queue.splice(index, 1);
@@ -118,30 +135,34 @@ export class ResearchMcpServer {
       this.queue.splice(i, 1);
       clearTimeout(task.timer);
       task.signal?.removeEventListener("abort", task.abort);
-      task.write ? this.activeWrites++ : this.activeReads++;
+      if (task.write) this.activeWrites++; else this.activeReads++;
       task.resolve(() => {
-        task.write ? this.activeWrites-- : this.activeReads--;
+        if (task.write) this.activeWrites--; else this.activeReads--;
         this.drain();
       });
     }
   }
-  async call(name,input,signal){
-    const requestId=randomUUID();let release,authorized=false,execution=null,retryKey;const tool=Object.hasOwn(researchTools,name)?researchTools[name]:null;
+  async call(name: string,input: unknown,signal?: AbortSignal): Promise<CallToolResult>{
+    const requestId=randomUUID();let release: (() => void) | undefined,authorized=false,execution: CliExecution | null=null,retryKey: string | undefined;
+    const toolName=isResearchToolName(name)?name:null,tool=toolName?researchTools[toolName]:null;
     try{
-      if(!tool)throw executionError("MCP_TOOL_NOT_FOUND","Unknown research tool.");
+      if(!tool||!toolName)throw executionError("MCP_TOOL_NOT_FOUND","Unknown research tool.");
       if(Buffer.byteLength(JSON.stringify(input))>262144)throw executionError("MCP_INPUT_TOO_LARGE","Input exceeds 256 KiB.");
-      let value;try{value=tool.validate(input);}catch(e){throw executionError("MCP_INPUT_INVALID","Input does not match tool schema.",{detail:e.issues?inputIssues(tool.schema,input,e.issues):{message:e.message}});}
-      if(name==="create_candidate"){value.idempotencyKey??=randomUUID();retryKey=value.idempotencyKey;}
-      const write=Boolean(tool.write||name==="transfer_asset"&&value.direction==="upload");
+      let value: ResearchToolInputs[ResearchToolName];try{value=tool.validate(input);}catch(cause){throw executionError("MCP_INPUT_INVALID","Input does not match tool schema.",{detail:cause instanceof z.ZodError?inputIssues(tool.schema,input,cause.issues):{message:clientError(cause).message}});}
+      if(name==="create_candidate"){const candidate=researchTools.create_candidate.validate(value);candidate.idempotencyKey??=randomUUID();retryKey=candidate.idempotencyKey;value=candidate;}
+      const direction="direction" in value?value.direction:undefined;
+      const write=Boolean(tool.write||name==="transfer_asset"&&direction==="upload");
       release=await this.acquire(write,signal);
       const deadline=AbortSignal.timeout(tool.transfer?110000:25000),callSignal=signal?AbortSignal.any([signal,deadline]):deadline;
-      await this.control("access/authorize",{tool:name,requestId,argumentsHash:createHash("sha256").update(JSON.stringify(value)).digest("hex"),...(name==="transfer_asset"?{action:value.direction}:{})},callSignal);authorized=true;
-      const command=tool.command(value),result=await this.runner.run(["--timeout-ms",tool.transfer?"90000":"15000",...command.args],command.input,{signal:callSignal,requestId,timeoutMs:tool.transfer?100000:20000});execution=result.execution;
-      if(result.data.schemaVersion!=="research-agent-result.v1"||result.data.kind!==tool.kind)throw executionError("CLI_RESPONSE_INVALID","CLI response contract mismatch.",{execution});
-      const visibleText=JSON.stringify(result.data),context={resultChars:visibleText.length,contentChars:visibleText.length,structuredChars:visibleText.length,toolDefinitionChars:JSON.stringify(toolDefinitions()).length,instructionsChars:MCP_INSTRUCTIONS.length};
-      await this.control("access/complete",{requestId,outcome:"completed",...execution,resultId:result.data.data?.candidateId??result.data.data?.assetId??null,context}).catch(()=>{});
-      return{content:[{type:"text",text:visibleText}],structuredContent:result.data,_meta:{execution:{...execution,via:"cli",contract:CLI_CONTRACT},context,requestId}};
-    }catch(error){
+      await this.control("access/authorize",{tool:name,requestId,argumentsHash:createHash("sha256").update(JSON.stringify(value)).digest("hex"),...(name==="transfer_asset"?{action:direction}:{})},callSignal);authorized=true;
+      const command=researchCommand(toolName,value),result=await this.runner.run(["--timeout-ms",tool.transfer?"90000":"15000",...command.args],command.input,{signal:callSignal,requestId,timeoutMs:tool.transfer?100000:20000});execution=result.execution;
+      const parsed=researchResultSchema.safeParse(result.data);
+      if(!parsed.success||parsed.data.kind!==tool.kind)throw executionError("CLI_RESPONSE_INVALID","CLI response contract mismatch.",{execution});
+      const data=parsed.data,visibleText=JSON.stringify(data),context={resultChars:visibleText.length,contentChars:visibleText.length,structuredChars:visibleText.length,toolDefinitionChars:JSON.stringify(toolDefinitions()).length,instructionsChars:MCP_INSTRUCTIONS.length};
+      await this.control("access/complete",{requestId,outcome:"completed",...execution,resultId:data.data.candidateId??data.data.assetId??null,context}).catch(()=>{});
+      return{content:[{type:"text",text:visibleText}],structuredContent:data,_meta:{execution:{...execution,via:"cli",contract:CLI_CONTRACT},context,requestId}};
+    }catch(cause){
+      const error=clientError(cause);
       const uncertain=Boolean((tool?.write||name==="transfer_asset")&&authorized&&(error.execution?.pid||execution?.pid)&&(error.exitCode===undefined||error.exitCode===5));
       const data={error:{code:error.code??"MCP_CALL_FAILED",message:String(error.message).slice(0,400),requestId,...(error.detail?{detail:error.detail}:{}),...(retryKey?{idempotencyKey:retryKey}:{}),outcome:uncertain?"unknown":error.outcome??"failed",retryable:!tool?.write&&error.code==="MCP_CONTROL_UNAVAILABLE",...(uncertain?{recovery:"Read candidates with the returned idempotencyKey, or retry identical input with that key. For an edit, read the candidate revision before retrying."}:{})}};
       if(authorized)await this.control("access/complete",{requestId,outcome:data.error.outcome,...(error.execution??execution??{}),errorCode:data.error.code}).catch(()=>{});

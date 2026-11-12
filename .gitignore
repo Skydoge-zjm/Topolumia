@@ -43,6 +43,7 @@
 node_modules/
 __pycache__/
 .venv-test/
+.venv-records/
 .test-runtime/
 dist/
 playwright-report/

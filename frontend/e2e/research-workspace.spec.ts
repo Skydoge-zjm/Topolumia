@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,7 +13,7 @@ const request = async (route: string, body?: any) => {
 };
 test.beforeAll(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "topolumia-notebook-browser-"));
-  app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false } } });
+  app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { project: { workspacesRoot: path.join(root, "workspaces") }, sourceRefresh: { enabled: false } } });
   const user = app.collaboration.bootstrapAdmin({ username: "notebook-browser", password });
   token = app.collaboration.login("notebook-browser", password).token;
   project = app.collaboration.createProject({ id: "notebook-browser-project", name: "Notebook browser project" }, app.collaboration.actorForUser(user.id, app.config.project.id));
@@ -22,7 +23,11 @@ test.beforeAll(async () => {
   await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "metric", title: "Metrics", payload: { items: [{ name: "PSNR", value: 31.2 }] } });
   await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "link", title: "Dashboard", payload: { label: "W&B experiment dashboard", url: "https://wandb.ai/lab/study/runs/one", kind: "wandb" } });
   const runtime = await app.getRuntime(project.id);
-  runtime.registry.experiments.detail = async (ref: string) => ({ run: { ref, label: "Training run 1", status: "FINISHED", metrics: { loss: .25 } }, series: { series: [{ key: "loss", points: [{ x: 0, y: 1 }, { x: 10, y: .25 }], downsampled: false }] }, source: { provider: "wandb", mode: "fixture", observedAt: "2026-10-31T00:00:00Z" } });
+  const actor=app.collaboration.actorForUser(user.id,project.id),commands=runtime.researchCommands;
+  const source=commands.projectRecords.configure({provider:"wandb",directory:path.join(root,"record-source"),hostId:"local",hostLabel:"Local fixture"},actor);
+  commands.ingestion.receive(source.id,{version:1,provider:"wandb",streamId:"training",writerId:"training",generation:"one",events:[{seq:0,sourceRunId:"training",kind:"run",label:"Training run 1",status:"succeeded"},{seq:1,sourceRunId:"training",kind:"scalar",key:"loss",xKey:"step",x:0,value:1},{seq:2,sourceRunId:"training",kind:"scalar",key:"loss",xKey:"step",x:10,value:.25}]},actor);
+  const run=commands.projectRecords.directory(actor).items[0];
+  await request(`/api/research-objects/node/${encodeURIComponent(experiment.node.id)}/content-blocks`, { type: "experimentRecord", title: "训练过程", payload: { provider: "wandb", runs: [{sourceId:run.sourceId,label:run.label,status:run.status,assetIds:[],projectSource:run.projectSource}] } });
   runtime.state.recordEvent({ type: "agentMessage", actor: "agent", nodeIds: [], sourceRefs: [], payload: { text: "RUNTIME_REPLY_MUST_NOT_APPEAR" } }, { skipValidation: true });
 });
 test.afterAll(async () => {
@@ -53,7 +58,7 @@ test("researchers write independent minutes, multiline participants and revision
   await page.getByRole("option", { name: /^v1/ }).click();
   await expect(page.locator("main")).toContainText("复现需要增加三个随机种子。");
   await expect(page.getByRole("button", { name: "编辑记录", exact: true })).toHaveCount(0);
-  await page.screenshot({ path: "runtime/research-record-detail.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("research-record-detail.png"), fullPage: true });
 });
 test("groups collapse to a group node, expand, and open editable scientific details", async ({ page }) => {
   await page.goto(app.url + "/#/topology");
@@ -65,26 +70,36 @@ test("groups collapse to a group node, expand, and open editable scientific deta
   await dialog.getByRole("button", { name: "保存节点组", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.goto(app.url+"/#/topology");
+  await expect(page.locator(".research-graph-node.is-group.is-collapsed")).toHaveCount(1);
+  await page.getByRole("button", { name: "展开 文献组", exact: true }).first().click();
+  await expect(page.locator(".research-graph-node.is-group.is-expanded")).toHaveCount(1);
   await page.getByRole("button", { name: "收起 文献组", exact: true }).first().click();
   await expect(page.locator(".research-graph-node.is-group.is-collapsed")).toHaveCount(1);
   await expect(page.locator(".research-graph-node-main").filter({ hasText: "Paper A" })).toHaveCount(0);
   await page.reload(); await expect(page.locator(".research-graph-node.is-group")).toHaveCount(1);
   await page.getByRole("button", { name: "展开 文献组", exact: true }).first().click();
-  await expect(page.locator(".research-graph-node.is-group")).toHaveCount(0);
+  await expect(page.locator(".research-graph-node.is-group.is-expanded")).toHaveCount(1);
   await page.getByRole("button", { name: "适配视图", exact: true }).click();
   await page.locator(".research-graph-node-main").filter({ hasText: "Paper A" }).click();
-  await expect(page.getByRole("heading", { name: "Paper A", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "A scientific paper", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "编辑核心信息", exact: true }).click();
   await page.getByLabel("作者 · 每行一人", { exact: true }).fill("Alice and Bob");
   await page.getByRole("button", { name: "保存核心信息", exact: true }).click();
   await expect(page.locator("main")).toContainText("Alice and Bob");
   await page.goto(app.url + "/#/topology/nodes/" + encodeURIComponent(experiment.node.id));
-  await page.getByRole("button", { name: "实验结果", exact: true }).click();
   await expect(page.getByRole("cell", { name: "31.2", exact: true })).toBeVisible();
-  await expect(page.locator(".research-metric-chart")).toHaveCount(1);
+  const curve = page.getByRole("figure", { name: "loss", exact: true });
+  await curve.scrollIntoViewIfNeeded();
+  await expect(curve).toBeVisible();
+  await expect(curve.getByRole("img", { name: "loss · 1 次运行", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /W&B experiment dashboard/ })).toHaveAttribute("href", "https://wandb.ai/lab/study/runs/one");
-  await expect(page.locator(".research-metric-chart")).toContainText("2 个返回数据点");
-  await page.screenshot({ path: "runtime/research-experiment-results.png", fullPage: true });
+  await page.getByRole("button", { name: "数据表", exact: true }).click();
+  await expect(page.getByRole("region", { name: "实验数据", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "0.25", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "曲线", exact: true }).click();
+  await page.getByRole("button", { name: "运行与材料", exact: true }).click();
+  await expect(page.locator(".experiment-run-item").filter({ hasText: "Training run 1" })).toBeVisible();
+  await page.screenshot({ path: runtimeArtifact("research-experiment-results.png"), fullPage: true });
 });
 test("recurring monthly activities create distinct planned occurrences without generated minutes", async ({ page }) => {
   await page.goto(app.url + "/#/records");

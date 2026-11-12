@@ -4,7 +4,7 @@
 
 ## 局部修改
 
-材料列表每次挂载一页内容块。节点详情复用已返回的完整块数据，节点组沿用目录接口分页；翻页不重新编译或丢弃科研内容。编辑期间禁止翻页，排序仍提交完整集合的 ID 与观察版本。
+材料列表每次挂载一页内容块。节点详情复用已返回的完整块数据，节点组沿用目录接口分页；大纲定位按实际加载页面查找目标，支持在已加载的节点组页面间跳转。新增或编辑期间，分页按钮和跨页的大纲条目均不可用，当前编辑器保持挂载；保存或取消后恢复定位。排序仍提交完整集合的 ID 与观察版本。
 
 编辑已有块时，以原 payload 为底稿，只提交用户真正修改的字段。重命名仅发送 title；不能用表单已知字段重建整份 payload，否则条件、脚注、翻译、文件名、工作表范围和图表配置等会被清空。
 
@@ -30,6 +30,6 @@ PATCH 中省略表示保留，允许的 null 表示移除；创建默认值与�
 
 ## 验证
 
-[ContentBlockEditor.spec.tsx](../../../../frontend/src/features/topology/details/ContentBlockEditor.spec.tsx) 覆盖重命名、各类 payload、来源、纯表示与值类型保留；[research-edit-integrity.spec.ts](../../../../frontend/e2e/research-edit-integrity.spec.ts) 验证浏览器到存储的往返；[reliability.spec.ts](../../../../frontend/e2e/reliability.spec.ts) 验证冲突重载与明确删除。
+[ContentBlockEditor.spec.tsx](../../../../frontend/src/features/topology/details/ContentBlockEditor.spec.tsx) 覆盖重命名、各类 payload、来源、纯表示与值类型保留；[ObjectContentWorkspace.spec.tsx](../../../../frontend/src/features/topology/details/ObjectContentWorkspace.spec.tsx) 覆盖跨页草稿保护和节点组大纲定位；[InlineField.spec.tsx](../../../../frontend/src/features/topology/details/InlineField.spec.tsx) 覆盖就地编辑时的输入法确认与取消。[research-edit-integrity.spec.ts](../../../../frontend/e2e/research-edit-integrity.spec.ts) 验证浏览器到存储的往返；[reliability.spec.ts](../../../../frontend/e2e/reliability.spec.ts) 验证冲突重载与明确删除。
 
 新增字段后优先确认往返编辑不丢失，而不是仅验证首次创建成功。

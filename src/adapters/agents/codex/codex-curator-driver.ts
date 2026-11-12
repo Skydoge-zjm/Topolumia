@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import type { AppConfig } from "../../../config.js";
+import type { CuratorInput, CuratorDriverResult } from "../../../services/topology/curator-types.js";
 import { AppError } from "../../../lib/errors.js";
 import { resolveInvocation } from "../../../lib/command.js";
 import { CodexExecClient, deriveExplorationTrace, extractJsonObject } from "./codex-exec-client.js";
@@ -6,11 +7,11 @@ import { topologyCuratorResultSchema } from "../../../domain/schemas.js";
 import { validateTopologyCuratorResult } from "../../../domain/validators.js";
 import { CuratorWorkspaceService } from "../../../services/topology/curator-workspace.js";
 
-function language(locale) {
+function language(locale: string) {
   return locale === "en" ? "English" : "Simplified Chinese";
 }
 
-function buildPrompt({ locale = "zh", context = {} } = {}) {
+function buildPrompt({ locale = "zh", context = {} }: CuratorInput = {}) {
   return [
     "You are the topology curator for a scientific research workbench.",
     "You are operating in a bounded, read-only workspace. It is a materialized research state, not the original project repository.",
@@ -37,7 +38,8 @@ function buildPrompt({ locale = "zh", context = {} } = {}) {
   ].join("\n");
 }
 
-function mapDriverError(error) {
+function mapDriverError(error: unknown) {
+  if (!(error instanceof AppError)) return error;
   if (error?.code === "CODEX_TURN_TIMEOUT") return new AppError("CURATOR_TIMEOUT", "Topology Curator 执行超时。", { status: 504, retryable: true, detail: error.detail });
   if (["CODEX_PROCESS_ERROR", "CODEX_EXEC_FAILED"].includes(error?.code)) return new AppError("CURATOR_RUNTIME_UNAVAILABLE", "Topology Curator runtime 不可用。", { status: 503, retryable: true, detail: error.detail });
   if (error?.code === "CODEX_OUTPUT_TOO_LARGE") return new AppError("CURATOR_OUTPUT_TOO_LARGE", "Topology Curator 输出超过上限。", { status: 502, detail: error.detail });
@@ -45,7 +47,11 @@ function mapDriverError(error) {
 }
 
 export class CodexCuratorDriver {
-  constructor(config = {}, options = {}) {
+  config: Partial<AppConfig["curator"]>;
+  id: string;
+  workspace: CuratorWorkspaceService;
+  active: Map<string, CodexExecClient>;
+  constructor(config: Partial<AppConfig["curator"]> = {}, options: { id?: string; workspace?: CuratorWorkspaceService } = {}) {
     this.config = config;
     this.id = options.id ?? "codex-topology-curator";
     this.workspace = options.workspace ?? new CuratorWorkspaceService(config);
@@ -60,7 +66,7 @@ export class CodexCuratorDriver {
     return String(this.config.reasoningEffort ?? "low");
   }
 
-  async run(input = {}) {
+  async run(input: CuratorInput = {}): Promise<CuratorDriverResult> {
     if (this.config.enabled === false) {
       throw new AppError("CURATOR_DISABLED", "Topology Curator 当前未启用。", { status: 503 });
     }
@@ -71,7 +77,7 @@ export class CodexCuratorDriver {
     const args = [
       "exec",
       "--model", this.model(),
-      "-c", `model_reasoning_effort=\"${this.reasoningEffort()}\"`,
+      "-c", `model_reasoning_effort="${this.reasoningEffort()}"`,
       "--json",
       "--ephemeral",
       "--ignore-rules",
@@ -83,7 +89,7 @@ export class CodexCuratorDriver {
     try {
       invocation = await resolveInvocation(this.config.command ?? "codex", args);
     } catch (error) {
-      throw new AppError("CURATOR_RUNTIME_UNAVAILABLE", "无法解析 Topology Curator runtime。", { status: 503, retryable: true, detail: { reason: error.message } });
+      throw new AppError("CURATOR_RUNTIME_UNAVAILABLE", "无法解析 Topology Curator runtime。", { status: 503, retryable: true, detail: { reason: error instanceof Error ? error.message : String(error) } });
     }
     const client = new CodexExecClient(invocation, {
       cwd: materialization.workspacePath,
@@ -98,7 +104,7 @@ export class CodexCuratorDriver {
       try {
         result = extractJsonObject(finalMessage);
       } catch (error) {
-        throw new AppError("CURATOR_OUTPUT_INVALID", "Topology Curator 没有返回可解析的 JSON。", { status: 422, detail: error.detail });
+        throw new AppError("CURATOR_OUTPUT_INVALID", "Topology Curator 没有返回可解析的 JSON。", { status: 422, detail: error instanceof AppError ? error.detail : null });
       }
       validateTopologyCuratorResult(result, {
         allowedNodeIds: materialization.nodeIds,
@@ -125,7 +131,7 @@ export class CodexCuratorDriver {
     }
   }
 
-  interrupt(runId) {
+  interrupt(runId: string) {
     const client = this.active.get(runId);
     if (!client) throw new AppError("CURATOR_RUN_NOT_ACTIVE", "没有可中断的 Curator 运行。", { status: 404 });
     client.interrupt();

@@ -1,3 +1,7 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { SshConnectionService } from "./ssh-connection-service.js";
+import type { SshEnvironmentHub } from "./ssh-environment-hub.js";
+import type { EnvironmentRuntime } from "../services/environments/research-environment-context.js";
 import * as z from "zod/v4";
 import { AppError } from "../lib/errors.js";
 import { readJson, sendJson } from "../lib/http.js";
@@ -9,7 +13,7 @@ const replySchema = z.strictObject({
   verified: z.boolean().optional(),
   remember: z.boolean().optional(),
 });
-const empty = async (request) => {
+const empty = async (request: IncomingMessage) => {
   const body = await readJson(request);
   if (
     !body ||
@@ -30,7 +34,7 @@ export async function handleSshRequest({
   owner,
   ssh,
   hub,
-}) {
+}: {request:IncomingMessage;response:ServerResponse;pathname:string;runtime:EnvironmentRuntime;owner:string;ssh:SshConnectionService;hub:SshEnvironmentHub}) {
   if (!pathname.startsWith("/api/ssh/")) return false;
   if (pathname === "/api/ssh/connections") {
     if (request.method === "GET") {

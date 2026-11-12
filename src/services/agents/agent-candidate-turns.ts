@@ -1,8 +1,12 @@
 import { appendTraceEvent } from "../../domain/agents/agent-trace.js";
 import { actorKey } from "../../domain/agents/agent-conversation.js";
+import type { AgentEvent, AgentTurn } from "../../domain/agents/agent-types.js";
+
+type CandidateSource = { id: string; createdAt: string; sourceTurnId?: string | null };
+type CandidateEvent = Pick<AgentEvent, "type" | "payload" | "turnId"> & Partial<AgentEvent>;
 
 // Native runtimes wrap MCP results as direct objects, JSON or text blocks.
-function receipt(value, depth = 0) {
+function receipt(value: unknown, depth = 0): Record<string, unknown> | null {
   if (!value || depth > 6) return null;
   if (typeof value === "string") {
     try {
@@ -13,23 +17,25 @@ function receipt(value, depth = 0) {
   }
   if (Array.isArray(value))
     return value.map((item) => receipt(item, depth + 1)).find(Boolean) ?? null;
+  if (typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
   if (
-    value.schemaVersion === "research-agent-result.v1" &&
-    value.kind === "candidateReceipt"
+    item.schemaVersion === "research-agent-result.v1" &&
+    item.kind === "candidateReceipt"
   )
-    return value.data;
-  if (value.type === "text") return receipt(value.text, depth + 1);
-  return receipt(value.structuredContent ?? value.content, depth + 1);
+    return item.data && typeof item.data === "object" && !Array.isArray(item.data) ? item.data as Record<string, unknown> : null;
+  if (item.type === "text") return receipt(item.text, depth + 1);
+  return receipt(item.structuredContent ?? item.content, depth + 1);
 }
 
 /** Match confirmed writes, never candidate IDs mentioned in assistant prose. */
-export function candidateTurnLinks(session) {
-  const links = new Map();
+export function candidateTurnLinks(session: { conversationEvents?: CandidateEvent[]; events?: CandidateEvent[] }) {
+  const links = new Map<string, string>();
   const events = [
     ...(session.conversationEvents ?? []),
     ...(session.events ?? []),
   ].filter((event) => event.type?.startsWith("tool."));
-  const calls = new Map();
+  const calls = new Map<string, CandidateEvent>();
   for (const event of events.sort(
     (a, b) =>
       (a.updatedCursor ?? a.cursor ?? 0) - (b.updatedCursor ?? b.cursor ?? 0),
@@ -76,8 +82,8 @@ export function candidateTurnLinks(session) {
   return links;
 }
 
-export function candidateTurn(candidate, session, links) {
-  if (links.has(candidate.id)) return links.get(candidate.id);
+export function candidateTurn(candidate: CandidateSource, session: { turns?: Pick<AgentTurn, "id" | "startedAt" | "completedAt">[] }, links: Map<string, string>): string | null {
+  if (links.has(candidate.id)) return links.get(candidate.id)!;
   if (candidate.sourceTurnId) return candidate.sourceTurnId;
   const created = Date.parse(candidate.createdAt);
   if (!Number.isFinite(created)) return null;
@@ -85,7 +91,7 @@ export function candidateTurn(candidate, session, links) {
   return (
     turns.find((turn, index) => {
       const start = Date.parse(turn.startedAt),
-        end = Date.parse(turn.completedAt ?? turns[index + 1]?.startedAt);
+        end = Date.parse(turn.completedAt ?? turns[index + 1]?.startedAt ?? "");
       return (
         created >= start &&
         (Number.isFinite(end)

@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
@@ -41,12 +42,12 @@ test("manual research creation enters the research history automatically with a 
   await expect(page.getByRole("heading", { name: "创建了科研节点", exact: true })).toBeVisible();
   await expect(page.locator(".research-history-snapshot")).toContainText("固定评估器和随机种子");
   await expect(page.getByRole("link", { name: "查看当前对象", exact: true })).toBeVisible();
-  await page.screenshot({ path: "runtime/research-history-created.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("research-history-created.png"), fullPage: true });
 });
 test("Agent proposals and user rejection or acceptance retain their separate meanings", async ({ page }) => {
   const propose = async (label: string) => {
     const receipt = await request("POST", "/api/research/candidates", { reason: `Agent 提议：${label}`, idempotencyKey: label,
-      nodes: [{ kind: "inference", core: { nodeName: label, summary: "需要研究者审阅的实验推论" } }] }, agentToken);
+      nodes: [{ kind: "note", core: { nodeName: label, summary: "需要研究者审阅的实验推论" } }] }, agentToken);
     return { id: receipt.data.candidateId };
   };
   const rejected = await propose("未通过的实验推论");
@@ -68,11 +69,11 @@ test("Agent proposals and user rejection or acceptance retain their separate mea
   const graph = await request("GET", "/api/topology");
   expect(graph.nodes.some((node: any) => node.label.zh === "未通过的实验推论")).toBe(false);
   expect(graph.nodes.some((node: any) => node.label.zh === "确认后的实验推论")).toBe(true);
-  await page.screenshot({ path: "runtime/research-history-reviewed.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("research-history-reviewed.png"), fullPage: true });
 });
 test("node deletion uses the real user flow and leaves a durable research snapshot", async ({ page }) => {
   const target = await request("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: "重复实验节点", summary: "删除后仍应可以查看这份历史实验说明。" } });
-  const other = await request("POST", "/api/research-nodes", { kind: "question", core: { nodeName: "关联研究问题" } });
+  const other = await request("POST", "/api/research-nodes", { kind: "note", core: { nodeName: "关联研究问题" } });
   await request("POST", "/api/research-relations", { from: { kind: "node", id: other.node.id }, to: { kind: "node", id: target.node.id }, type: "tested_by", label: "实验检验", expectedEndpointRevisions: Object.entries({ [other.node.id]: other.nodeRevision, [target.node.id]: target.nodeRevision }).map(([id, revision]) => ({ object: { kind: "node", id }, revision })) });
   const group = (await request("POST", "/api/research-groups", { core:{nodeName:"待清理实验"},members:[{nodeId:target.node.id}] })).group;
   await page.goto(app.url + "/#/topology/nodes/" + encodeURIComponent(target.node.id));
@@ -82,9 +83,9 @@ test("node deletion uses the real user flow and leaves a durable research snapsh
   await dialog.getByLabel("删除原因", { exact: true }).fill("与正式实验重复，清理此节点");
   await dialog.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(page.getByRole("heading", { name: "删除了科研节点", exact: true })).toBeVisible();
-  await expect(page.locator(".research-history-snapshot").filter({ hasText: "重复实验节点" })).toContainText("删除后仍应可以查看这份历史实验说明");
+  await expect(page.locator(".research-history-snapshot").filter({ has: page.locator("strong").filter({ hasText: /^重复实验节点$/ }) })).toContainText("删除后仍应可以查看这份历史实验说明");
   expect((await request("GET", `/api/research-groups/${encodeURIComponent(group.id)}`)).counts.directNodes).toEqual(0);
   expect((await request("GET", "/api/topology")).nodes.some((node: any) => node.id === target.node.id)).toBe(false);
   await page.reload(); await expect(page.locator("main")).toContainText("与正式实验重复，清理此节点");
-  await page.screenshot({ path: "runtime/research-history-deleted.png", fullPage: true });
+  await page.screenshot({ path: runtimeArtifact("research-history-deleted.png"), fullPage: true });
 });

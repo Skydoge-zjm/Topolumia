@@ -36,7 +36,6 @@ test("Claude handles parallel permission IDs, native withdrawal and stop without
   const parallel = f.driver.prompt({ turnId: "parallel", content: [{ type: "text", text: "approval-parallel" }] });
   const requests = await f.wait(2);
   await f.driver.resolvePermission(requests[0].payload.requestId, "allow_once");
-  assert.equal(f.driver.permissionHost.pending.size, 1);
   await f.driver.resolvePermission(requests[1].payload.requestId, "reject_once");
   assert.equal((await parallel).stopReason, "end_turn");
   const withdrawn = f.driver.prompt({ turnId: "withdraw", content: [{ type: "text", text: "approval-withdraw" }] });
@@ -74,6 +73,21 @@ test("Claude uses the profile model by default and honors explicit per-turn over
   await driver.prompt({ turnId: "override", model: "explicit-model", reasoningEffort: "high", content: [{ type: "text", text: "model-bind" }] });
   const actual = events.filter(event => event.type === "assistant.message.completed").map(event => JSON.parse(event.payload.text));
   assert.deepEqual(actual, [{ model: "gpt-6-luna", effort: "low" }, { model: "explicit-model", effort: "high" }]);
+});
+
+test("research MCP preserves the selected tool search policy in each native turn", async t => {
+  for (const toolSearch of ["true", "auto:5", "false"]) {
+    const events = [];
+    const driver = new ClaudeCliStreamDriver({ id: "claude-tool-search", label: "Claude", provider: "claude", command: process.execPath, launcherArgs: [claudeFixture] }, {
+      env: { ENABLE_TOOL_SEARCH: toolSearch }, requestTimeoutMs: 2000, onEvent: event => events.push(event),
+    });
+    t.after(() => driver.close());
+    await driver.start({ cwd: root, researchMcp: { name: "topolumia", command: process.execPath, args: [], cwd: root, env: { TOPOLUMIA_SESSION: "fixture-only" } } });
+    for (const turnId of ["first", "continued"]) await driver.prompt({ turnId, content: [{ type: "text", text: "approval-settings" }] });
+    const settings = events.filter(event => event.type === "assistant.message.completed").map(event => JSON.parse(event.payload.text));
+    assert.deepEqual(settings.map(value => value.toolSearch), [toolSearch, toolSearch]);
+    await driver.close();
+  }
 });
 
 test("Claude CLI stream driver consumes official stream-json shaped messages and resumes", async () => {

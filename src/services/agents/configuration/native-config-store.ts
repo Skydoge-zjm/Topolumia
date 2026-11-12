@@ -1,3 +1,5 @@
+import type { AgentProfile, NativeConfig } from "../../../domain/agents/agent-types.js";
+import { asAppError } from "../../../lib/errors.js";
 import path from "node:path";
 import {
   mkdir,
@@ -16,17 +18,20 @@ import {
   parseNativeConfig,
   serializeNativeConfig,
   nativeProfile,
+  nativeConfigKey,
 } from "./native-format.js";
 
-const digest = (content) => createHash("sha256").update(content).digest("hex");
+const digest = (content: string) => createHash("sha256").update(content).digest("hex");
+interface ConfigEntry { provider?: string; file?: string; content?: string; revision?: string; parsed?: NativeConfig; error?: unknown; updatedAt?: string }
 export class NativeAgentConfigStore {
-  constructor(root) {
+  root: string; entries: Map<string, ConfigEntry>; queue: Promise<unknown>; schemas: Map<string, unknown>;
+  constructor(root: string) {
     this.root = root;
     this.entries = new Map();
     this.queue = Promise.resolve();
     this.schemas = new Map();
   }
-  file(provider) {
+  file(provider: string) {
     if (!Object.hasOwn(nativeFormats, provider))
       throw new AppError(
         "AGENT_NATIVE_CONFIG_NOT_FOUND",
@@ -35,7 +40,7 @@ export class NativeAgentConfigStore {
       );
     return path.join(this.root, provider, nativeFormats[provider].filename);
   }
-  async safeDirectory(directory) {
+  async safeDirectory(directory: string) {
     const relative = path.relative(this.root, directory);
     if (relative.startsWith("..") || path.isAbsolute(relative))
       throw new Error("Invalid configuration directory");
@@ -51,10 +56,10 @@ export class NativeAgentConfigStore {
         );
     }
   }
-  async atomicWrite(file, content) {
+  async atomicWrite(file: string, content: string) {
     await this.safeDirectory(path.dirname(file));
     const info = await lstat(file).catch((error) => {
-      if (error.code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return null;
     });
     if (info && (!info.isFile() || info.isSymbolicLink()))
@@ -70,15 +75,15 @@ export class NativeAgentConfigStore {
       if (process.platform !== "win32") throw error;
     });
   }
-  async initialize(profiles) {
+  async initialize(profiles: AgentProfile[]) {
     for (const provider of Object.keys(nativeFormats)) {
-      const profile = profiles.find((profile) => profile.provider === provider);
+      const profile = profiles.find((profile) => nativeConfigKey(profile) === provider);
       if (!profile) continue;
       const file = this.file(provider);
       try {
         await lstat(file);
       } catch (error) {
-        if (error.code !== "ENOENT") throw error;
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         await this.atomicWrite(
           file,
           serializeNativeConfig(provider, initialNativeConfig(profile)),
@@ -91,7 +96,7 @@ export class NativeAgentConfigStore {
       }
     }
   }
-  async read(provider) {
+  async read(provider: string) {
     const file = this.file(provider),
       info = await lstat(file);
     if (!info.isFile() || info.isSymbolicLink() || info.size > 524288)
@@ -103,7 +108,7 @@ export class NativeAgentConfigStore {
     const content = await readFile(file, "utf8"),
       revision = `sha256:${digest(content)}`;
     let parsed,
-      error = null;
+      error: unknown = null;
     try {
       parsed = parseNativeConfig(provider, content);
     } catch (problem) {
@@ -121,7 +126,7 @@ export class NativeAgentConfigStore {
     this.entries.set(provider, entry);
     return entry;
   }
-  async document(provider) {
+  async document(provider: string) {
     const entry = await this.read(provider);
     if (!this.schemas.has(provider))
       this.schemas.set(
@@ -131,7 +136,7 @@ export class NativeAgentConfigStore {
             path.join(
               bundledRoot,
               "src/services/agents/configuration/schemas",
-              `${provider}.json`,
+              nativeFormats[provider].schemaFile ?? `${provider}.json`,
             ),
             "utf8",
           ),
@@ -139,7 +144,8 @@ export class NativeAgentConfigStore {
       );
     return {
       schemaVersion: "agent-native-config.v1",
-      provider,
+      provider: provider === "opencode-v2" ? "opencode" : provider,
+      configKey: provider,
       ...nativeFormats[provider],
       path: entry.file,
       content: entry.content,
@@ -147,22 +153,22 @@ export class NativeAgentConfigStore {
       updatedAt: entry.updatedAt,
       valid: !entry.error,
       validation: entry.error
-        ? { message: entry.error.message, detail: entry.error.detail }
+        ? { message: asAppError(entry.error).message, detail: asAppError(entry.error).detail }
         : null,
       schema: this.schemas.get(provider),
     };
   }
-  effective(profile) {
-    const entry = this.entries.get(profile.provider);
-    return entry?.parsed ? nativeProfile(profile, entry.parsed) : profile;
+  effective(profile: AgentProfile) {
+    const entry = this.entries.get(nativeConfigKey(profile));
+    return entry?.parsed ? nativeProfile(profile, entry.parsed!) : profile;
   }
-  async snapshot(profile) {
-    if (!nativeFormats[profile.provider]) return profile;
-    const entry = await this.read(profile.provider);
+  async snapshot(profile: AgentProfile) {
+    if (!nativeFormats[nativeConfigKey(profile)]) return profile;
+    const entry = await this.read(nativeConfigKey(profile));
     if (entry.error) throw entry.error;
     const file = path.join(
       path.dirname(entry.file),
-      `snapshots-${digest(entry.content)}-${nativeFormats[profile.provider].filename}`,
+      `snapshots-${digest(entry.content)}-${nativeFormats[nativeConfigKey(profile)].filename}`,
     );
     await this.safeDirectory(path.dirname(file));
     try {
@@ -179,18 +185,18 @@ export class NativeAgentConfigStore {
           { status: 409 },
         );
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       await this.atomicWrite(file, entry.content);
     }
     return {
-      ...nativeProfile(profile, entry.parsed),
+      ...nativeProfile(profile, entry.parsed!),
       nativeConfig: structuredClone(entry.parsed),
       nativeConfigFile: file,
       nativeConfigRevision: entry.revision,
       nativeConfigRoot: this.root,
     };
   }
-  save(provider, content, expectedRevision) {
+  save(provider: string, content: string, expectedRevision: string) {
     const operation = this.queue.then(async () => {
       const parsed = parseNativeConfig(provider, content),
         current = await this.read(provider);

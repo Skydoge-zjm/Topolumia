@@ -1,23 +1,23 @@
+import type { RouteContext } from "../../route-context.js";
 import { AppError } from "../../../lib/errors.js";
-import { readJson, sendJson } from "../../../lib/http.js";
+import { readJsonObject, sendJson } from "../../../lib/http.js";
 
-export async function handlePlatformSettingsRoutes(context) {
+export async function handlePlatformSettingsRoutes(context: RouteContext) {
   const {
     request,
     response,
     pathname,
     requestRuntime,
     applyRuntimeSettings,
-    sourceRefresh,
     userSettings,
-  } = context;
+  }: RouteContext = context;
 
   if (pathname === "/api/settings" && request.method === "GET") {
     sendJson(response, 200, userSettings.snapshot({ schema: true }));
     return true;
   }
   if (pathname === "/api/settings" && request.method === "PATCH") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const patch =
       body?.settings && typeof body.settings === "object"
         ? body.settings

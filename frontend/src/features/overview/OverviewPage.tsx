@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, CircleAlert, GitPullRequest, HelpCircle, ListTodo, Sparkles } from "lucide-react";
+import { CalendarClock, CircleAlert, GitPullRequest, BookOpen, ListTodo, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { activityKinds } from "@domain/research/node-fields";
@@ -13,8 +13,9 @@ import { HistoryEntry } from "@/features/research/history/ResearchHistoryPanel";
 import type { HistoryEvent } from "@/features/research/history/model";
 import { nodeUrl, text, type ResearchRecord } from "@/features/research/model";
 import { FAMILY_ORDER, familyColor, familyLabels } from "@/features/topology/model/nodeVisuals";
-import { argumentHealth, openActions, ratio, researchStructure, upcoming, type Topology } from "./overviewModel";
+import { researchConnections, openActions, ratio, researchStructure, upcoming, type Topology } from "./overviewModel";
 import styles from "./OverviewPage.module.css";
+import { ProjectWorkspacePanel } from "@/features/projects/ProjectWorkspacePanel";
 
 export function OverviewPage() {
   const en = useUiStore(state => state.locale) === "en";
@@ -35,10 +36,13 @@ export function OverviewPage() {
 
   const graph: Topology = { nodes: topology.data?.nodes ?? [], edges: topology.data?.edges ?? [], groups: topology.data?.groups ?? [] };
   const structure = researchStructure(graph);
-  const health = argumentHealth(graph);
+  const health = researchConnections(graph);
   const actions = openActions(records.data?.items ?? []);
   const planned = upcoming(records.data?.items ?? []).slice(0, 4);
-  const questions = graph.nodes.filter(node => node.kind === "question").slice(0, 5);
+  const loose = new Set(health.isolated);
+  const notes = [...graph.nodes.filter(node => node.kind === "note")]
+    .sort((a, b) => Number(loose.has(b.id)) - Number(loose.has(a.id)))
+    .slice(0, 5);
   const pending = (context.data?.candidates ?? []).filter(item => ["pending", "deferred"].includes(String(item.status)));
   const running = (sessions.data?.sessions ?? []).filter(session => session.status === "running" && !session.archived);
   const overdue = actions.filter(action => action.overdue);
@@ -57,6 +61,7 @@ export function OverviewPage() {
           </dl>
         }
       />
+      <ProjectWorkspacePanel en={en} />
       <nav className={styles.attention} aria-label={en ? "Needs attention" : "待处理"}>
         <Signal icon={GitPullRequest} label={en ? "Changes to review" : "待审变更"} count={pending.length}
           to={pending[0] ? `/agents?candidate=${encodeURIComponent(String(pending[0].id))}` : "/agents"} />
@@ -101,9 +106,9 @@ export function OverviewPage() {
             {!structure.nodes && !topology.isPending && <p className={styles.empty}>{en ? "No research objects yet." : "尚无科研对象。"}</p>}
           </section>
           <section className={styles.panel} aria-labelledby="overview-argument">
-            <header><h2 id="overview-argument">{en ? "Argument coverage" : "论证完整度"}</h2></header>
-            <Meter label={en ? "Hypotheses with evidence" : "已有证据检验的假说"} value={health.hypotheses} />
-            <Meter label={en ? "Claims with support" : "得到支持的结论"} value={health.claims} />
+            <header><h2 id="overview-argument">{en ? "Object connections" : "对象关联"}</h2></header>
+            <Meter label={en ? "Connected experiments" : "已关联的实验"} value={health.experiments} />
+            <Meter label={en ? "Connected notes" : "已关联的笔记"} value={health.notes} />
             <Meter label={en ? "Objects in the graph" : "已接入关系或节点组的对象"} value={health.connected} />
             {health.isolated.length > 0 && (
               <p className={styles.isolated}>
@@ -125,17 +130,17 @@ export function OverviewPage() {
           </section>
         </div>
         <aside className={styles.column}>
-          <section className={styles.panel} aria-labelledby="overview-questions">
-            <header><h2 id="overview-questions">{en ? "Research questions" : "研究问题"}</h2></header>
+          <section className={styles.panel} aria-labelledby="overview-notes">
+            <header><h2 id="overview-notes">{en ? "Research notes" : "研究笔记"}</h2></header>
             <ul className={styles.list}>
-              {questions.map(node => (
+              {notes.map(node => (
                 <li key={node.id}>
-                  <HelpCircle size={15} aria-hidden="true" />
+                  <BookOpen size={15} aria-hidden="true" />
                   <Link to={nodeUrl(node.id)}>{text(node.label, en)}</Link>
                 </li>
               ))}
             </ul>
-            {!questions.length && !topology.isPending && <p className={styles.empty}>{en ? "No questions recorded." : "尚未记录研究问题。"}</p>}
+            {!notes.length && !topology.isPending && <p className={styles.empty}>{en ? "No notes recorded." : "尚未记录研究笔记。"}</p>}
           </section>
           <section className={styles.panel} aria-labelledby="overview-actions">
             <header>

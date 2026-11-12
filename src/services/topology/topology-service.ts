@@ -1,29 +1,32 @@
 import { versionHash } from "../../lib/hash.js";
 import { AppError } from "../../lib/errors.js";
-import { researchNodeKinds } from "../../domain/research/node-kinds.js";
-import { nodeRef, objectKey } from "../../domain/research/object-ref.js";
+import { researchNodeKinds, storedResearchNodeKind } from "../../domain/research/node-kinds.js";
+import { nodeRef, objectKey, type ResearchObjectRef } from "../../domain/research/object-ref.js";
 import {
   aggregateResearchExperiments,
   researchExperimentNodeData,
+  type ResearchExperimentSummary,
 } from "../../domain/experiments/research-experiment.js";
 
-const bilingual = (zh, en) => ({ zh, en });
+import type { ResearchTopology, TopologyNode, TopologyEdge, TopologyGroup, ResearchSource, SourceSnapshot } from "../../domain/research/types.js";
+
+const bilingual = (zh: string, en: string) => ({ zh, en });
 
 /**
  * Only these kinds may enter the formal research topology. Provider runs,
  * configs, artifacts, source adapters, Agent runtime objects, and execution
  * previews stay behind the experiment/detail boundary.
  */
-export const RESEARCH_NODE_KINDS = Object.freeze(new Set(researchNodeKinds));
+export const RESEARCH_NODE_KINDS: ReadonlySet<string> = Object.freeze(new Set(researchNodeKinds));
 
-export function isResearchNodeKind(kind) {
+export function isResearchNodeKind(kind: unknown) {
   return RESEARCH_NODE_KINDS.has(String(kind ?? ""));
 }
 
-function node(id, kind, code, x, y, labelZh, labelEn, summaryZh, summaryEn, options = {}) {
+function node(id: string, kind: string, code: string, x: number, y: number, labelZh: string, labelEn: string, summaryZh: string, summaryEn: string, options: Partial<TopologyNode> = {}): TopologyNode {
   return {
     id,
-    kind,
+    kind: storedResearchNodeKind(kind) ?? kind,
     code,
     position: { x, y },
     label: bilingual(labelZh, labelEn),
@@ -35,7 +38,7 @@ function node(id, kind, code, x, y, labelZh, labelEn, summaryZh, summaryEn, opti
   };
 }
 
-function edge(id, from, to, type, labelZh, labelEn, options = {}) {
+function edge(id: string, from: string, to: string, type: string, labelZh: string, labelEn: string, options: { status?: string; sourceRef?: string; strength?: number } = {}): TopologyEdge & { strength: number } {
   return {
     id,
     from: nodeRef(from),
@@ -49,7 +52,7 @@ function edge(id, from, to, type, labelZh, labelEn, options = {}) {
   };
 }
 
-function experimentNode(summary, x, y) {
+function experimentNode(summary: ResearchExperimentSummary, x: number, y: number) {
   return node(
     `experiment:${summary.id}`,
     "experiment",
@@ -68,16 +71,17 @@ function experimentNode(summary, x, y) {
   );
 }
 
-function baseNodes(snapshot = null) {
+function baseNodes() {
   const experiments = new Map(
-    aggregateResearchExperiments(snapshot).items.map((item) => [item.id, item]),
+    aggregateResearchExperiments().items.map((item) => [item.id, item]),
   );
-  const experiment = (id, x, y, fallback) => experimentNode(
+  const experiment = (id: string, x: number, y: number, fallback: ResearchExperimentSummary) => experimentNode(
     experiments.get(id) ?? fallback,
     x,
     y,
   );
-  const fallbackExperiment = (id, code, labelZh, labelEn, summaryZh, summaryEn, status = "needs_evidence") => ({
+  const fallbackExperiment = (id: string, code: string, labelZh: string, labelEn: string, summaryZh: string, summaryEn: string, status = "needs_evidence"): ResearchExperimentSummary => ({
+    schemaVersion: "research-experiment.v1", kind: "experiment", sourceRefs: [],
     id,
     code,
     status,
@@ -190,29 +194,18 @@ function baseEdges() {
   ];
 }
 
-function sourceIndex(snapshot) {
-  return [
-    ...(snapshot?.git ? [snapshot.git] : []),
-    ...(snapshot?.mlflow?.runs ?? []),
-    ...(snapshot?.experiments?.wandb?.runs ?? []),
-    ...(snapshot?.experiments?.tensorboard?.runs ?? []),
-    ...(snapshot?.experiments?.simulation?.runs ?? []),
-    ...(snapshot?.files?.files ?? []),
-  ];
-}
-
-function attachSnapshot(nodes, snapshot) {
+function attachSnapshot(nodes: TopologyNode[], snapshot: SourceSnapshot | null) {
   if (!snapshot) return;
   const byId = new Map(nodes.map((item) => [item.id, item]));
-  const appendProvenance = (id, file) => {
+  const appendProvenance = (id: string, file: ResearchSource) => {
     const target = byId.get(id);
     if (!target || !file?.ref) return;
     target.data = {
       ...target.data,
-      sourceRefs: [...new Set([...(target.data?.sourceRefs ?? []), file.ref])],
+      sourceRefs: [...new Set([...(Array.isArray(target.data.sourceRefs) ? target.data.sourceRefs.filter((ref): ref is string => typeof ref === "string") : []), file.ref])],
       provenance: {
-        ...(target.data?.provenance ?? {}),
-        files: [...new Set([...(target.data?.provenance?.files ?? []), file.ref])],
+        ...(typeof target.data.provenance === "object" ? target.data.provenance : {}),
+        files: [...new Set([...(typeof target.data.provenance === "object" ? target.data.provenance.files ?? [] : []), file.ref])],
       },
     };
   };
@@ -225,14 +218,14 @@ function attachSnapshot(nodes, snapshot) {
   }
 }
 
-function withoutTransient(value) {
+function withoutTransient<T extends { nodes: TopologyNode[]; edges: TopologyEdge[] }>(value: T): T {
   const cloned = structuredClone(value);
   for (const item of cloned.nodes ?? []) delete item.exploration;
   for (const item of cloned.edges ?? []) delete item.exploration;
   return cloned;
 }
 
-function topologyPayload(nodes, edges, extra = {}) {
+function topologyPayload(nodes: TopologyNode[], edges: TopologyEdge[], extra: Partial<ResearchTopology> = {}): ResearchTopology {
   const formalPayload = {
     schemaVersion: "research-topology.v1",
     coordinateSystem: { width: 1540, height: 1260, direction: "top-to-bottom", layout: "authored-irregular" },
@@ -248,7 +241,7 @@ function topologyPayload(nodes, edges, extra = {}) {
   };
 }
 
-function carriedMetadata(topology) {
+function carriedMetadata(topology: ResearchTopology) {
   return {
     sourceSnapshotVersion: topology.sourceSnapshotVersion ?? null,
     integration: topology.integration ?? {},
@@ -256,7 +249,7 @@ function carriedMetadata(topology) {
   };
 }
 
-function ensureTopologyObjects(topology) {
+function ensureTopologyObjects(topology: Pick<ResearchTopology, "nodes">) {
   for (const item of topology.nodes ?? []) {
     if (!isResearchNodeKind(item.kind)) {
       throw new AppError("TOPOLOGY_NODE_KIND_FORBIDDEN", "正式科研拓扑不允许工具、运行时或单个 run 节点。", {
@@ -268,7 +261,8 @@ function ensureTopologyObjects(topology) {
 }
 
 export class TopologyService {
-  withObjects(topology, nodes, edges, groups = topology.groups ?? []) {
+  demo: boolean;
+  withObjects(topology: ResearchTopology, nodes: TopologyNode[], edges: TopologyEdge[], groups: TopologyGroup[] = topology.groups ?? []) {
     ensureTopologyObjects({ nodes });
     return topologyPayload(structuredClone(nodes), structuredClone(edges), { ...carriedMetadata(topology), groups: structuredClone(groups) });
   }
@@ -276,22 +270,22 @@ export class TopologyService {
     this.demo = demo;
   }
 
-  build(snapshot = null) {
+  build(snapshot: SourceSnapshot | null = null) {
     if (!this.demo) return topologyPayload([], [], { sourceSnapshotVersion: snapshot?.stateVersion ?? null });
-    const nodes = baseNodes(snapshot);
+    const nodes = baseNodes();
     const edges = baseEdges();
     attachSnapshot(nodes, snapshot);
     return topologyPayload(nodes, edges, {
       sourceSnapshotVersion: snapshot?.stateVersion ?? null,
       integration: {
-        experimentAggregation: "Experiment nodes aggregate authored attempts and provider runs.",
-        providerDetails: "MLflow, W&B, and TensorBoard remain available through the experiment detail gateway.",
+        experimentAggregation: "Demo experiment nodes summarize authored attempts.",
+        providerDetails: "Experiment records persist in the unified research record model.",
         runtimeBoundary: "Git, adapters, Agent sessions, and execution previews stay outside the formal topology.",
       },
     });
   }
 
-  mergePersistentState(baseTopology, previousTopology) {
+  mergePersistentState(baseTopology: ResearchTopology, previousTopology: ResearchTopology | null) {
     if (!previousTopology) return baseTopology;
     const deleted = new Set(previousTopology.deletedNodeIds ?? []);
     const nodes = structuredClone(baseTopology.nodes).filter(node => !deleted.has(node.id));
@@ -299,14 +293,16 @@ export class TopologyService {
     const nodeById = new Map(nodes.map((item) => [item.id, item]));
     const edgeIds = new Set(edges.map((item) => item.id));
     const groups = structuredClone(previousTopology.groups ?? []);
-    const known = ref => ref.kind === "node" ? nodeById.has(ref.id) : groups.some(group => group.id === ref.id);
+    const known = (ref: ResearchObjectRef) => ref.kind === "node" ? nodeById.has(ref.id) : groups.some(group => group.id === ref.id);
 
     for (const previous of previousTopology.nodes ?? []) {
       if (deleted.has(previous.id)) continue;
-      if (!isResearchNodeKind(previous.kind)) continue;
+      const kind = storedResearchNodeKind(previous.kind);
+      if (!kind) continue;
       const current = nodeById.get(previous.id);
       if (!current) {
         const carried = structuredClone(previous);
+        carried.kind = kind;
         delete carried.candidate;
         delete carried.candidatePatchId;
         nodes.push(carried);
@@ -335,8 +331,8 @@ export class TopologyService {
     });
   }
 
-  clearCandidate(topology) {
-    const nodes = structuredClone(topology.nodes).filter((item) => isResearchNodeKind(item.kind));
+  clearCandidate(topology: ResearchTopology) {
+    const nodes = structuredClone(topology.nodes).flatMap(item => { const kind = storedResearchNodeKind(item.kind); return kind ? [{ ...item, kind }] : []; });
     const groups = structuredClone(topology.groups ?? []).filter(group => !group.deleted);
     const objects = new Set([...nodes.map(item => objectKey(nodeRef(item.id))), ...groups.map(item => objectKey({ kind: "group", id: item.id }))]);
     const edges = structuredClone(topology.edges).filter(item => objects.has(objectKey(item.from)) && objects.has(objectKey(item.to)) && !item.candidate);
@@ -345,11 +341,11 @@ export class TopologyService {
 
   // Execution previews are rendered in the execution/Agent surfaces, not as
   // formal research objects.
-  withExecutionPreview(topology) {
+  withExecutionPreview(topology: ResearchTopology) {
     return this.clearCandidate(topology);
   }
 
-  sourceIndex(snapshot) {
-    return sourceIndex(snapshot);
+  sourceIndex(snapshot: SourceSnapshot | null) {
+    return [...(snapshot?.git ? [snapshot.git] : []), ...(snapshot?.files?.files ?? [])];
   }
 }

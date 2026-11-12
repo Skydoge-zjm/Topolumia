@@ -23,6 +23,8 @@
 
 SSH 保存配置与已登录连接分开；远程探测由受控连接执行。手动选择私钥时仅使用指定私钥，不先尝试主机 SSH agent；agent 模式与 SSH 别名配置才使用 agent。Agent 原生终端不会因应用登录 SSH 自动拥有同一通道，梗概必须提示它自行连接目标主机。
 
+断开或服务关闭使正在进行的连接任务失效。目标解析、主机密钥/私钥读取、跳板连接与转发完成后均检查取消状态和连接身份；取消后不再拨号，晚到的通道与客户端立即清理，旧任务不得覆盖重新连接的状态。
+
 ## Agent 上下文
 
 get_environment 读取选择与缓存，不启动发现、导入包或执行新命令。返回绑定、解释器命令前缀、关键组件、有限资源观察、检测时间与过期状态。
@@ -31,8 +33,32 @@ get_environment 读取选择与缓存，不启动发现、导入包或执行新�
 
 ## 边界与验证
 
-科研环境切换不切换 Topolumia 的 Node.js，不自动重启全部 Agent 或调度远程训练。训练资源管理和远程执行编排尚未交付。
+科研环境切换不切换 Topolumia 的 Node.js，不自动重启全部 Agent 或调度远程训练。训练资源管理和远程训练执行编排尚未交付。
+
+## 托管实验采集
+
+[环境页](../../../../frontend/src/features/environments/RecordCollectorsPanel.tsx)按主机提供部署并启用、状态、目录、暂停与恢复。主机选择、SSH 登录与项目目录作为部署上下文；实验记录适配器在独立读取环境安装，由平台控制部署、后台启停、检测和恢复。进程能力按主机和登录用户复用，项目采集范围与授权独立保存；浏览环境不改变正在采集的项目。默认在项目目录增量发现原生文件，允许记住附加目录。
+
+状态分别表示部署阶段、进程活性、传输及最近数据，不能沿用旧检查冒充在线。关闭页面不影响后台；断连保留游标与队列，恢复重用稳定身份。仅项目管理者可部署、配置和启停；研究者按科研权限选择运行。项目来源及块选择的查询机制见[实验模块](../experiments-and-sources/README.md)。实现由[托管采集管理器](../../../../src/services/environments/managed-record-collectors.ts)、[受控 Python 部署器](../../../../scripts/runtime/manage-record-collector.py)及[HTTP 入口](../../../../src/http/routes/managed-records.ts)协调。
 
 [research-environment-context.test.ts](../../../../tests/environments/research-environment-context.test.ts) 验证小梗概、缓存与边界；[environment-catalog.test.ts](../../../../tests/environments/environment-catalog.test.ts)、[research-environment-service.test.ts](../../../../tests/environments/research-environment-service.test.ts) 验证选择与探测；[ssh-connections.test.ts](../../../../tests/environments/ssh-connections.test.ts)、[ssh-environment.test.ts](../../../../tests/environments/ssh-environment.test.ts) 验证连接与远程操作。
 
 真实 SSH / GPU 检测只在相关变更需要时运行。普通前端修改不要求重复登录、扫描全部环境。
+
+读取器按主机用户和工具在 ~/.topolumia/data/record-readers 下共享独立 venv，项目来源分别持有目录、授权、进程实例和队列。本机通过受控子进程部署，远程使用已认证 SSH 的执行及回环反向转发；重连重建通道，队列以稳定来源身份绑定而不绑定临时端口。后台定时检测进程与状态文件，私有实例控制请求完成停止；工作台离线时保留后台与待发数据。
+
+部署需要可用的 Python 3.10+ 和包下载源，支持所选解释器环境的 pip 配置。依赖准备、安装、启动、错误和接收时间分别反馈；可重试部署，不改写训练依赖。单目录恢复不影响其他采集目录，重复或互相包含的采集范围被拒绝。相关验证见[采集器回归](../../../../scripts/testing/test-experiment-collector.py)、[记录接收回归](../../../../tests/research/record-ingestion.test.ts)及环境页测试。
+
+## 项目创建与工作目录
+
+[创建页面](../../../../frontend/src/features/projects/ProjectCreatePage.tsx)使用自动 ID、名称和工作目录选择。只读[目录浏览器](../../../../frontend/src/features/projects/DirectoryBrowser.tsx)按请求页列出文件夹，SSH 直接使用 SFTP，无需先选 Python。连接创建与登录挑战复用既有控件，弹窗提交不会触发外层创建表单。成功进入研究总览，失败保留草稿，路径或主机变化使旧校验失效。
+
+[目录服务](../../../../src/services/platform/project-workspace-service.ts)复核管理员、规范目录与连接身份后保存项目；目录不可用时不创建半成品项目。[项目存储](../../../../src/services/platform/collaboration-store.ts)将位置、归属与独立修订存于项目 SQLite。默认工作区、本机目录与 SSH 目录三种选择均显式保存；已有未关联状态只读保留，创建/更新不再产生该状态，原目录和内容不迁移。
+
+本机目录成为项目实际根，SSH 目录保留独立的本机应用工作区，并作为该主机的项目目录默认值。总览和工具环境提供同一配置入口；更换目录不删除已有科研对象。目录更新校验观察修订，运行中的任务阻止切换，未变更保存不重建环境。重新建立上下文时，保存设置中的目录修订使旧位置的 Python 选择与文件范围失效；其他设置和历史保留。
+
+SSH 目录与 Python 独立：首次关联 SSH 仅选择主机与目录，当前环境显示待选择，Agent 梗概返回远程目录和未选择状态，不提供猜测的 Python 命令。原始接收器继续按各自已保存范围采集；新建采集默认使用当前项目在所选主机的目录。
+
+[项目工作目录回归](../../../../tests/platform/project-workspace.test.ts)覆盖创建、只读目录、原文件保护、更换目录、版本冲突、运行上下文重建与 SSH 未选 Python；[前端回归](../../../../frontend/src/features/projects/ProjectCreatePage.spec.tsx)覆盖重复提交、失败草稿、浏览、过期校验和 SSH 弹窗提交边界。
+
+项目默认目录由[用户级路径](../../../../src/lib/app-paths.ts)与项目 ID 确定。创建页先读取默认位置与预生成 ID，显示完整目标后用同一 ID 提交；切换到本机/SSH 来源不重复生成 ID。所有平台的默认配置、数据与缓存统一在用户主目录 ~/.topolumia，默认工作区为其 workspaces 子目录，独立于软件安装。G 视觉方向使用同一主标题、绿色分组标记、原生单选状态与目录图标；状态反馈仅来自实际校验，不预先宣称目录存在。

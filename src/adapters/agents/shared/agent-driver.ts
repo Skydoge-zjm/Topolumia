@@ -1,6 +1,7 @@
 import { AppError } from "../../../lib/errors.js";
+import type { AgentProfile, AgentDriverOptions, AgentCapabilities, AgentPromptPart, DriverEvent } from "../../../domain/agents/agent-types.js";
 
-function textValue(value) {
+function textValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "";
   try {
@@ -10,7 +11,7 @@ function textValue(value) {
   }
 }
 
-export function contentToText(content) {
+export function contentToText(content: unknown): string {
   if (!Array.isArray(content)) return textValue(content);
   return content.map((part) => {
     if (part?.type === "image") return "";
@@ -23,19 +24,19 @@ export function contentToText(content) {
   }).filter(Boolean).join("\n\n");
 }
 
-export function errorFromMessage(code, message, detail = {}, status = 502) {
+export function errorFromMessage(code: string, message: string, detail: unknown = {}, status = 502) {
   return new AppError(code, message, { status, detail: sanitizeDetail(detail), retryable: true });
 }
 
-function sanitizeDetail(detail) {
+function sanitizeDetail(detail: unknown): unknown {
   if (!detail || typeof detail !== "object") return detail;
-  const copy = { ...detail };
+  const copy: Record<string, unknown> = { ...detail };
   for (const key of ["token", "apiKey", "accessToken", "refreshToken", "authorization", "prompt"]) delete copy[key];
   if (typeof copy.stderr === "string") copy.stderr = copy.stderr.slice(-2_000);
   return copy;
 }
 
-export function normalizeStopReason(value) {
+export function normalizeStopReason(value: unknown) {
   const reason = String(value ?? "").toLowerCase();
   if (reason.includes("interrupt") || reason.includes("cancel")) return "cancelled";
   if (reason.includes("error") || reason.includes("fail")) return "error";
@@ -43,7 +44,18 @@ export function normalizeStopReason(value) {
 }
 
 export class AgentDriver {
-  constructor(profile, options = {}) {
+  profile: AgentProfile;
+  environment: Record<string, string>;
+  onEvent: (event: DriverEvent) => void;
+  requestTimeoutMs: number;
+  closed: boolean;
+  nativeSessionId: string | null;
+  activeTurnId: string | null;
+  cwd = process.cwd();
+  capabilities: AgentCapabilities = {};
+  agentInfo: { name?: string; title?: string; version?: string | null } = {};
+  authMethods: unknown[] = [];
+  constructor(profile: AgentProfile, options: AgentDriverOptions = {}) {
     this.profile = profile;
     this.environment = { ...(profile.env ?? {}), ...(options.env ?? {}) };
     this.onEvent = options.onEvent ?? (() => {});
@@ -53,11 +65,11 @@ export class AgentDriver {
     this.activeTurnId = null;
   }
 
-  emit(type, payload = {}, turnId = this.activeTurnId) {
+  emit(type: string, payload: Record<string, unknown> = {}, turnId: string | null | undefined = this.activeTurnId) {
     this.onEvent({ type, turnId, payload: { nativeSessionId: this.nativeSessionId, ...payload } });
   }
 
-  contextText(content) {
+  contextText(content: AgentPromptPart[]) {
     return contentToText(content);
   }
 }

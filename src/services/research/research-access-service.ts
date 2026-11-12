@@ -35,8 +35,12 @@ const completeSchema = z.strictObject({
     })
     .optional(),
 });
+import type { DatabaseSync } from "node:sqlite";
+import type { ResearchActor, AuthenticatedResearchActor, DatabaseOwner } from "../../domain/research/types.js";
 export class ResearchAccessService {
-  constructor(collaboration, projectId) {
+  db:DatabaseSync;
+  projectId:string;
+  constructor(collaboration:DatabaseOwner, projectId:string) {
     this.db = collaboration.db;
     this.projectId = projectId;
     this.db.exec(`CREATE TABLE IF NOT EXISTS research_tool_calls (
@@ -63,8 +67,8 @@ export class ResearchAccessService {
       }
     }
   }
-  access(actor) {
-    if (!actor?.isAgent || !actor.runtimeInstanceId)
+  private requireActor(actor:ResearchActor):asserts actor is AuthenticatedResearchActor & {runtimeInstanceId:string;sessionId:string} {
+    if (!actor?.isAgent || !actor.runtimeInstanceId || !actor.sessionId)
       throw new AppError(
         "MCP_AGENT_REQUIRED",
         "科研 MCP 需要会话绑定的 Agent 身份。",
@@ -75,6 +79,9 @@ export class ResearchAccessService {
       throw new AppError("MCP_PROJECT_MISMATCH", "科研项目不匹配。", {
         status: 403,
       });
+  }
+  access(actor:ResearchActor) {
+    this.requireActor(actor);
     return {
       schemaVersion: "research-access.v1",
       researchInterface: RESEARCH_INTERFACE,
@@ -85,8 +92,8 @@ export class ResearchAccessService {
       permissions: actor.permissions,
     };
   }
-  authorize(actor, input) {
-    this.access(actor);
+  authorize(actor:ResearchActor, input:unknown) {
+    this.requireActor(actor);
     const parsed = startSchema.safeParse(input);
     if (!parsed.success || !Object.hasOwn(researchTools, parsed.data.tool))
       throw new AppError("MCP_REQUEST_INVALID", "科研工具授权请求无效。", {
@@ -125,7 +132,7 @@ export class ResearchAccessService {
         "SELECT count(*) AS count FROM research_tool_calls WHERE project_id=? AND outcome='running'",
       )
       .get(this.projectId);
-    if (active.count >= 16)
+    if (Number(active?.count) >= 16)
       throw new AppError("MCP_PROJECT_BUSY", "项目科研调用已达并发上限。", {
         status: 429,
       });
@@ -138,7 +145,7 @@ export class ResearchAccessService {
         actor.runtimeInstanceId,
         isWrite(value.tool, { direction: value.action }) ? 1 : 0,
       );
-    if (own.count >= (isWrite(value.tool, { direction: value.action }) ? 1 : 2))
+    if (Number(own?.count) >= (isWrite(value.tool, { direction: value.action }) ? 1 : 2))
       throw new AppError("MCP_SESSION_BUSY", "会话科研调用已达并发上限。", {
         status: 429,
       });
@@ -166,15 +173,14 @@ export class ResearchAccessService {
     }
     return { authorized: true, requestId: value.requestId };
   }
-  complete(actor, input) {
-    this.access(actor);
+  complete(actor:ResearchActor, input:unknown) {
+    this.requireActor(actor);
     const parsed = completeSchema.safeParse(input);
     if (!parsed.success)
       throw new AppError("MCP_AUDIT_INVALID", "科研调用结果格式无效。", {
         status: 422,
       });
     const value = parsed.data;
-    if(value.tool === "transfer_asset" && !value.action) throw new AppError("MCP_REQUEST_INVALID", "Transfer action is required.", {status:422});
     const context = value.context ?? {};
     const result = this.db
       .prepare(

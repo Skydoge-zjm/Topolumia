@@ -1,10 +1,20 @@
+import type { AgentRuntimeSession, StoredAgentSession, AgentTurn, AgentEvent, DriverEvent, AgentPayload, CreateAgentSessionInput, TurnMessage, RuntimeApproval, SessionContext, AssistantMessage, AgentPromptPart, AgentTurnResult, PublicAgentSession, PublicAgentSessionSnapshot, AgentSessionSummary } from "../../domain/agents/agent-types.js";
+import type { StoredAgentImageAttachment } from "../../domain/agents/agent-attachments.js";
+import type { AgentProfileRegistry } from "./agent-profile-registry.js";
+import type { AgentApprovalSelection } from "../../domain/agents/agent-approval.js";
+import type { ResearchEvent } from "../research/research-state.js";
+function agentError(cause: unknown): Error & { code?: string; status?: number } {
+  return cause instanceof Error ? cause : new Error(String(cause));
+}
+import { codexItemSchema, codexTurnSchema, type CodexItem } from "../../adapters/agents/shared/native-protocol.js";
+import * as z from "zod/v4";
 import { compactId, versionHash } from "../../lib/hash.js";
 import { AppError } from "../../lib/errors.js";
 import { AgentHistoryStore } from "./agent-history-store.js";
 import { redactAgentSecrets } from "../../agent/redact-secrets.js";
 import { RESEARCH_INTERFACE } from "../../domain/research/research-interface.js";
 import { verifyResearchMcp } from "../../mcp/research-probe.js";
-import { appendConversationEvent, reasoningStreamKey, contentBlockId, actorKey, isRemovedContent } from "../../domain/agents/agent-conversation.js";
+import { appendConversationEvent, reasoningStreamKey, contentBlockId, actorKey, isConversationContentRemoved } from "../../domain/agents/agent-conversation.js";
 import { restoreConversationEvents } from "./agent-conversation-history.js";
 import { codexReasoningParts } from "../../adapters/agents/codex/codex-reasoning.js";
 import { appendTraceEvent, compactTraceEvents, traceFromConversation } from "../../domain/agents/agent-trace.js";
@@ -16,26 +26,26 @@ import { isImageView } from "../../domain/agents/agent-images.js";
 import { AgentSessionPersistence } from "./agent-session-persistence.js";
 import { MAX_AGENT_IMAGES, publicAgentAttachment, imagePromptParts } from "../../domain/agents/agent-attachments.js";
 
-function clone(value) {
-  return value === undefined ? undefined : structuredClone(value);
+function clone<T>(value: T): T {
+  return structuredClone(value);
 }
-function messageHash(text, attachments = []) {
+function messageHash(text: string, attachments: StoredAgentImageAttachment[] = []) {
   return versionHash(attachments.length ? { text, attachmentIds: attachments.map(image => image.id) } : text);
 }
 
-function nativePayloadFingerprint(payload) {
+function nativePayloadFingerprint(payload: unknown) {
   const transient = new Set(["nativeSessionId", "nativeTurnId", "nativeEventId", "packetUuid", "nativeParentId", "updateKind"]);
-  const normalize = value => Array.isArray(value) ? value.map(normalize) : value && typeof value === "object"
-    ? Object.fromEntries(Object.keys(value).sort().filter(key => !transient.has(key) && value[key] !== undefined).map(key => [key, normalize(value[key])])) : value;
+  const normalize = (value: unknown): unknown => Array.isArray(value) ? value.map(normalize) : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().filter(key => !transient.has(key) && (value as Record<string, unknown>)[key] !== undefined).map(key => [key, normalize((value as Record<string, unknown>)[key])])) : value;
   return JSON.stringify(normalize(payload));
 }
 
-function cleanTitle(value, fallback) {
+function cleanTitle(value: unknown, fallback: string) {
   const title = typeof value === "string" ? value.trim().slice(0, 120) : "";
   return title || fallback;
 }
 
-function workingContext(context) {
+function workingContext(context: SessionContext) {
   return {
     topologyStateVersion: context.topologyStateVersion,
     focus: String(context.focus ?? "").slice(0, 250),
@@ -48,7 +58,7 @@ function workingContext(context) {
   };
 }
 
-function contextPrompt(context) {
+function contextPrompt(context: SessionContext): AgentPromptPart {
   const payload = JSON.stringify(workingContext(context));
   return {
     type: "resource",
@@ -60,8 +70,30 @@ function contextPrompt(context) {
   };
 }
 
+interface GatewayOptions {
+  profileRegistry: Pick<AgentProfileRegistry, "createAdapter" | "descriptors">;
+  projectRoot?: string; maxSessions?: number; maxEventsPerSession?: number; historyFile?: string | null;
+  onResearchEvent?: ((event: Partial<ResearchEvent> & { type: string }) => void) | null;
+  onSessionClosed?: ((runtimeInstanceId: string) => void) | null;
+  captureImage?: ((sessionId: string, event: DriverEvent & { sessionId: string; turnId?: string | null }) => StoredAgentImageAttachment | Promise<StoredAgentImageAttachment>) | null;
+}
+type MetadataUpdate = { title?: string; pinned?: boolean; archived?: boolean; readCursor?: number };
+const snapshotSchema = z.looseObject({
+  format: z.string().optional(), syncedAt: z.string().optional(),
+  events: z.array(z.looseObject({ type: z.string(), turnId: z.string().nullable().optional(), payload: z.record(z.string(), z.unknown()) })).optional(),
+  thread: z.looseObject({ updatedAt: z.unknown().optional(), thread: z.looseObject({ updatedAt: z.unknown().optional() }).optional() }).optional(),
+  turns: z.union([z.array(codexTurnSchema), z.looseObject({ data: z.array(codexTurnSchema) })]).optional(),
+  items: z.union([z.array(z.looseObject({ id: z.string().optional(), type: z.string().optional(), turnId: z.string().nullable().optional(), item: codexItemSchema.optional() })), z.looseObject({ data: z.array(z.looseObject({ id: z.string().optional(), type: z.string().optional(), turnId: z.string().nullable().optional(), item: codexItemSchema.optional() })) })]).optional(),
+});
+type NativeSnapshot = z.infer<typeof snapshotSchema>;
 export class AgentSessionGateway {
-  constructor({ profileRegistry, projectRoot = process.cwd(), maxSessions = 12, maxEventsPerSession = 1_000, historyFile = null, onResearchEvent = null, onSessionClosed = null, captureImage = null } = {}) {
+  projectRoot: string; profileRegistry: GatewayOptions["profileRegistry"]; maxSessions: number; maxEventsPerSession: number;
+  onResearchEvent: GatewayOptions["onResearchEvent"]; onSessionClosed: GatewayOptions["onSessionClosed"]; captureImage: GatewayOptions["captureImage"];
+  sessions = new Map<string, AgentRuntimeSession>(); historyStore: AgentHistoryStore | null; persistence: AgentSessionPersistence;
+  resumptions = new Map<string, Promise<PublicAgentSessionSnapshot>>(); startups = new Map<string, Promise<PublicAgentSessionSnapshot>>(); initialized = false;
+  shuttingDown = false; shutdownPromise?: Promise<void>;
+
+  constructor({ profileRegistry, projectRoot = process.cwd(), maxSessions = 12, maxEventsPerSession = 1_000, historyFile = null, onResearchEvent = null, onSessionClosed = null, captureImage = null }: GatewayOptions) {
     this.projectRoot = projectRoot;
     this.profileRegistry = profileRegistry;
     this.maxSessions = maxSessions;
@@ -69,13 +101,14 @@ export class AgentSessionGateway {
     this.onResearchEvent = onResearchEvent;
     this.onSessionClosed = onSessionClosed;
     this.captureImage = captureImage;
-    this.sessions = new Map();
+
     this.historyStore = historyFile ? new AgentHistoryStore(historyFile, { maxEventsPerSession }) : null;
     this.persistence = new AgentSessionPersistence(this.historyStore, (session, status, error) => {
       session.historyStatus = status; session.historyError = error ?? null;
       this.#publish(session, "session.persistence.updated", { historyStatus: status, historyError: error ?? null });
     });
-    this.resumptions = new Map();
+
+
     this.initialized = false;
   }
 
@@ -87,7 +120,7 @@ export class AgentSessionGateway {
     for (const record of records) this.#restoreRecord(record);
   }
 
-  async profiles(options) {
+  async profiles(options?: { refresh?: boolean }) {
     return this.profileRegistry.descriptors(options);
   }
 
@@ -105,16 +138,16 @@ export class AgentSessionGateway {
     }
   }
 
-  async create(input = {}) {
+  async create(input: CreateAgentSessionInput = {}) {
     this.#checkRuntimeCapacity();
     const id = compactId("agent_session");
     const now = new Date().toISOString();
-    const session = {
+    const session: AgentRuntimeSession = {
       schemaVersion: "agent-session.v1",
       id,
       title: cleanTitle(input.title, "Untitled research session"),
       pinned: false, archived: false, lastReadCursor: 0, latestMessageCursor: 0, permissionGrants: [],
-      profileId: input.profileId,
+      profileId: input.profileId ?? "",
       researchInterface: RESEARCH_INTERFACE,
       researchSessionId: input.researchSessionId ?? id,
       runtimeInstanceId: id,
@@ -153,21 +186,36 @@ export class AgentSessionGateway {
     };
     this.sessions.set(id, session);
     this.#publish(session, "session.created", { profileId: session.profileId, title: session.title });
-    return this.#startRuntime(session, input);
+    return this.#launchRuntime(session, input);
   }
 
-  async #startRuntime(session, input) {
+  #launchRuntime(session: AgentRuntimeSession, input: CreateAgentSessionInput) {
+    const pending = this.#startRuntime(session, input);
+    this.startups.set(session.id, pending);
+    return pending.finally(() => { if (this.startups.get(session.id) === pending) this.startups.delete(session.id); });
+  }
+
+  async #startRuntime(session: AgentRuntimeSession, input: CreateAgentSessionInput) {
     const { id, runtimeInstanceId } = session;
+    let adapter;
+    const current = () => !this.shuttingDown && !session.closing && session.status !== "closed" && session.runtimeInstanceId === runtimeInstanceId;
+    const check = () => { if (!current()) throw new AppError("AGENT_SESSION_START_CANCELLED", "会话启动已取消。", { status: 409 }); };
     try {
+      check();
       const researchMcp = input.mcpBindingFactory ? await input.mcpBindingFactory({ runtimeInstanceId, researchSessionId: session.researchSessionId }) : null;
+      check();
       if (researchMcp) await verifyResearchMcp(researchMcp);
-      const adapter = await this.profileRegistry.createAdapter(session.profileId, {
-        onEvent: (event) => { if (session.runtimeInstanceId === runtimeInstanceId) this.#onDriverEvent(id, event); },
+      check();
+      adapter = await this.profileRegistry.createAdapter(session.profileId, {
+        onEvent: (event) => { if (current()) this.#onDriverEvent(id, event); },
         model: input.model,
         reasoningEffort: input.reasoningEffort,
+        expectedDriver: session.nativeSessionId ? session.nativeDriver ?? (session.provider === "opencode" ? "opencode-server-v1" : undefined) : undefined,
       });
+      check();
       session.adapter = adapter;
       session.provider = adapter.profile.provider;
+      session.nativeDriver = adapter.profile.driver === "opencode-server" ? "opencode-server-v1" : adapter.profile.driver;
       const started = await adapter.start({
         cwd: input.cwd,
         context: session.context,
@@ -175,6 +223,7 @@ export class AgentSessionGateway {
         resumeThreadId: input.resumeNativeThreadId ?? null,
         researchMcp,
       });
+      check();
       session.nativeSessionId = started.nativeSessionId;
       session.model = started.model ?? session.model ?? adapter.profile.model ?? null;
       session.capabilities = clone({...started.capabilities, ...(researchMcp?.skillDelivery ? {researchSkill:researchMcp.skillDelivery} : {})});
@@ -185,30 +234,39 @@ export class AgentSessionGateway {
       this.#publish(session, "session.status", { status: "ready", runtimeInstanceId, nativeSessionId: session.nativeSessionId, capabilities: session.capabilities });
       await this.#persistNow(session);
       return this.snapshot(id);
-    } catch (error) {
+    } catch (cause) {
+      const error = agentError(cause);
+      if (!current() || error.code === "AGENT_SESSION_START_CANCELLED") {
+        await adapter?.close().catch(() => {});
+        throw error;
+      }
       session.status = "failed";
       session.updatedAt = new Date().toISOString();
       this.#publish(session, "session.status", { status: "failed", error: { code: error.code ?? "AGENT_SESSION_START_FAILED", message: error.message } });
-      await session.adapter?.close().catch(() => {});
+      await adapter?.close().catch(() => {});
       this.onSessionClosed?.(runtimeInstanceId);
       await this.#persistNow(session);
       throw error;
     }
   }
 
-  list({ summary = false } = {}) {
-    for (const record of this.historyStore?.list?.() ?? []) this.#restoreRecord(record);
+  list(options: { summary: true }): AgentSessionSummary[];
+  list(options?: { summary?: false }): PublicAgentSession[];
+  list(options: { summary: boolean }): Array<AgentSessionSummary | PublicAgentSession>;
+  list({ summary = false } = {}): Array<AgentSessionSummary | PublicAgentSession> {
+    const historyStore = this.historyStore;
+    for (const id of historyStore?.ids() ?? []) if (!this.sessions.has(id)) this.#restoreRecord(historyStore!.get(id));
     return [...this.sessions.values()]
       .sort((a, b) => String(b.updatedAt ?? b.createdAt).localeCompare(String(a.updatedAt ?? a.createdAt)))
-      .map((session) => this.#publicSession(session, false, summary));
+      .map((session) => summary ? this.#sessionSummary(session) : this.#publicSession(session, false));
   }
 
-  async updateSession(sessionId, input = {}) {
+  async updateSession(sessionId: string, input: MetadataUpdate = {}) {
     const session = this.#require(sessionId);
     if (!input || typeof input !== "object" || Array.isArray(input) || !Object.keys(input).length
       || Object.keys(input).some(key => !["title", "pinned", "archived", "readCursor"].includes(key))
       || input.title !== undefined && (typeof input.title !== "string" || !input.title.trim() || input.title.trim().length > 120)
-      || ["pinned", "archived"].some(key => input[key] !== undefined && typeof input[key] !== "boolean")
+      || ["pinned", "archived"].some(key => input[key as keyof MetadataUpdate] !== undefined && typeof input[key as keyof MetadataUpdate] !== "boolean")
       || input.readCursor !== undefined && (!Number.isSafeInteger(input.readCursor) || input.readCursor < 0 || input.readCursor > session.cursor)) {
       throw new AppError("AGENT_SESSION_METADATA_INVALID", "会话设置无效。", { status: 422 });
     }
@@ -223,7 +281,7 @@ export class AgentSessionGateway {
     return this.snapshot(sessionId);
   }
 
-  editQueuedMessage(sessionId, messageId, input = {}) {
+  editQueuedMessage(sessionId: string, messageId: string, input: { text?: string } = {}) {
     const session = this.#require(sessionId);
     const message = session.queuedMessages.find(item => item.id === messageId);
     if (!message) throw new AppError("AGENT_QUEUE_MESSAGE_NOT_FOUND", "该消息已经开始执行或不在队列中。", { status: 404 });
@@ -235,32 +293,32 @@ export class AgentSessionGateway {
     return clone(message);
   }
 
-  async resetPermissions(sessionId, input) {
+  async resetPermissions(sessionId: string, input: CreateAgentSessionInput) {
     const session = this.#require(sessionId);
     if (session.activeTurnId || session.closing) throw new AppError("AGENT_SESSION_BUSY", "请先停止当前回合，再重置会话授权。", { status: 409 });
     await this.close(sessionId);
     return this.resume(sessionId, input);
   }
 
-  snapshot(sessionId) {
+  snapshot(sessionId: string): PublicAgentSessionSnapshot {
     if (!this.sessions.has(sessionId)) this.#restoreRecord(this.historyStore?.get?.(sessionId));
     const session = this.#require(sessionId);
     return this.#publicSession(session, true);
   }
-  researchSnapshot(sessionId) {
+  researchSnapshot(sessionId: string) {
     const session = this.#require(sessionId);
     return { id: session.id, title: session.title, researchSessionId: session.researchSessionId, context: clone(session.context ?? {}),
       candidateTurns: clone(session.candidateTurns ?? {}), turns: session.turns.map(({ id, startedAt, completedAt }) => ({ id, startedAt, completedAt })) };
   }
-  async persist(sessionId) { const session = this.#require(sessionId); await this.#persistNow(session); return this.snapshot(sessionId); }
+  async persist(sessionId: string) { const session = this.#require(sessionId); await this.#persistNow(session); return this.snapshot(sessionId); }
 
-  researchChanged(candidate) {
+  researchChanged(candidate: { id: string; revision: number; status: string; provenance?: { sessionId?: string | null } }) {
     for (const session of this.sessions.values()) if (session.researchSessionId === candidate.provenance?.sessionId) {
       this.#publish(session, "session.research.updated", { candidateId: candidate.id, revision: candidate.revision, status: candidate.status });
     }
   }
 
-  searchMessages(query, { includeArchived = false } = {}) {
+  searchMessages(query: string, { includeArchived = false } = {}) {
     if (typeof query !== "string" || !query.trim() || query.length > 200) throw new AppError("AGENT_SEARCH_INVALID", "请输入 1 到 200 个字符的搜索内容。", { status: 422 });
     const needle = query.trim().toLocaleLowerCase(), matches = [];
     for (const session of [...this.sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))) {
@@ -277,15 +335,15 @@ export class AgentSessionGateway {
     return { matches, limited: false };
   }
 
-  #restoreRecord(record) {
-    if (record?.researchInterface !== RESEARCH_INTERFACE) return null;
+  #restoreRecord(record: StoredAgentSession | null | undefined) {
+    if (!record || record.researchInterface !== RESEARCH_INTERFACE) return null;
     if (!record?.id || this.sessions.has(record.id)) return this.sessions.get(record?.id) ?? null;
     const conversationEvents = restoreConversationEvents(record);
     const trace = record.traceFormat === "final.v1" ? compactTraceEvents(record.events ?? []) : traceFromConversation(conversationEvents, record.events ?? []);
     const events = trace.slice(-this.maxEventsPerSession);
     const restoredSync = clone(record.sync ?? { source: "local-snapshot", status: "legacy_local_snapshot", lastSyncedAt: null, lastEventAt: null, error: null });
     if (restoredSync?.status === "live") restoredSync.status = "stale";
-    const session = {
+    const session: AgentRuntimeSession = {
       ...clone(record),
       candidateTurns: record.candidateTurns ?? Object.fromEntries(candidateTurnLinks(record)),
       sync: restoredSync,
@@ -323,7 +381,7 @@ export class AgentSessionGateway {
     return session;
   }
 
-  startTurn(sessionId, input = {}) {
+  startTurn(sessionId: string, input: Partial<TurnMessage> = {}) {
     const session = this.#require(sessionId);
     const attachments = input.attachments ?? [];
     if (!Array.isArray(attachments) || attachments.length > MAX_AGENT_IMAGES || attachments.some(image => !image.id || !image.path || !image.mediaType))
@@ -333,7 +391,7 @@ export class AgentSessionGateway {
       if (typeof input.clientMessageId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(input.clientMessageId)) throw new AppError("AGENT_MESSAGE_ID_INVALID", "消息标识无效。", { status: 422 });
       const previous = [...session.turns, ...session.queuedMessages].find(item => item.clientMessageId === input.clientMessageId);
       if (previous) {
-        if ((previous.submissionHash ?? versionHash(previous.text ?? previous.input?.[0]?.text)) !== messageHash(String(input.text ?? "").trim(), attachments)) throw new AppError("AGENT_MESSAGE_ID_CONFLICT", "消息标识已用于其他内容。", { status: 409 });
+        if ((previous.submissionHash ?? versionHash(("text" in previous ? previous.text : previous.input?.[0]?.text))) !== messageHash(String(input.text ?? "").trim(), attachments)) throw new AppError("AGENT_MESSAGE_ID_CONFLICT", "消息标识已用于其他内容。", { status: 409 });
         return { ...clone(previous), duplicate: true };
       }
     }
@@ -359,7 +417,7 @@ export class AgentSessionGateway {
     return this.#beginTurn(session, message);
   }
 
-  removeQueuedMessage(sessionId, messageId) {
+  removeQueuedMessage(sessionId: string, messageId: string) {
     const session = this.#require(sessionId);
     const index = session.queuedMessages.findIndex(message => message.id === messageId);
     if (index < 0) throw new AppError("AGENT_QUEUED_MESSAGE_NOT_FOUND", "待发送消息已经开始执行或已被移除。", { status: 404 });
@@ -368,7 +426,7 @@ export class AgentSessionGateway {
     return this.snapshot(sessionId);
   }
 
-  resumeQueue(sessionId) {
+  resumeQueue(sessionId: string) {
     const session = this.#require(sessionId);
     if (this.shuttingDown || session.closing || session.status !== "ready") throw new AppError("AGENT_SESSION_NOT_READY", "请先恢复会话，再继续发送队列。", { status: 409 });
     session.queuePaused = false;
@@ -377,27 +435,27 @@ export class AgentSessionGateway {
     return this.snapshot(sessionId);
   }
 
-  #queueChanged(session) {
+  #queueChanged(session: AgentRuntimeSession) {
     session.updatedAt = new Date().toISOString();
     this.#publish(session, "session.queue.updated", { queuedMessages: clone(session.queuedMessages), queuePaused: session.queuePaused });
     this.#schedulePersist(session);
   }
 
-  #drainQueue(session) {
+  #drainQueue(session: AgentRuntimeSession) {
     if (session.drainScheduled || this.shuttingDown || session.closing || session.queuePaused || session.status !== "ready" || !session.queuedMessages.length) return;
     session.drainScheduled = true;
     queueMicrotask(() => {
       session.drainScheduled = false;
       if (this.shuttingDown || session.closing || session.queuePaused || session.status !== "ready" || !session.queuedMessages.length) return;
-      const message = session.queuedMessages.shift();
+      const message = session.queuedMessages.shift()!;
       this.#beginTurn(session, message);
       this.#queueChanged(session);
     });
   }
 
-  #beginTurn(session, { text, attachments = [], model, reasoningEffort, clientMessageId, submissionHash }) {
+  #beginTurn(session: AgentRuntimeSession, { text, attachments = [], model, reasoningEffort, clientMessageId, submissionHash }: TurnMessage) {
     const sessionId = session.id;
-    const turn = {
+    const turn: AgentTurn = {
       schemaVersion: "agent-turn.v1",
       id: compactId("agent_turn"),
       sessionId,
@@ -424,23 +482,23 @@ export class AgentSessionGateway {
     this.#publish(session, "turn.started", { turnId: turn.id }, turn.id);
     this.#publish(session, "user.message", { text, ...(attachments.length ? { attachments: attachments.map(publicAgentAttachment) } : {}) }, turn.id);
 
-    const promptContent = [{ type: "text", text }, ...imagePromptParts(attachments)];
+    const promptContent: AgentPromptPart[] = [{ type: "text", text }, ...imagePromptParts(attachments)];
     if (session.turns.length === 1 && session.context?.topologyStateVersion) {
       if (session.capabilities?.promptCapabilities?.embeddedContext) promptContent.unshift(contextPrompt(session.context));
       else promptContent[0].text = `[Research selection]\n${JSON.stringify(workingContext(session.context))}\n\n[User message]\n${text}`;
     }
     Promise.resolve()
-      .then(() => session.adapter.prompt({ turnId: turn.id, content: promptContent, model, reasoningEffort }))
+      .then(() => session.adapter!.prompt({ turnId: turn.id, content: promptContent, model, reasoningEffort }))
       .then(async (result) => { await Promise.allSettled([...(session.imageCaptures ?? [])]); this.#completeTurn(session, turn, result); })
       .catch((error) => this.#failTurn(session, turn, error));
     return clone(turn);
   }
 
-  async resolveApproval(sessionId, requestId, input = {}, actor = null) {
+  async resolveApproval(sessionId: string, requestId: string, input: Partial<AgentApprovalSelection> = {}, actor: Parameters<typeof requirePermission>[0] | null = null) {
     const session = this.#require(sessionId);
     const approval = session.pendingApprovals.get(requestId);
     if (!approval) throw new AppError("AGENT_APPROVAL_NOT_FOUND", "没有找到等待处理的 Agent 审批。", { status: 404 });
-    if (!["allow", "reject", "cancel"].includes(input.decision)) throw new AppError("AGENT_APPROVAL_DECISION_INVALID", "请选择允许、拒绝或停止。", { status: 422 });
+    if (!["allow", "reject", "cancel"].includes(input.decision ?? "")) throw new AppError("AGENT_APPROVAL_DECISION_INVALID", "请选择允许、拒绝或停止。", { status: 422 });
     if (approval.resolving) throw new AppError("AGENT_APPROVAL_RESOLVING", "审批正在处理中。", { status: 409 });
     const decision = input.decision;
     const options = approval.options ?? [];
@@ -451,7 +509,7 @@ export class AgentSessionGateway {
     approval.risk = approvalRisk(approval, this.projectRoot);
     requirePermission(actor, approvalPermission(approval, selected));
     if (input.permissionKeys !== undefined && (decision !== "allow" || session.provider !== "codex" || approval.category !== "permissions"
-      || !Array.isArray(input.permissionKeys) || !input.permissionKeys.length || input.permissionKeys.some(key => !["network", "fileSystem"].includes(key) || !approval.permissions?.[key]))) {
+      || !Array.isArray(input.permissionKeys) || !input.permissionKeys.length || input.permissionKeys.some(key => !["network", "fileSystem"].includes(key) || !(approval.permissions as Record<string, unknown> | undefined)?.[key]))) {
       throw new AppError("AGENT_APPROVAL_PERMISSIONS_INVALID", "只能授予本次请求中已有的权限类别。", { status: 422 });
     }
     const resolution = { requestId, decision, optionId: selected.optionId, selectedScope: selected.scope,
@@ -463,8 +521,9 @@ export class AgentSessionGateway {
       await this.#persistNow(session);
       return { ...resolution, status: "resolved" };
     }
-    try { await session.adapter.resolvePermission(requestId, selected.optionId, decision === "cancel", { permissionKeys: resolution.permissionKeys }); }
-    catch (error) {
+    try { await session.adapter!.resolvePermission(requestId, selected.optionId, false, { permissionKeys: resolution.permissionKeys }); }
+    catch (cause) {
+      const error = agentError(cause);
       // A native SSE acknowledgement can precede the HTTP reply (or its failure).
       if (!approval.nativeResolved) { approval.resolving = false; delete approval.resolution; throw error; }
     }
@@ -473,8 +532,8 @@ export class AgentSessionGateway {
     return { ...resolution, status: "resolved" };
   }
 
-  #resolveApprovalEvent(session, approval, payload) {
-    session.pendingApprovals.delete(payload.requestId);
+  #resolveApprovalEvent(session: AgentRuntimeSession, approval: RuntimeApproval, payload: AgentPayload) {
+    if (payload.requestId) session.pendingApprovals.delete(payload.requestId);
     const turn = session.turns.find(item => item.id === approval.turnId);
     if (turn && !turn.completedAt && turn.status !== "cancelling" && session.activeTurnId === turn.id && !session.closing) {
       session.status = session.pendingApprovals.size ? "awaiting_permission" : "running";
@@ -491,7 +550,7 @@ export class AgentSessionGateway {
     this.#publish(session, "approval.resolved", { ...payload, sessionStatus: session.status, ...(permissionGrant ? { permissionGrant } : {}) }, approval.turnId);
   }
 
-  #expireApprovals(session, decision = "expired", turnId = null) {
+  #expireApprovals(session: AgentRuntimeSession, decision: AgentPayload["decision"] = "expired", turnId: string | null = null) {
     for (const [requestId, approval] of [...session.pendingApprovals]) {
       if (turnId && approval.turnId !== turnId) continue;
       this.#resolveApprovalEvent(session, approval, { requestId, decision, status: decision,
@@ -499,19 +558,22 @@ export class AgentSessionGateway {
     }
   }
 
-  async resume(sessionId, input = {}) {
-    if (this.resumptions.has(sessionId)) return this.resumptions.get(sessionId);
+  async resume(sessionId: string, input: CreateAgentSessionInput = {}): Promise<PublicAgentSessionSnapshot> {
+    const current = this.resumptions.get(sessionId);
+    if (current) return current;
     const pending = this.#resume(sessionId, input);
     this.resumptions.set(sessionId, pending);
     try { return await pending; } finally { this.resumptions.delete(sessionId); }
   }
 
-  async #resume(sessionId, input = {}) {
+  async #resume(sessionId: string, input: CreateAgentSessionInput = {}) {
     const source = this.#require(sessionId);
     if (source.archived) throw new AppError("AGENT_SESSION_ARCHIVED", "请先恢复归档的会话。", { status: 409 });
     if (source.researchInterface !== RESEARCH_INTERFACE) throw new AppError("AGENT_INTERFACE_UNSUPPORTED", "科研会话接口已更换，请创建新会话。", { status: 409 });
     if ((source.ownerUserId ?? null) !== (input.ownerUserId ?? null)) throw new AppError("AGENT_SESSION_OWNER_MISMATCH", "不能继承其他用户的研究会话身份。", { status: 403 });
     if (source.closing) throw new AppError("AGENT_SESSION_CLOSING", "会话正在关闭，请稍后继续。", { status: 409 });
+    const startup = this.startups.get(sessionId);
+    if (startup) return startup;
     if (["starting", "ready", "running", "awaiting_permission"].includes(source.status) && source.adapter) {
       return this.snapshot(sessionId);
     }
@@ -538,10 +600,10 @@ export class AgentSessionGateway {
     this.#publish(source, "session.status", { status: "starting", runtimeInstanceId: source.runtimeInstanceId });
     await previousAdapter?.close().catch(() => {});
     this.onSessionClosed?.(previousRuntimeId);
-    return this.#startRuntime(source, { ...input, model: source.model, reasoningEffort: source.reasoningEffort, resumeNativeThreadId });
+    return this.#launchRuntime(source, { ...input, model: source.model, reasoningEffort: source.reasoningEffort, resumeNativeThreadId });
   }
 
-  async sync(sessionId, { reason = "manual" } = {}) {
+  async sync(sessionId: string, { reason = "manual" } = {}) {
     const session = this.#require(sessionId);
     if (!session.nativeSessionId || !session.capabilities?.session?.sync) {
       session.sync = { ...(session.sync ?? {}), source: session.provider ?? "local", status: "legacy_local_snapshot", lastSyncedAt: session.sync?.lastSyncedAt ?? null, error: null };
@@ -557,36 +619,39 @@ export class AgentSessionGateway {
       if (session.runtimeInstanceId !== runtimeInstanceId) return { session: this.snapshot(sessionId), status: "superseded", reason };
       session.nativeSnapshot = redactAgentSecrets(snapshot);
       this.#projectSnapshot(session, snapshot, snapshotCursor);
-      session.sync = { ...(session.sync ?? {}), source: "agent-native", status: "synced", lastSyncedAt: snapshot.syncedAt ?? new Date().toISOString(), lastNativeUpdatedAt: snapshot.thread?.thread?.updatedAt ?? snapshot.thread?.updatedAt ?? null, error: null };
+      session.sync = { ...(session.sync ?? {}), source: "agent-native", status: "synced", lastSyncedAt: snapshotSchema.parse(snapshot).syncedAt ?? new Date().toISOString(), lastNativeUpdatedAt: snapshotSchema.parse(snapshot).thread?.thread?.updatedAt ?? snapshotSchema.parse(snapshot).thread?.updatedAt ?? null, error: null };
       await this.#persistNow(session);
       return { session: this.snapshot(sessionId), status: "synced", reason };
-    } catch (error) {
+    } catch (cause) {
+      const error = agentError(cause);
       if (session.runtimeInstanceId !== runtimeInstanceId) return { session: this.snapshot(sessionId), status: "superseded", reason };
-      const missing = error.status === 404 || ["AGENT_THREAD_NOT_FOUND", "CODEX_THREAD_NOT_FOUND", "AGENT_SESSION_SOURCE_NOT_FOUND"].includes(error.code) || /not found|unknown thread|does not exist/i.test(error.message ?? "");
+      const missing = error.status === 404 || ["AGENT_THREAD_NOT_FOUND", "CODEX_THREAD_NOT_FOUND", "AGENT_SESSION_SOURCE_NOT_FOUND"].includes(error.code ?? "") || /not found|unknown thread|does not exist/i.test(error.message ?? "");
       session.sync = { ...(session.sync ?? {}), source: "agent-native", status: missing ? "source_missing" : "sync_failed", error: { code: error.code ?? "AGENT_SYNC_FAILED", message: error.message, at: new Date().toISOString() } };
       await this.#persistNow(session);
       return { session: this.snapshot(sessionId), status: session.sync.status, reason, error: session.sync.error };
     }
   }
 
-  async #readSessionSnapshot(session) {
+  async #readSessionSnapshot(session: AgentRuntimeSession) {
     if (session.adapter?.readSnapshot) return session.adapter.readSnapshot({ nativeSessionId: session.nativeSessionId });
     const adapter = await this.profileRegistry.createAdapter(session.profileId, {
       onEvent: () => {},
+      expectedDriver: session.nativeDriver ?? (session.provider === "opencode" ? "opencode-server-v1" : undefined),
       model: session.model ?? undefined,
       reasoningEffort: session.reasoningEffort ?? undefined,
     });
     try {
-      return await adapter.readSnapshot({ nativeSessionId: session.nativeSessionId });
+      return await adapter.readSnapshot!({ nativeSessionId: session.nativeSessionId });
     } finally {
       await adapter.close().catch(() => {});
     }
   }
 
-  #projectSnapshot(session, snapshot, snapshotCursor = Infinity) {
+  #projectSnapshot(session: AgentRuntimeSession, value: unknown, snapshotCursor = Infinity) {
+    const snapshot = snapshotSchema.parse(value);
     const advancedIds = new Set(session.conversationEvents.filter(event => (event.updatedCursor ?? event.cursor) > snapshotCursor)
       .flatMap(event => [event.payload.nativeItemId, event.payload.blockId, event.payload.messageId, event.payload.toolCallId]).filter(Boolean));
-    const advanced = nativeItemId => advancedIds.has(nativeItemId);
+    const advanced = (nativeItemId: unknown) => typeof nativeItemId === "string" && advancedIds.has(nativeItemId);
     if (snapshot?.format === "agent-native-events.v1") {
       for (const event of snapshot.events ?? []) {
         const nativeItemId = event.payload?.nativeItemId;
@@ -604,26 +669,26 @@ export class AgentSessionGateway {
     this.#projectCodexSnapshot(session, snapshot, advancedIds);
   }
 
-  #projectCodexSnapshot(session, snapshot, advancedIds) {
-    const turns = snapshot?.turns?.data ?? snapshot?.turns ?? [];
-    const listedItems = snapshot?.items?.data ?? snapshot?.items ?? [];
-    const items = [];
-    const seen = new Map();
-    const appendItem = (key, entry) => {
+  #projectCodexSnapshot(session: AgentRuntimeSession, snapshot: NativeSnapshot, advancedIds: Set<unknown>) {
+    const turns = Array.isArray(snapshot.turns) ? snapshot.turns : snapshot.turns?.data ?? [];
+    const listedItems = Array.isArray(snapshot.items) ? snapshot.items : snapshot.items?.data ?? [];
+    const items: { item: CodexItem; turnId: string | null }[] = [];
+    const seen = new Map<string, { item: CodexItem; turnId: string | null }>();
+    const appendItem = (key: string, entry: { item: CodexItem; turnId: string | null }) => {
       const prior = seen.get(key);
       if (prior) Object.assign(prior, entry);
       else { seen.set(key, entry); items.push(entry); }
     };
     for (const turn of turns) for (const item of turn.items ?? []) {
       const key = item.id ?? `${turn.id}:${items.length}`;
-      appendItem(key, { item, turnId: turn.id ?? turn.rootTurnId ?? null });
+      appendItem(key, { item, turnId: turn.id ?? (typeof turn.rootTurnId === "string" ? turn.rootTurnId : null) ?? null });
     }
     for (const entry of listedItems) {
       if (entry?.item) {
         const key = entry.item.id ?? `${entry.turnId}:${items.length}`;
         appendItem(key, { item: entry.item, turnId: entry.turnId ?? null });
       } else if (entry?.id && entry?.type) {
-        appendItem(entry.id, { item: entry, turnId: entry.turnId ?? null });
+        appendItem(entry.id, { item: codexItemSchema.parse(entry), turnId: entry.turnId ?? null });
       }
     }
     for (const { item, turnId } of items) {
@@ -636,7 +701,7 @@ export class AgentSessionGateway {
       const localTurnId = localTurn?.id ?? turnId;
       if (type === "usermessage") {
         if (localTurn || hasNative) continue;
-        const text = (item.content ?? []).map((part) => part.text ?? "").join("\n");
+        const text = (Array.isArray(item.content) ? item.content : []).map((part: unknown) => part && typeof part === "object" && "text" in part ? String(part.text ?? "") : "").join("\n");
         this.#publish(session, "user.message", { text, nativeItemId }, localTurnId, `native:${nativeItemId}:user`);
       } else if (type === "agentmessage") {
         if (session.conversationEvents.some(event => event.type === "assistant.message.completed" && event.payload.nativeItemId === nativeItemId && event.payload.text === (item.text ?? ""))) continue;
@@ -665,7 +730,7 @@ export class AgentSessionGateway {
     }
   }
 
-  cancel(sessionId) {
+  cancel(sessionId: string) {
     const session = this.#require(sessionId);
     if (!session.activeTurnId) throw new AppError("AGENT_TURN_NOT_ACTIVE", "当前会话没有可取消的运行轮次。", { status: 409 });
     const turn = session.turns.find((item) => item.id === session.activeTurnId);
@@ -677,14 +742,14 @@ export class AgentSessionGateway {
     this.#publish(session, "turn.cancelling", { turnId: session.activeTurnId }, session.activeTurnId);
     this.#expireApprovals(session, "cancelled");
     for (const [requestId] of pending) {
-      void session.adapter.resolvePermission(requestId, null, true).catch(() => {});
+      void session.adapter!.resolvePermission(requestId, null, true).catch(() => {});
     }
-    session.adapter.cancel();
+    session.adapter!.cancel();
     this.#schedulePersist(session);
     return { sessionId, turnId: session.activeTurnId, status: "cancelling" };
   }
 
-  async close(sessionId) {
+  async close(sessionId: string): Promise<PublicAgentSessionSnapshot> {
     const session = this.#require(sessionId);
     if (session.status === "closed") return this.snapshot(sessionId);
     if (session.closePromise) return session.closePromise;
@@ -695,9 +760,14 @@ export class AgentSessionGateway {
     return session.closePromise;
   }
 
-  async #close(session) {
+  async #close(session: AgentRuntimeSession) {
     const sessionId = session.id;
-    if (session.activeTurnId) session.adapter.cancel();
+    const startup = this.startups.get(sessionId);
+    if (session.activeTurnId) session.adapter?.cancel();
+    if (startup) {
+      await session.adapter?.close().catch(() => {});
+      await startup.catch(() => {});
+    }
     if (session.nativeSessionId && session.capabilities?.session?.sync) await this.sync(sessionId, { reason: "session-closed" }).catch(() => {});
     await session.adapter?.close().catch(() => {});
     const active = session.turns.find((turn) => turn.id === session.activeTurnId);
@@ -714,7 +784,7 @@ export class AgentSessionGateway {
     return this.snapshot(sessionId);
   }
 
-  subscribe(sessionId, listener, after = 0) {
+  subscribe(sessionId: string, listener: (event: AgentEvent) => void, after = 0) {
     const session = this.#require(sessionId);
     const stream = session.streamEvents ?? [];
     const replay = stream.length && after >= stream[0].cursor - 1 ? stream
@@ -724,7 +794,7 @@ export class AgentSessionGateway {
     return () => session.subscribers.delete(listener);
   }
 
-  async closeAll() {
+  async closeAll(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     this.shuttingDown = true;
     this.shutdownPromise = this.#shutdown();
@@ -733,9 +803,11 @@ export class AgentSessionGateway {
 
   async #shutdown() {
     await Promise.all([...this.sessions.values()].map((session) => session.adapter?.close().catch(() => {})));
+    await Promise.allSettled([...this.startups.values(), ...this.resumptions.values()]);
     await Promise.allSettled([...this.sessions.values()].flatMap(session => [...(session.imageCaptures ?? [])]));
     for (const session of this.sessions.values()) {
       const turn = session.turns.find(turn => turn.id === session.activeTurnId && !turn.completedAt);
+      if (["starting", "ready"].includes(session.status)) session.status = "detached";
       if (!turn) continue;
       turn.status = "failed"; turn.stopReason = "server_shutdown"; turn.completedAt = new Date().toISOString();
       session.activeTurnId = null; session.status = "detached";
@@ -746,7 +818,7 @@ export class AgentSessionGateway {
     for (const session of this.sessions.values()) this.onSessionClosed?.(session.runtimeInstanceId ?? session.id);
   }
 
-  #assistantMessage(turn, payload = {}) {
+  #assistantMessage(turn: AgentTurn | undefined, payload: AgentPayload = {}): AssistantMessage | null {
     if (!turn) return null;
     const messageId = payload.blockId ?? payload.messageId ?? payload.nativeItemId ?? `turn:${turn.id}`;
     let message = (turn.assistantMessages ?? []).find(item => item.messageId === messageId && actorKey(item) === actorKey(payload));
@@ -759,39 +831,38 @@ export class AgentSessionGateway {
     return message;
   }
 
-  #updateTurnText(turn) {
+  #updateTurnText(turn: AgentTurn) {
     turn.assistantText = (turn.assistantMessages ?? []).filter(message => !message.agentId && !message.parentToolUseId).map(message => message.text).join("");
   }
 
-  #onDriverEvent(sessionId, event) {
+  #onDriverEvent(sessionId: string, event: DriverEvent) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     if (event.type === "native.trace" || event.type === "provider.event") return;
     const turnId = event.turnId === undefined ? session.activeTurnId : event.turnId;
     const turn = session.turns.find((item) => item.id === turnId);
-    const payload = redactAgentSecrets(clone(event.payload ?? {}));
+    const payload = redactAgentSecrets(clone(event.payload ?? {})) as AgentPayload;
     if (event.type === "tool.completed" && isImageView(event) && this.captureImage && !payload.imageCaptured) {
       session.imageCaptures ??= new Set();
-      const capture = Promise.resolve().then(() => this.captureImage(sessionId, { ...event, sessionId, turnId })).then(
+      const capture = Promise.resolve().then(() => this.captureImage!(sessionId, { ...event, sessionId, turnId })).then(
         image => this.#onDriverEvent(sessionId, { ...event, turnId, payload: { ...payload, imageCaptured: true, imageAttachment: publicAgentAttachment(image) } }),
         error => this.#onDriverEvent(sessionId, { ...event, turnId, payload: { ...payload, imageCaptured: true, imageCaptureError: error.message } }),
-      ).finally(() => session.imageCaptures.delete(capture));
+      ).finally(() => session.imageCaptures!.delete(capture));
       session.imageCaptures.add(capture); return;
     }
     if (event.type === "tool.completed") {
       session.candidateTurns ??= {};
-      for (const [id, linkedTurn] of candidateTurnLinks({ events: [{ ...event, payload, turnId }] })) session.candidateTurns[id] = linkedTurn;
+      for (const [id, linkedTurn] of candidateTurnLinks({ events: [{ ...event, payload, turnId }] })) session.candidateTurns![id] = linkedTurn;
     }
     if (event.type === "usage.updated") session.usage = clone(payload);
-    if (["assistant.message.", "reasoning.summary.", "tool."].some(prefix => event.type.startsWith(prefix)) && !payload.restored && session.conversationEvents.some(removal => removal.type === "content.removed"
-      && isRemovedContent({ ...event, payload }, removal))) return;
+    if (["assistant.message.", "reasoning.summary.", "tool."].some(prefix => event.type.startsWith(prefix)) && !payload.restored && isConversationContentRemoved(session.conversationEvents, { ...event, payload })) return;
     if (event.type === "turn.native-linked" && turn) {
       turn.nativeMessageId = payload.nativeMessageId;
       turn.nativeTurnId = payload.nativeTurnId;
     }
     if (event.type === "assistant.message.delta") {
       const message = this.#assistantMessage(turn, payload);
-      if (message) {
+      if (message && turn) {
         if (message.completed) return;
         payload.messageId ??= message.messageId;
         message.text += payload.delta ?? "";
@@ -808,7 +879,7 @@ export class AgentSessionGateway {
     if (["tool.started", "assistant.message.delta", "assistant.message.completed"].includes(event.type)) session.reasoningSegment = null;
     if (event.type === "assistant.message.completed" || event.type === "assistant.message.snapshot") {
       const message = this.#assistantMessage(turn, payload);
-      if (message) {
+      if (message && turn) {
         const messageId = message.messageId;
         const text = typeof payload.text === "string" ? payload.text : message.text;
         Object.assign(message, payload, { messageId, text });
@@ -838,12 +909,12 @@ export class AgentSessionGateway {
         return;
       }
       if (session.pendingApprovals.has(requestId)) return;
-      session.pendingApprovals.set(requestId, { ...clone(payload), turnId });
+      session.pendingApprovals.set(requestId, { ...clone(payload), requestId, options: payload.options ?? [], turnId } as RuntimeApproval);
       session.status = "awaiting_permission";
       if (turn) turn.status = "awaiting_permission";
     }
     if (event.type === "approval.resolved") {
-      const approval = session.pendingApprovals.get(payload.requestId);
+      const approval = session.pendingApprovals.get(payload.requestId ?? "");
       if (!approval) return;
       approval.nativeResolved = true;
       this.#resolveApprovalEvent(session, approval, { ...payload, ...(approval.resolution ?? {}) });
@@ -862,7 +933,7 @@ export class AgentSessionGateway {
     if (["tool.completed", "tool.failed"].includes(event.type)) this.#researchEvent(session, "toolResult", turnId, payload);
   }
 
-  #completeTurn(session, turn, result = {}) {
+  #completeTurn(session: AgentRuntimeSession, turn: AgentTurn, result: Partial<AgentTurnResult> = {}) {
     if (turn.status === "failed" || turn.completedAt) return;
     if (result?.stopReason === "error") return this.#failTurn(session, turn, new AppError("AGENT_TURN_FAILED", "Agent 回合执行失败。", { status: 502 }));
     turn.stopReason = result?.stopReason ?? "end_turn";
@@ -897,7 +968,7 @@ export class AgentSessionGateway {
     if (!this.shuttingDown && !session.closing && session.nativeSessionId && session.capabilities?.session?.sync) void this.sync(session.id, { reason: "turn-completed" }).catch(() => {});
   }
 
-  #failTurn(session, turn, error) {
+  #failTurn(session: AgentRuntimeSession, turn: AgentTurn, error: Error & { code?: string }) {
     if (turn.completedAt) return;
     turn.status = "failed";
     turn.completedAt = new Date().toISOString();
@@ -916,7 +987,7 @@ export class AgentSessionGateway {
     void this.#persistNow(session).catch(() => {});
   }
 
-  #researchEvent(session, type, turnId, payload = {}) {
+  #researchEvent(session: AgentRuntimeSession, type: string, turnId: string | null | undefined, payload: AgentPayload = {}) {
     if (!this.onResearchEvent) return;
     this.onResearchEvent({
       type,
@@ -928,8 +999,8 @@ export class AgentSessionGateway {
     });
   }
 
-  #publish(session, type, payload = {}, turnId = null, eventId = null) {
-    const event = {
+  #publish(session: AgentRuntimeSession, type: string, payload: AgentPayload = {}, turnId: string | null | undefined = null, eventId: string | null = null) {
+    const event: AgentEvent & { schemaVersion: string } = {
       schemaVersion: "agent-session-event.v1",
       id: eventId ?? compactId("agent_session_event"),
       cursor: ++session.cursor,
@@ -954,21 +1025,26 @@ export class AgentSessionGateway {
     return event;
   }
 
-  #schedulePersist(session) {
+  #schedulePersist(session: AgentRuntimeSession) {
     if (!this.shuttingDown) this.persistence.schedule(session);
   }
 
-  async #persistNow(session) {
+  async #persistNow(session: AgentRuntimeSession) {
     await this.persistence.save(session);
   }
 
-  #publicSession(session, includeEvents, summary = false) {
-    if (summary) return { id: session.id, title: session.title, profileId: session.profileId, provider: session.provider, model: session.model,
+  #sessionSummary(session: AgentRuntimeSession): AgentSessionSummary {
+    return { id: session.id, title: session.title, profileId: session.profileId, provider: session.provider, model: session.model,
       ownerUserId: session.ownerUserId, pinned: session.pinned ?? false, archived: session.archived ?? false,
       status: session.status, createdAt: session.createdAt, updatedAt: session.updatedAt, lastCursor: session.cursor,
       lastReadCursor: session.lastReadCursor ?? 0, latestMessageCursor: session.latestMessageCursor ?? 0,
       turnCount: session.turns.length, queuedMessageCount: session.queuedMessages?.length ?? 0,
       pendingApprovals: [...session.pendingApprovals.values()].map(({ requestId, toolName, category }) => ({ requestId, toolName, category })) };
+  }
+
+  #publicSession(session: AgentRuntimeSession, includeEvents: true): PublicAgentSessionSnapshot;
+  #publicSession(session: AgentRuntimeSession, includeEvents: false): PublicAgentSession;
+  #publicSession(session: AgentRuntimeSession, includeEvents: boolean): PublicAgentSession {
     return {
       schemaVersion: session.schemaVersion,
       id: session.id,
@@ -989,6 +1065,7 @@ export class AgentSessionGateway {
       resumedFrom: session.resumedFrom ?? null,
       status: session.status,
       nativeSessionId: session.nativeSessionId,
+      nativeDriver: session.nativeDriver,
       sync: clone(session.sync ?? null),
       nativeSnapshot: clone(session.nativeSnapshot ?? null),
       usage: clone(session.usage ?? null),
@@ -1017,7 +1094,7 @@ export class AgentSessionGateway {
     };
   }
 
-  #require(sessionId) {
+  #require(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) throw new AppError("AGENT_SESSION_NOT_FOUND", "没有找到指定的 Agent 会话。", { status: 404, detail: { sessionId } });
     return session;

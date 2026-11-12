@@ -1,13 +1,12 @@
 import { GitAdapter } from "../../adapters/sources/git-adapter.js";
 import { FilesystemAdapter } from "../../adapters/sources/filesystem-adapter.js";
-import { MlflowAdapter } from "../../adapters/experiments/mlflow-adapter.js";
-import { WandbAdapter } from "../../adapters/experiments/wandb-adapter.js";
-import { TensorboardAdapter } from "../../adapters/experiments/tensorboard-adapter.js";
+import { MlflowReader } from "../research/experiments/mlflow-reader.js";
+import { WandbConnectionProbe } from "./source-connections.js";
 import { DockerAdapter } from "../../adapters/execution/docker-adapter.js";
-import { ExperimentTrackingGateway } from "../experiments/experiment-tracking-gateway.js";
+import type { AppConfig } from "../../config.js";
 import { versionHash } from "../../lib/hash.js";
 
-function settledError(result, source) {
+function settledError(result: PromiseSettledResult<unknown>, source: string) {
   if (result.status === "fulfilled") return null;
   return {
     source,
@@ -16,7 +15,7 @@ function settledError(result, source) {
   };
 }
 
-function stripVolatile(value) {
+function stripVolatile(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripVolatile);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
@@ -27,56 +26,30 @@ function stripVolatile(value) {
 }
 
 export class AdapterRegistry {
-  constructor(config) {
+  git: GitAdapter; filesystem: FilesystemAdapter; mlflow: MlflowReader; wandb: WandbConnectionProbe; docker: DockerAdapter;
+  constructor(public config: AppConfig) {
     this.config = config;
     this.git = new GitAdapter(config);
     this.filesystem = new FilesystemAdapter(config);
-    this.mlflow = new MlflowAdapter(config);
-    this.wandb = new WandbAdapter(config);
-    this.tensorboard = new TensorboardAdapter(config);
-    this.experiments = new ExperimentTrackingGateway(config, {
-      providers: {
-        mlflow: this.mlflow,
-        wandb: this.wandb,
-        tensorboard: this.tensorboard,
-      },
-    });
+    this.mlflow = new MlflowReader(config);
+    this.wandb = new WandbConnectionProbe(config);
     this.docker = new DockerAdapter(config);
   }
 
   async syncSources() {
     const observedAt = new Date().toISOString();
-    const [git, files, experimentSync] = await Promise.allSettled([
+    const [git, files] = await Promise.allSettled([
       this.git.snapshot(),
       this.filesystem.snapshot(),
-      this.experiments.sync({ reason: "source-refresh", force: true }),
     ]);
-    const experimentSnapshots = experimentSync.status === "fulfilled" ? experimentSync.value.snapshots ?? {} : {};
-    const experimentWarnings = experimentSync.status === "fulfilled"
-      ? (experimentSync.value.warnings ?? []).map((item) => ({ source: item.provider, code: item.code, message: item.message }))
-      : [settledError(experimentSync, "experiment-gateway")].filter(Boolean);
     const sourceErrors = [
       settledError(git, this.git.id),
       settledError(files, this.filesystem.id),
-      ...experimentWarnings,
-    ].filter(Boolean);
+    ].filter((error): error is NonNullable<typeof error> => error !== null);
     const snapshotBody = {
       git: git.status === "fulfilled" ? git.value : null,
       files: files.status === "fulfilled" ? files.value : null,
-      mlflow: experimentSnapshots.mlflow ?? null,
-      experiments: {
-        wandb: experimentSnapshots.wandb ?? null,
-        tensorboard: experimentSnapshots.tensorboard ?? null,
-        simulation: experimentSnapshots.simulation ?? this.experiments.simulationSnapshot(),
-      },
       sourceErrors,
-      experimentGateway: experimentSync.status === "fulfilled" ? {
-        schemaVersion: experimentSync.value.schemaVersion,
-        sourceStatus: experimentSync.value.sourceStatus,
-        providers: experimentSync.value.providers,
-        warnings: experimentSync.value.warnings,
-        completedAt: experimentSync.value.completedAt,
-      } : null,
     };
     return {
       schemaVersion: "source-snapshot.v1",

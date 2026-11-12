@@ -66,6 +66,7 @@ export interface AgentSession {
     patterns?: string[];
     grantedAt?: string;
   }>;
+  nativeDriver?: string;
   nativeSessionId?: string | null;
   sync?: {
     status?: string;
@@ -101,6 +102,7 @@ export interface AgentSession {
 }
 
 export interface AgentProfile {
+  driver?: string;
   id: string;
   label: string;
   provider: string;
@@ -128,7 +130,7 @@ export interface CollaborationContext {
     displayName?: string;
     serverRole?: string;
   } | null;
-  project?: { id: string; name: string; root?: string } | null;
+  project?: { id: string; name: string; root?: string; workspace?: import("@domain/projects/workspace").ProjectWorkspace } | null;
   projects?: Array<{
     id: string;
     name: string;

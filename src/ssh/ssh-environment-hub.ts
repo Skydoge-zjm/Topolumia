@@ -2,19 +2,29 @@ import path from "node:path";
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import * as z from "zod/v4";
-import { bundledRoot } from "../config.js";
+import { bundledRoot, type AppConfig } from "../config.js";
 import { AppError } from "../lib/errors.js";
 import { EnvironmentCatalogService } from "../services/environments/environment-catalog-service.js";
 import { ResearchEnvironmentProbes } from "../services/environments/research-environment-probes.js";
-import { cachedEnvironmentInspection } from "../services/environments/research-environment-context.js";
+import { cachedEnvironmentInspection, type EnvironmentRuntime, type EnvironmentSnapshot } from "../services/environments/research-environment-context.js";
+import type { SshConnectionService, SshProfile, SshInfo, ReadySshInfo } from "./ssh-connection-service.js";
+import type { ComponentResult } from "../services/environments/environment-types.js";
+import type { CommandRunner } from "../lib/command.js";
+import type { RemoteCatalog } from "../services/environments/environment-catalog-service.js";
+type RemoteProjectSettings = z.infer<typeof projectSchema>;
+type RemoteView = { runtime:EnvironmentRuntime;owner:string;id:string;profile:SshProfile;settings:RemoteProjectSettings;config:AppConfig;info:ReadySshInfo;runner:CommandRunner;results:Map<string,ComponentResult&{checkedAt:string}>;catalog:EnvironmentCatalogService };
+type RemoteProbeOptions = Record<string,unknown> & {pythonCommand?:string};
+const remoteInfoSchema = z.object({status:z.string(),platform:z.string(),user:z.string(),home:z.string(),python:z.string(),tools:z.record(z.string(),z.string().nullable())});
+const remoteDirectorySchema = z.object({status:z.string(),directory:z.string()});
+const remoteDiscoverSchema = z.object({status:z.string(),entries:z.array(z.object({source:z.string(),prefix:z.string(),pythonCommand:z.string(),name:z.string(),manager:z.string(),hasPython:z.boolean(),identityPath:z.string().optional()}))});
 
-const hash = (value) =>
+const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
 const command = z
   .string()
   .trim()
   .max(500)
-  .regex(/^[^\x00-\x1f\x7f]*$/);
+  .refine(value => [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), "不能包含控制字符");
 const projectSchema = z.strictObject({
   directory: command.optional(),
   pythonCommand: command.optional(),
@@ -24,20 +34,18 @@ const projectSchema = z.strictObject({
   uvCommand: command.optional(),
 });
 
-function remoteConfig(runtime, settings, info) {
+function remoteConfig(runtime: EnvironmentRuntime, settings: RemoteProjectSettings, info: Partial<SshInfo>): AppConfig {
   const config = structuredClone(runtime.config);
-  config.project.root = settings.directory || info.home;
+  config.project.root = settings.directory || info.home || "";
   config.remoteExecution = true;
-  config.researchEnvironment = { kind: "default", prefix: "", pythonCommand: settings.pythonCommand || info.python };
-  config.toolCommands = Object.fromEntries(
-    ["conda", "cuda", "nvidia", "uv"].map(tool => [tool, settings[`${tool}Command`] || info.tools?.[tool] ||
-      { conda: "conda", cuda: "nvcc", nvidia: "nvidia-smi", uv: "uv" }[tool]]),
-  );
+  config.researchEnvironment = { kind: "default", prefix: "", pythonCommand: settings.pythonCommand || info.python || "python" };
+  for (const tool of ["conda", "cuda", "nvidia", "uv"] as const) config.toolCommands[tool] = settings[`${tool}Command`] || info.tools?.[tool] || {conda:"conda",cuda:"nvcc",nvidia:"nvidia-smi",uv:"uv"}[tool];
   return config;
 }
 
 export class SshEnvironmentHub {
-  constructor(ssh) {
+  views = new Map<string,RemoteView>(); pendingViews = new Map<string,Promise<RemoteView>>(); tasks = new Set<Promise<unknown>>(); unsubscribe: () => void;
+  constructor(public ssh: SshConnectionService) {
     this.ssh = ssh;
     this.views = new Map();
     this.pendingViews = new Map();
@@ -52,12 +60,12 @@ export class SshEnvironmentHub {
       }
     });
   }
-  track(task) {
+  track<T>(task: Promise<T>) {
     this.tasks.add(task);
     void task.finally(() => this.tasks.delete(task)).catch(() => {});
     return task;
   }
-  settingsFile(runtime, owner, id) {
+  settingsFile(runtime: EnvironmentRuntime, owner: string, id: string) {
     return path.join(
       path.dirname(runtime.userSettings.filePath),
       "ssh-projects",
@@ -66,15 +74,20 @@ export class SshEnvironmentHub {
       "project.json",
     );
   }
-  async projectSettings(runtime, owner, id) {
+  async projectSettings(runtime: EnvironmentRuntime, owner: string, id: string): Promise<RemoteProjectSettings> {
     await this.ssh.profile(owner, id);
+    const workspace = runtime.config.project.workspace;
+    const initial = workspace?.kind === "ssh" && workspace.ownerId === owner && workspace.connectionId === id ? { directory: workspace.directory } : {};
     try {
       const raw = await readFile(this.settingsFile(runtime, owner, id), "utf8");
-      if (raw.length < 16384) return projectSchema.parse(JSON.parse(raw));
-    } catch {}
-    return {};
+      if (raw.length < 16384) return { ...projectSchema.parse(JSON.parse(raw)), ...initial };
+    } catch { /* A missing or invalid saved preference uses the workspace binding. */ }
+    return initial;
   }
-  async remoteProbe(owner, id, mode, options = {}) {
+  async remoteProbe(owner:string,id:string,mode:"info",options?:RemoteProbeOptions):Promise<ReadySshInfo>;
+  async remoteProbe(owner:string,id:string,mode:"directory",options?:RemoteProbeOptions):Promise<z.infer<typeof remoteDirectorySchema>>;
+  async remoteProbe(owner:string,id:string,mode:"discover",options?:RemoteProbeOptions):Promise<z.infer<typeof remoteDiscoverSchema>>;
+  async remoteProbe(owner:string,id:string,mode:"info"|"directory"|"discover",options:RemoteProbeOptions={}):Promise<ReadySshInfo|z.infer<typeof remoteDirectorySchema>|z.infer<typeof remoteDiscoverSchema>> {
     const session = await this.ssh.connected(owner, id);
     if (session.infoTask) await session.infoTask;
     let python = options.pythonCommand || session.info?.python;
@@ -106,21 +119,21 @@ export class SshEnvironmentHub {
         "远程环境检测没有完成，请检查解释器和工具路径。",
         { status: 422 },
       );
-    const value = JSON.parse(line.slice("TOPOLUMIA_REMOTE_PROBE:".length));
-    if (value.status !== "ready")
+    const value: unknown = JSON.parse(line.slice("TOPOLUMIA_REMOTE_PROBE:".length));
+    if (z.object({status:z.string()}).parse(value).status !== "ready")
       throw new AppError(
         "SSH_REMOTE_PROBE_FAILED",
         "远程目录不可访问，或所需环境管理器未找到。",
         { status: 422 },
       );
-    return value;
+    return mode === "info" ? remoteInfoSchema.parse(value) : mode === "directory" ? remoteDirectorySchema.parse(value) : remoteDiscoverSchema.parse(value);
   }
-  async info(owner, id, pythonCommand = undefined) {
+  async info(owner: string, id: string, pythonCommand: string|undefined = undefined): Promise<ReadySshInfo> {
     const profile = await this.ssh.profile(owner, id);
     const session = this.ssh.sessions.get(this.ssh.sessionKey(owner, id));
     if (session?.status !== "connected") {
       if (profile.lastInfo?.tools && profile.lastInfo?.home)
-        return profile.lastInfo;
+        return { ...profile.lastInfo, home: profile.lastInfo.home, python: profile.lastInfo.python || "python" };
       throw new AppError(
         "SSH_NOT_CONNECTED",
         "先连接 SSH 主机，才能发现远程环境。",
@@ -135,7 +148,7 @@ export class SshEnvironmentHub {
           session.info = { ...info, status: "ready" };
           profile.lastInfo = session.info;
           await this.ssh.persist(owner);
-          return session.info;
+          return info;
         })
         .catch((error) => {
           session.remoteInfoTask = null;
@@ -143,12 +156,12 @@ export class SshEnvironmentHub {
         });
     return session.remoteInfoTask;
   }
-  updateProject(runtime, owner, id, input) {
+  updateProject(runtime: EnvironmentRuntime, owner: string, id: string, input: unknown) {
     return runtime.toolEnvironment.queueConfiguration(() =>
       this.writeProject(runtime, owner, id, input),
     );
   }
-  async writeProject(runtime, owner, id, input) {
+  async writeProject(runtime: EnvironmentRuntime, owner: string, id: string, input: unknown) {
     const parsed = projectSchema.safeParse(input);
     if (!parsed.success || !Object.keys(parsed.data).length)
       throw new AppError(
@@ -168,6 +181,7 @@ export class SshEnvironmentHub {
         pythonCommand: settings.pythonCommand,
       });
       settings.directory = value.directory;
+      await runtime.updateWorkspaceDirectory?.(owner, id, value.directory);
     }
     const file = this.settingsFile(runtime, owner, id),
       temporary = `${file}.${randomUUID()}.tmp`;
@@ -181,15 +195,22 @@ export class SshEnvironmentHub {
       }
     return settings;
   }
-  async currentBinding(runtime, owner) {
+  async currentBinding(runtime: EnvironmentRuntime, owner: string) {
     const settings = runtime.userSettings.settings;
+    const workspace = runtime.config.project.workspace;
+    if (settings.researchLocation === "ssh" && !settings.remoteEnvironment && workspace?.kind === "ssh") {
+      let profile = null;
+      if (workspace.ownerId === owner && workspace.connectionId) { try { profile = await this.ssh.profile(owner, workspace.connectionId); } catch { /* An inaccessible profile is shown as unavailable. */ } }
+      const session = profile && this.ssh.sessions.get(this.ssh.sessionKey(owner, profile.id));
+      return { kind: "ssh", name: "unselected", source: "unselected", hostLabel: profile?.name ?? workspace.hostLabel, connectionId: profile?.id ?? null, accessible: Boolean(profile), connected: session?.status === "connected", needsReview: !profile || profile.revision !== workspace.connectionRevision };
+    }
     if (settings.researchLocation === "ssh" && settings.remoteEnvironment) {
       const ref = settings.remoteEnvironment;
       let profile = null;
       if (ref.ownerId === owner) {
         try {
           profile = await this.ssh.profile(owner, ref.connectionId);
-        } catch {}
+        } catch { /* An inaccessible profile is shown as unavailable. */ }
       }
       const session = profile
         ? this.ssh.sessions.get(this.ssh.sessionKey(owner, profile.id))
@@ -221,8 +242,17 @@ export class SshEnvironmentHub {
   }
   // Unlike get(), this only reads configuration and existing cache files.
   // A briefing must never open SSH, discover environments, or run diagnostics.
-  async contextSnapshot(runtime, owner) {
+  async contextSnapshot(runtime: EnvironmentRuntime, owner: string): Promise<EnvironmentSnapshot> {
     const ref = runtime.userSettings.settings.remoteEnvironment;
+    const workspace = runtime.config.project.workspace;
+    if (!ref && workspace?.kind === "ssh") {
+      if (!workspace.connectionId) throw new AppError("SSH_CONNECTION_NOT_FOUND", "项目 SSH 连接不存在。", {status:404});
+      if (workspace.ownerId !== owner) throw new AppError("SSH_ENVIRONMENT_OWNER_MISMATCH", "项目目录关联到其他成员的 SSH 连接，请在工具与环境中配置你可用的连接。", { status: 403 });
+      const profile = await this.ssh.profile(owner, workspace.connectionId), settings = await this.projectSettings(runtime, owner, workspace.connectionId);
+      if (profile.revision !== workspace.connectionRevision) throw new AppError("SSH_CONFIGURATION_CHANGED", "SSH 配置已变化，请重新确认项目目录。", { status: 409 });
+      const session = this.ssh.sessions.get(this.ssh.sessionKey(owner, profile.id));
+      return { host: { kind: "ssh", label: profile.name, platform: session?.info?.platform ?? profile.lastInfo?.platform ?? null, connected: session?.status === "connected", ...(profile.mode === "alias" ? { alias: profile.alias } : { hostname: profile.host, user: profile.user, port: profile.port }) }, directory: settings.directory, name: "unselected", selection: { kind: "unselected", pythonCommand: null }, toolCommands: {}, inspection: null, tools: [], pendingEnvironment: true };
+    }
     if (!ref || ref.ownerId !== owner)
       throw new AppError("SSH_ENVIRONMENT_OWNER_MISMATCH", "此远程环境属于其他用户，请在工具与环境中选择你可用的连接。", { status: 403 });
     const profile = await this.ssh.profile(owner, ref.connectionId);
@@ -238,7 +268,7 @@ export class SshEnvironmentHub {
     const view = this.views.get(identity);
     const config = remoteConfig(runtime, settings, info);
     const selection = ref.source === "conda" ? { kind: "conda", prefix: ref.prefix } : { kind: "custom", pythonCommand: ref.pythonCommand };
-    const inspectedConfig = { ...config, researchEnvironment: { kind: "default", prefix: "", pythonCommand: "python", ...selection } };
+    const inspectedConfig = { ...config, researchEnvironment: { prefix: "", pythonCommand: "python", ...selection } };
     const fingerprint = hash([config.project.root, inspectedConfig.researchEnvironment, config.toolCommands]);
     const cache = path.join(path.dirname(this.settingsFile(runtime, owner, ref.connectionId)),
       `cache-${profile.revision}-${identity}`, "environment-catalog", ref.environmentId, "research-environment.json");
@@ -247,11 +277,11 @@ export class SshEnvironmentHub {
       host: { kind: "ssh", label: profile.name, platform: info.platform ?? null,
         connected: session?.status === "connected",
         ...(profile.mode === "alias" ? { alias: profile.alias } : { hostname: profile.host, user: profile.user, port: profile.port }) },
-      directory: config.project.root ?? null, name: ref.name, selection, toolCommands: config.toolCommands,
+      directory: config.project.root || null, name: ref.name, selection, toolCommands: config.toolCommands,
       inspection, tools: [...(view?.results ?? [])].map(([id, item]) => ({ id, ...item })),
     };
   }
-  async get(runtime, owner, id) {
+  async get(runtime: EnvironmentRuntime, owner: string, id: string): Promise<RemoteView> {
     const profile = await this.ssh.profile(owner, id);
     const settings = await this.projectSettings(runtime, owner, id);
     const identity = hash([
@@ -261,8 +291,8 @@ export class SshEnvironmentHub {
       profile.revision,
       settings,
     ]);
-    if (this.views.has(identity)) return this.views.get(identity);
-    if (this.pendingViews.has(identity)) return this.pendingViews.get(identity);
+    if (this.views.has(identity)) return this.views.get(identity)!;
+    if (this.pendingViews.has(identity)) return this.pendingViews.get(identity)!;
     const pending = this.createView(
       runtime,
       owner,
@@ -278,7 +308,7 @@ export class SshEnvironmentHub {
       this.pendingViews.delete(identity);
     }
   }
-  async createView(runtime, owner, id, profile, settings, identity) {
+  async createView(runtime: EnvironmentRuntime, owner: string, id: string, profile: SshProfile, settings: RemoteProjectSettings, identity: string): Promise<RemoteView> {
     const info = await this.info(owner, id, settings.pythonCommand);
     if (!["Linux", "Darwin"].includes(info.platform))
       throw new AppError(
@@ -287,33 +317,21 @@ export class SshEnvironmentHub {
         { status: 422 },
       );
     const config = remoteConfig(runtime, settings, info);
-    const expand = (value) =>
+    const expand = (value: string) =>
       typeof value === "string" && value.startsWith("~/")
         ? path.posix.join(info.home, value.slice(2))
         : value;
-    const runner = (command, args, options = {}) =>
+    const runner: CommandRunner = (command, args, options = {}) =>
       this.ssh.run(owner, id, expand(command), args.map(expand), {
         ...options,
         cwd: expand(options.cwd ?? config.project.root),
       });
-    const view = {
-      runtime,
-      owner,
-      id,
-      profile,
-      settings,
-      config,
-      info,
-      runner,
-      results: new Map(),
-      catalog: null,
-    };
     const file = path.join(
       path.dirname(this.settingsFile(runtime, owner, id)),
       `cache-${profile.revision}-${identity}`,
       "settings.json",
     );
-    const remote = {
+    const remote: RemoteCatalog = {
       id: `${owner}:${id}:${profile.revision}`,
       available: () =>
         this.ssh.sessions.get(this.ssh.sessionKey(owner, id))?.status ===
@@ -331,7 +349,7 @@ export class SshEnvironmentHub {
       discover: (source) =>
         this.remoteProbe(owner, id, "discover", { ...settings, source }),
     };
-    view.catalog = new EnvironmentCatalogService({
+    const catalog = new EnvironmentCatalogService({
       config,
       remote,
       settings: { filePath: file },
@@ -358,12 +376,7 @@ export class SshEnvironmentHub {
               { status: 404 },
             );
           const probeConfig = structuredClone(config);
-          probeConfig.researchEnvironment = {
-            kind: "default",
-            prefix: "",
-            pythonCommand: info.python,
-            ...selection,
-          };
+          probeConfig.researchEnvironment = { prefix: "", pythonCommand: info.python, ...selection };
           const python = await new ResearchEnvironmentProbes(
             probeConfig,
             runner,
@@ -402,17 +415,18 @@ export class SshEnvironmentHub {
           });
         }),
     });
+    const view: RemoteView = {runtime,owner,id,profile,settings,config,info,runner,results:new Map(),catalog};
     await view.catalog.initialize();
     this.views.set(identity, view);
     return view;
   }
-  async catalog(runtime, owner, id) {
+  async catalog(runtime: EnvironmentRuntime, owner: string, id: string) {
     return (await this.get(runtime, owner, id)).catalog;
   }
-  async inventory(runtime, owner, id) {
+  async inventory(runtime: EnvironmentRuntime, owner: string, id: string) {
     const view = await this.get(runtime, owner, id);
     const local = runtime.toolEnvironment.inventory();
-    const remoteItem = (item) => {
+    const remoteItem = (item: ReturnType<EnvironmentRuntime["toolEnvironment"]["inventory"]>["tools"][number]) => {
       if (
         item.id === "node" ||
         ["mlflow", "wandb", "tensorboard"].includes(item.id)
@@ -421,7 +435,7 @@ export class SshEnvironmentHub {
       if (!["nvidia", "git", "docker", "uv", "cuda", "conda"].includes(item.id))
         return item;
       const command =
-        view.config.toolCommands[item.id] ||
+        view.config.toolCommands[item.id as keyof AppConfig["toolCommands"]] ||
         view.info.tools[item.id] ||
         item.id;
       return {
@@ -449,7 +463,7 @@ export class SshEnvironmentHub {
       tools: local.tools.map(remoteItem),
     };
   }
-  async checkTool(runtime, owner, id, toolId) {
+  async checkTool(runtime: EnvironmentRuntime, owner: string, id: string, toolId: string) {
     const view = await this.get(runtime, owner, id);
     if (["mlflow", "wandb", "tensorboard"].includes(toolId)) {
       await runtime.toolEnvironment.check(toolId);
@@ -496,10 +510,10 @@ export class SshEnvironmentHub {
     }
     return this.inventory(runtime, owner, id);
   }
-  async configureTool(runtime, owner, id, toolId, input) {
+  async configureTool(runtime: EnvironmentRuntime, owner: string, id: string, toolId: string, input: unknown) {
     if (["conda", "cuda", "nvidia", "uv"].includes(toolId)) {
       if (
-        !input ||
+        !input || typeof input !== "object" || !("command" in input) ||
         Object.keys(input).length !== 1 ||
         typeof input.command !== "string"
       )

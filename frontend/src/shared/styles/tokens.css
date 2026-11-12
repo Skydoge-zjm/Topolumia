@@ -17,6 +17,24 @@
   --color-green2: #0d725d;
   --color-panel: #ffffff;
   --color-canvas: #f7faf7;
+  --color-alert: #b3261e;
+  --color-alert-soft: #fdf1f0;
+  --color-warn: #8a5300;
+  --color-warn-soft: #fdf6e8;
+  --status-succeeded: #178d70;
+  --status-failed: #b3261e;
+  --status-running: #8a5300;
+  --status-queued: #526c60;
+  --status-cancelled: #6b7a72;
+  --status-unknown: #8a978f;
+  --chart-1: #178d70;
+  --chart-2: #2563eb;
+  --chart-3: #b45309;
+  --chart-4: #9333ea;
+  --chart-5: #b3261e;
+  --chart-6: #0f766e;
+  --chart-7: #4d6b2f;
+  --chart-8: #7c3f58;
   --radius-sm: 6px;
   --radius-md: 8px;
   --shadow-panel: none;
@@ -25,6 +43,15 @@
   --font-body: 14px;
   --font-label: 14px;
   --font-meta: 12px;
+  /* Code, configuration, metric keys and identifiers only; prose and numbers stay in the UI face. */
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+  /* Research object kinds. Colour marks identity; it never decorates. */
+  --kind-paper: #9a6b14;
+  --kind-experiment: #2f5fd0;
+  --kind-note: #8e3a8c;
+  --kind-group: #178d70;
+  --color-paper: #f4f6f3;
+  --shadow-float: 0 12px 32px rgb(18 51 43 / 14%), 0 2px 6px rgb(18 51 43 / 8%);
 }
 
 * { box-sizing: border-box; }

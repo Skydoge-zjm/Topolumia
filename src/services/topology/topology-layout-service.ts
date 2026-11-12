@@ -1,60 +1,27 @@
 import { nodeRef, groupRef, objectKey } from "../../domain/research/object-ref.js";
 import ELK from "elkjs/lib/elk.bundled.js";
+import type { ELK as ElkEngine, ElkNode, ElkExtendedEdge, ElkPoint } from "elkjs/lib/elk-api.js";
+import type { ResearchTopology, TopologyNode, TopologyEdge, LocalizedText } from "../../domain/research/types.js";
+import type { ResearchObjectRef } from "../../domain/research/object-ref.js";
+type LayoutInput = ResearchTopology & { candidateLayer?: { id:string;nodes:TopologyNode[];edges:TopologyEdge[] } };
+type DisplayNode = {id:string;kind:string;position:{x:number;y:number};label:LocalizedText;summary?:LocalizedText;displayRank?:number;object?:ResearchObjectRef};
+type DisplayEdge = {id:string;from:string;to:string;type:string};
+type DisplayTopology = {stateVersion:string;nodes:DisplayNode[];edges:DisplayEdge[];candidateLayer?:{id:string;nodes:DisplayNode[];edges:DisplayEdge[]}};
+export type TopologyLayout = {schemaVersion:string;engine:string;topologyStateVersion:string|null;candidateLayerId:string|null;layoutVersion:string;coordinateSystem:{width:number;height:number};nodes:({id:string;x:number;y:number;repulsionWeight?:number;object?:ResearchObjectRef})[];edges:{id:string;sections:{startPoint:ElkPoint;bendPoints:ElkPoint[];endPoint:ElkPoint}[]}[];statistics:Record<string,string|number|null>};
 import { versionHash } from "../../lib/hash.js";
 
 export const TOPOLOGY_LAYOUT_WIDTH = 2300;
 export const TOPOLOGY_LAYOUT_HEIGHT = 1260;
 
 const DEFAULT_NODE_SIZE = Object.freeze({ width: 58, height: 58 });
-const NODE_SIZES = Object.freeze({
+const NODE_SIZES: Readonly<Record<string,{width:number;height:number}>> = Object.freeze({
   paper: { width: 104, height: 60 },
-  readingNote: { width: 104, height: 60 },
-  question: { width: 132, height: 78 },
-  assumption: { width: 122, height: 64 },
-  hypothesis: { width: 122, height: 64 },
-  alternativeHypothesis: { width: 122, height: 64 },
   experiment: { width: 142, height: 64 },
-  observation: { width: 58, height: 58 },
-  gap: { width: 68, height: 68 },
-  inference: { width: 92, height: 68 },
-  claim: { width: 92, height: 68 },
-  decision: { width: 92, height: 68 },
+  note: { width: 122, height: 68 },
 });
 
-const SEMANTIC_RANK = Object.freeze({
-  paper: 0,
-  readingNote: 1,
-  question: 2,
-  assumption: 3,
-  hypothesis: 3,
-  alternativeHypothesis: 3,
-  experiment: 4,
-  observation: 5,
-  gap: 5,
-  inference: 6,
-  claim: 7,
-  decision: 7,
-});
-
-// The force projection is intentionally semantic rather than purely physical.
-// A question, experiment, gap, or provisional claim gets more personal space
-// than a source note, while the weak rank target keeps the research direction
-// readable. These weights only affect the display projection; they never alter
-// the formal topology.
-export const FORCE_REPULSION_WEIGHT = Object.freeze({
-  paper: 0.78,
-  readingNote: 0.74,
-  question: 1.42,
-  assumption: 0.92,
-  hypothesis: 1.16,
-  alternativeHypothesis: 1.28,
-  experiment: 1.38,
-  observation: 0.94,
-  gap: 1.34,
-  inference: 1.18,
-  claim: 1.32,
-  decision: 1.12,
-});
+// Display weights distinguish object types; argument roles come from edges.
+export const FORCE_REPULSION_WEIGHT: Readonly<Record<string,number>> = Object.freeze({ paper: 0.78, experiment: 1.38, note: 1.1 });
 
 const FORCE_RANK_Y = Object.freeze([126, 236, 350, 474, 646, 826, 972, 1082, 1172]);
 
@@ -77,20 +44,31 @@ export const ELK_ROUTED_RELATION_TYPES = Object.freeze(new Set([
   "distinguished_by",
 ]));
 
-function nodeSize(kind) {
+function nodeSize(kind: string) {
   return NODE_SIZES[kind] ?? DEFAULT_NODE_SIZE;
 }
 
-function rankOf(node) {
-  if (node.object?.id === "experiment:g3") return 8;
-  return SEMANTIC_RANK[node.kind] ?? 4;
+function rankOf(node: DisplayNode) { return node.displayRank ?? 0; }
+
+function rankFromRelations(topology: DisplayTopology) {
+  const incoming = new Map<string,string[]>(topology.nodes.map(node => [node.id, []]));
+  for (const edge of topology.edges) if (ELK_ROUTED_RELATION_TYPES.has(edge.type) && incoming.has(edge.to) && incoming.has(edge.from)) incoming.get(edge.to)!.push(edge.from);
+  const ranks = new Map<string,number>(), visiting = new Set<string>();
+  const depth = (id: string): number => {
+    if (ranks.has(id)) return ranks.get(id)!;
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    const rank = Math.min(FORCE_RANK_Y.length - 1, Math.max(0, ...(incoming.get(id) ?? []).map(parent => depth(parent) + 1)));
+    visiting.delete(id); ranks.set(id, rank); return rank;
+  };
+  for (const node of [...topology.nodes].sort((a, b) => a.id.localeCompare(b.id))) node.displayRank = depth(node.id);
 }
 
-function forceWeight(node) {
+function forceWeight(node: DisplayNode) {
   return FORCE_REPULSION_WEIGHT[node.kind] ?? 1;
 }
 
-function stableUnit(value, salt = "") {
+function stableUnit(value: string, salt = "") {
   let hash = 2166136261;
   for (const character of `${salt}:${value}`) {
     hash ^= character.charCodeAt(0);
@@ -99,11 +77,11 @@ function stableUnit(value, salt = "") {
   return (hash >>> 0) / 4294967295;
 }
 
-function forceClamp(value, minimum, maximum) {
+function forceClamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-function forceNodeBounds(node, point) {
+function forceNodeBounds(node: DisplayNode, point: ElkPoint) {
   const size = nodeSize(node.kind);
   const marginX = Math.max(92, size.width / 2 + 26);
   const marginY = Math.max(74, size.height / 2 + 22);
@@ -113,7 +91,7 @@ function forceNodeBounds(node, point) {
   };
 }
 
-function forceSeedPosition(node) {
+function forceSeedPosition(node: DisplayNode) {
   const authoredX = Number.isFinite(node.position?.x) ? node.position.x : 770;
   const authoredY = Number.isFinite(node.position?.y) ? node.position.y : FORCE_RANK_Y[rankOf(node)] ?? 650;
   // Authored coordinates are deliberately stretched into the larger display
@@ -126,7 +104,7 @@ function forceSeedPosition(node) {
   return forceNodeBounds(node, point);
 }
 
-function forceTargetPosition(node) {
+function forceTargetPosition(node: DisplayNode) {
   const authoredX = Number.isFinite(node.position?.x) ? node.position.x : 770;
   const rankY = FORCE_RANK_Y[rankOf(node)] ?? 650;
   const x = 170 + authoredX * 1.43;
@@ -134,11 +112,11 @@ function forceTargetPosition(node) {
   return forceNodeBounds(node, { x, y });
 }
 
-function portId(nodeId, side) {
+function portId(nodeId: string, side: string) {
   return `${nodeId}::${side.toLowerCase()}`;
 }
 
-function elkNode(node) {
+function elkNode(node: DisplayNode): ElkNode {
   const size = nodeSize(node.kind);
   return {
     id: node.id,
@@ -156,7 +134,7 @@ function elkNode(node) {
   };
 }
 
-function elkEdge(edge) {
+function elkEdge(edge: DisplayEdge): ElkExtendedEdge {
   return {
     id: edge.id,
     sources: [portId(edge.from, "SOUTH")],
@@ -164,7 +142,7 @@ function elkEdge(edge) {
   };
 }
 
-function layoutVersion(topology) {
+function layoutVersion(topology: DisplayTopology) {
   return versionHash({
     topologyStateVersion: topology?.stateVersion ?? null,
     candidateLayerId: topology?.candidateLayer?.id ?? null,
@@ -179,14 +157,14 @@ function layoutVersion(topology) {
   });
 }
 
-function transformPoint(point, transform) {
+function transformPoint(point: ElkPoint, transform: {offsetX:number;offsetY:number;scaleX:number;scaleY:number}) {
   return {
     x: transform.offsetX + point.x * transform.scaleX,
     y: transform.offsetY + point.y * transform.scaleY,
   };
 }
 
-function normalizedLayout(elkResult, topology, version) {
+function normalizedLayout(elkResult: ElkNode, topology: DisplayTopology, version: string): TopologyLayout {
   const rawNodes = elkResult.children ?? [];
   const left = Math.min(...rawNodes.map((node) => node.x ?? 0));
   const right = Math.max(...rawNodes.map((node) => (node.x ?? 0) + (node.width ?? 0)));
@@ -216,7 +194,7 @@ function normalizedLayout(elkResult, topology, version) {
   const edges = (elkResult.edges ?? []).flatMap((edge) => {
     if (!ELK_ROUTED_RELATION_TYPES.has(
       [...(topology?.edges ?? []), ...(topology?.candidateLayer?.edges ?? [])]
-        .find((item) => item.id === edge.id)?.type,
+        .find((item) => item.id === edge.id)?.type ?? "",
     )) return [];
     const sections = (edge.sections ?? []).map((section) => ({
       startPoint: transformPoint(section.startPoint, transform),
@@ -245,20 +223,20 @@ function normalizedLayout(elkResult, topology, version) {
   };
 }
 
-function forceEdgeList(topology, nodeIds) {
+function forceEdgeList(topology: DisplayTopology, nodeIds: Set<string>) {
   return [
     ...(topology?.edges ?? []),
     ...(topology?.candidateLayer?.edges ?? []),
   ].filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
 }
 
-function forceDistance(nodeA, nodeB) {
+function forceDistance(nodeA: DisplayNode, nodeB: DisplayNode) {
   const a = nodeSize(nodeA.kind);
   const b = nodeSize(nodeB.kind);
   const weight = (forceWeight(nodeA) + forceWeight(nodeB)) / 2;
-  const wideKinds = new Set(["experiment", "hypothesis", "alternativeHypothesis", "assumption", "claim", "inference"]);
-  const labelExtent = (node) => {
-    const values = [node.label?.zh, node.label?.en, node.summary?.zh, node.summary?.en]
+  const wideKinds = new Set(["experiment", "note"]);
+  const labelExtent = (node: DisplayNode) => {
+    const values = [typeof node.label === "string" ? node.label : node.label?.zh, typeof node.label === "string" ? node.label : node.label?.en, typeof node.summary === "string" ? node.summary : node.summary?.zh, typeof node.summary === "string" ? node.summary : node.summary?.en]
       .filter(Boolean)
       .map((value) => Array.from(String(value)).length);
     // Labels are rendered outside the shape at the current semantic zoom;
@@ -276,7 +254,7 @@ function forceDistance(nodeA, nodeB) {
   };
 }
 
-function forceDisplayLayout(topology, version) {
+function forceDisplayLayout(topology: DisplayTopology, version: string): TopologyLayout {
   const nodes = [
     ...(topology?.nodes ?? []),
     ...(topology?.candidateLayer?.nodes ?? []),
@@ -291,8 +269,8 @@ function forceDisplayLayout(topology, version) {
   const positions = nodes.map(forceSeedPosition);
   const targets = nodes.map(forceTargetPosition);
   const adjacency = edges.map((edge) => ({
-    from: index.get(edge.from),
-    to: index.get(edge.to),
+    from: index.get(edge.from)!,
+    to: index.get(edge.to)!,
     type: edge.type,
   })).filter((edge) => Number.isInteger(edge.from) && Number.isInteger(edge.to));
   const iterations = 190;
@@ -441,29 +419,32 @@ function forceDisplayLayout(topology, version) {
 }
 
 export class TopologyLayoutService {
-  constructor(options = {}) {
-    this.elk = options.elk ?? new ELK();
+  elk: Pick<ElkEngine,"layout">; cache = new Map<string,TopologyLayout>(); maxCacheEntries: number;
+  constructor(options: {elk?:Pick<ElkEngine,"layout">;maxCacheEntries?:number} = {}) {
+    this.elk = options.elk ?? new (ELK as unknown as {new(): ElkEngine})();
     this.cache = new Map();
     this.maxCacheEntries = Math.max(1, Number(options.maxCacheEntries ?? 12));
   }
 
-  async layout(topology, options = {}) {
-    const layoutObjects = [...(topology.nodes ?? []).map(node => ({ object: nodeRef(node.id), node })), ...(topology.groups ?? []).map(group => ({ object: groupRef(group.id), node: { id: group.id, kind: "group", label: group.core.nodeName, position: { x: 770, y: 350 } } }))];
-    const displayKey = object => objectKey(object);
-    const originalId = new Map(layoutObjects.map(item => [displayKey(item.object), item.object]));
-    topology = { ...topology, nodes: layoutObjects.map(item => ({ ...item.node, id: displayKey(item.object), object: item.object })), edges: (topology.edges ?? []).map(edge => ({ ...edge, from: displayKey(edge.from), to: displayKey(edge.to) })) };
+  async layout(input: LayoutInput, options: {engine?:string} = {}): Promise<TopologyLayout> {
+    const layoutObjects = [...[...input.nodes, ...(input.candidateLayer?.nodes ?? [])].map(node => ({object:nodeRef(node.id),node})), ...input.groups.map(group => ({object:groupRef(group.id),node:{id:group.id,kind:"group",label:group.core.nodeName,position:{x:770,y:350}}}))];
+    const displayKey = (object: ResearchObjectRef) => objectKey(object);
+    const originalId = new Map(layoutObjects.map(item => [displayKey(item.object),item.object]));
+    const topology: DisplayTopology = {stateVersion:input.stateVersion,nodes:layoutObjects.map(item=>({...item.node,id:displayKey(item.object),object:item.object})),edges:[...input.edges,...(input.candidateLayer?.edges ?? [])].map(edge=>({...edge,from:displayKey(edge.from),to:displayKey(edge.to)})),...(input.candidateLayer?{candidateLayer:{id:input.candidateLayer.id,nodes:[],edges:[]}}:{})};
+
+    rankFromRelations(topology);
 
     const engine = options.engine === "force" || options.engine === "semantic-force"
       ? "force"
       : "elk";
     const version = layoutVersion(topology);
     const cacheKey = `${engine}:${version}`;
-    if (this.cache.has(cacheKey)) return structuredClone(this.cache.get(cacheKey));
+    if (this.cache.has(cacheKey)) return structuredClone(this.cache.get(cacheKey)!);
     if (engine === "force") {
       const result = forceDisplayLayout(topology, version);
       result.nodes = result.nodes.map(item => ({ ...item, object: originalId.get(item.id) }));
       this.cache.set(cacheKey, result);
-      while (this.cache.size > this.maxCacheEntries) this.cache.delete(this.cache.keys().next().value);
+      while (this.cache.size > this.maxCacheEntries) this.cache.delete(this.cache.keys().next().value!);
       return structuredClone(result);
     }
     const nodes = [
@@ -505,7 +486,7 @@ export class TopologyLayoutService {
     const result = normalizedLayout(elkResult, topology, version);
     result.nodes = result.nodes.map(item => ({ ...item, object: originalId.get(item.id) }));
     this.cache.set(cacheKey, result);
-    while (this.cache.size > this.maxCacheEntries) this.cache.delete(this.cache.keys().next().value);
+    while (this.cache.size > this.maxCacheEntries) this.cache.delete(this.cache.keys().next().value!);
     return structuredClone(result);
   }
 }

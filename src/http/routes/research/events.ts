@@ -1,9 +1,10 @@
+import type { RouteContext } from "../../route-context.js";
 import { AppError } from "../../../lib/errors.js";
-import { readJson, sendJson } from "../../../lib/http.js";
+import { readJsonObject, sendJson } from "../../../lib/http.js";
 
 import { validateResearchEvent } from "../../../domain/validators.js";
 
-export async function handleResearchEventsRoutes(context) {
+export async function handleResearchEventsRoutes(context: RouteContext) {
   const {
     request,
     response,
@@ -11,7 +12,7 @@ export async function handleResearchEventsRoutes(context) {
     state,
     curatorTriggerCoordinator,
     topologyService,
-  } = context;
+  }: RouteContext = context;
 
   if (pathname === "/api/agent-events" && request.method === "GET") {
     sendJson(response, 200, {
@@ -22,10 +23,10 @@ export async function handleResearchEventsRoutes(context) {
     return true;
   }
   if (pathname === "/api/agent-events" && request.method === "POST") {
-    const body = await readJson(request);
+    const body = await readJsonObject(request);
     const snapshotRefs = topologyService
       .sourceIndex(state.snapshot)
-      .map((item) => item.ref);
+      .flatMap(item => typeof item.ref === "string" ? [item.ref] : []);
     const nodeIds = Array.isArray(body?.nodeIds)
       ? body.nodeIds.map(String)
       : [];
@@ -45,7 +46,7 @@ export async function handleResearchEventsRoutes(context) {
         payload: { text: body?.text },
       },
       {
-        allowedNodeIds: state.topology.nodes.map((item) => item.id),
+        allowedNodeIds: (state.topology?.nodes ?? []).map((item) => item.id),
         allowedSourceRefs: snapshotRefs,
       },
     );

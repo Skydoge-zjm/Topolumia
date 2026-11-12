@@ -1,7 +1,8 @@
+import { claudePacketSchema, type ClaudePacket, type ClaudeContent } from "../shared/native-protocol.js";
 import type { AgentContentMetadata, AgentCompletion } from "../../../domain/agents/agent-conversation.js";
 
 type Block = { id: string; type: "text" | "thinking"; text: string; index?: number; finalized: boolean; ended: boolean; completion?: AgentCompletion; published?: string; metadata: AgentContentMetadata };
-type MessageState = { id: string; actor: AgentContentMetadata; blocks: Block[]; active: Map<number, Block>; tools: Map<number, { id: string; complete: boolean }>; incomplete?: boolean };
+type MessageState = { id: string; actor: AgentContentMetadata; blocks: Block[]; active: Map<number | undefined, Block>; tools: Map<number | undefined, { id?: string; complete: boolean }>; incomplete?: boolean };
 
 // Claude's assistant packets finish individual blocks. Their content array
 // offsets are local to each packet; the pending stream supplies real indices.
@@ -9,15 +10,15 @@ export class ClaudeTrace {
   private states = new Map<string, MessageState>();
   private packets = new Set<string>();
   private taskActors = new Map<string, AgentContentMetadata | null>();
-  private taskAgents = new Map<string, AgentContentMetadata>();
-  private toolOwners = new Map<string, AgentContentMetadata>();
-  private tools = new Set<string>();
+  private taskAgents = new Map<string | undefined, AgentContentMetadata>();
+  private toolOwners = new Map<string | undefined, AgentContentMetadata>();
+  private tools = new Set<string | undefined>();
   private main?: MessageState;
   private sequence = 0;
 
   constructor(private emit: (type: string, payload: Record<string, unknown>) => void, private turnId: string) {}
 
-  private actor(packet): AgentContentMetadata {
+  private actor(packet: ClaudePacket): AgentContentMetadata {
     const parentToolUseId = packet.parent_tool_use_id ?? undefined;
     const known = packet.agent_id ? this.taskAgents.get(packet.agent_id) : parentToolUseId ? this.taskActors.get(parentToolUseId) : undefined;
     const owner = parentToolUseId ? this.toolOwners.get(parentToolUseId) : undefined;
@@ -55,7 +56,8 @@ export class ClaudeTrace {
     });
   }
 
-  consume(packet): boolean {
+  consume(value: unknown): boolean {
+    const packet = claudePacketSchema.parse(value);
     if (packet.uuid && this.packets.has(packet.uuid)) return true;
     if (packet.uuid) this.packets.add(packet.uuid);
     if (packet.type === "stream_event") {
@@ -74,8 +76,8 @@ export class ClaudeTrace {
         const delta = event.delta ?? {};
         if (delta.type === "text_delta" || delta.type === "thinking_delta") {
           const type = delta.type === "text_delta" ? "text" : "thinking";
-          const active = state.active.get(event.index ?? 0);
-          const block = active?.type === type ? active : this.block(state, type, event.index ?? 0);
+          const active = state.active.get(event.index);
+          const block = active?.type === type ? active : this.block(state, type, event.index);
           if (!block.finalized && !block.ended) {
             const text = type === "text" ? delta.text ?? "" : delta.thinking ?? "";
             block.text += text; this.sendBlock(block, "delta", text);
@@ -89,7 +91,7 @@ export class ClaudeTrace {
         const block = state.active.get(event.index);
         if (block && !block.finalized) { block.ended = true; this.sendBlock(block, "completed", block.text); }
       }
-      if (event.type === "message_delta" && ["max_tokens", "length"].includes(event.delta?.stop_reason)) state.incomplete = true;
+      if (event.type === "message_delta" && ["max_tokens", "length"].includes(event.delta?.stop_reason ?? "")) state.incomplete = true;
       if (event.type === "message_stop") this.endMessage(state, "interrupted");
       return true;
     }
@@ -98,7 +100,7 @@ export class ClaudeTrace {
       const id = packet.message?.id ?? packet.uuid ?? `turn:${this.turnId}`;
       const state = !actor.agentId && !actor.parentToolUseId && this.main?.id.startsWith("turn:")
         ? this.main : this.state(id, actor);
-      for (const content of packet.message?.content ?? []) {
+      for (const content of Array.isArray(packet.message?.content) ? packet.message.content : []) {
         if (content.type === "text" || content.type === "thinking") {
           const block = state.blocks.find(block => block.type === content.type && !block.finalized)
             ?? this.block(state, content.type, undefined, packet.uuid);
@@ -121,7 +123,7 @@ export class ClaudeTrace {
       }
       return true;
     }
-    if (packet.type === "system" && ["task_started", "task_progress", "task_notification", "task_updated"].includes(packet.subtype)) {
+    if (packet.type === "system" && ["task_started", "task_progress", "task_notification", "task_updated"].includes(packet.subtype ?? "")) {
       const actor = { agentId: packet.task_id, parentToolUseId: packet.tool_use_id, agentName: packet.description ?? packet.agent_type };
       this.taskAgents.set(packet.task_id, actor);
       if (packet.tool_use_id) {
@@ -138,7 +140,7 @@ export class ClaudeTrace {
     return false;
   }
 
-  private startTool(content, actor: AgentContentMetadata, metadata = {}) {
+  private startTool(content: ClaudeContent, actor: AgentContentMetadata, metadata: Record<string, unknown> = {}) {
     const key = content.id;
     this.toolOwners.set(key, actor);
     this.emit(this.tools.has(key) ? "tool.updated" : "tool.started", { ...actor, ...metadata, toolCallId: key,

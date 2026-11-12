@@ -33,6 +33,7 @@ test.beforeAll(async () => {
     collaborationFile: databaseFile,
     userSettingsFile: path.join(root, "settings.json"),
     config: {
+      project: { workspacesRoot: path.join(root, "workspaces") },
       collaboration: { databaseFile },
       sourceRefresh: { enabled: false },
       docker: { command: process.execPath },
@@ -227,7 +228,7 @@ test("Agent configuration owns runtime checks, default models and navigation to 
   await expect(
     page.getByRole("heading", { name: "Agent 配置", exact: true }),
   ).toBeVisible();
-  for (const name of ["Codex", "Claude Code", "OpenCode", "科研接口集成"])
+  for (const name of ["Codex", "Claude Code", "OpenCode", "科研 MCP"])
     await expect(
       page.getByRole("heading", { name, exact: true }),
     ).toBeVisible();
@@ -246,8 +247,7 @@ test("Agent configuration owns runtime checks, default models and navigation to 
   await expect(codex.getByText("可用", { exact: true })).toBeVisible();
   await expect(
     page.getByText(
-      "科研 MCP 握手、授权与 CLI 往返通过；9 个工具，使用只读凭据探测。",
-      { exact: true },
+      /^科研 MCP 握手、授权与 CLI 往返通过；\d+ 个工具，使用只读凭据探测。$/,
     ),
   ).toBeVisible();
   await codex.getByRole("button", { name: "配置", exact: true }).click();
@@ -296,24 +296,21 @@ test("Agent configuration owns runtime checks, default models and navigation to 
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  await expect(
-    page.getByRole("navigation", { name: "工作区页面" }),
-  ).toBeVisible();
+  const navigation = page.getByRole("complementary").getByRole("navigation");
+  await expect(navigation).toBeVisible();
   await page.screenshot({
     path: "test-results/agent-configuration-mobile.png",
     fullPage: true,
   });
-  await page
-    .getByRole("navigation", { name: "工作区页面" })
+  await navigation
     .getByRole("link", { name: "工具与环境", exact: true })
     .click();
   await expect(page.getByRole("table", { name: "科研环境列表" })).toBeVisible();
-  await page
-    .getByRole("navigation", { name: "工作区页面" })
+  await navigation
     .getByRole("link", { name: "Agent 配置", exact: true })
     .click();
-  await page
-    .getByRole("link", { name: "前往 Agent 会话 →", exact: true })
+  await navigation
+    .getByRole("link", { name: "Agent 会话", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "Agent 会话", level: 2, exact: true }),

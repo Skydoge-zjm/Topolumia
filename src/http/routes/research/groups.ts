@@ -1,9 +1,11 @@
-import { readJson, sendJson } from "../../../lib/http.js";
+import * as z from "zod/v4";
+import type { RouteContext } from "../../route-context.js";
+import { readJsonObject, sendJson, parseInput } from "../../../lib/http.js";
 import { requirePermission, fail } from "../../../domain/research/access.js";
 import { groupRef } from "../../../domain/research/object-ref.js";
 import { pendingObjectCandidates } from "../../../services/research/changes/candidate-summary.js";
 
-export async function handleResearchGroupRoutes({ request, response, pathname, url, requestRuntime: runtime, requestActor: actor }) {
+export async function handleResearchGroupRoutes({ request, response, pathname, url, requestRuntime: runtime, requestActor: actor }: RouteContext) {
   const match = pathname.match(/^\/api\/research-groups(?:\/([^/]+))?(?:\/(core|members|parent|primary-relations|delete-impact))?$/);
   if (!match) return false;
   const c = runtime.researchCommands, q = c.queries, id = match[1] && decodeURIComponent(match[1]), segment = match[2];
@@ -17,7 +19,7 @@ export async function handleResearchGroupRoutes({ request, response, pathname, u
     else { const detail = c.groups.detail(id); sendJson(response, 200, { ...detail, pendingCandidates: pendingObjectCandidates(c, groupRef(id), actor) }); }
     return true;
   }
-  const body = await readJson(request, 262144);
+  const body = await readJsonObject(request, 262144);
   if (request.method === "POST" && !id) { const result = c.changes.direct([{ ...body, op: "addGroup", clientRef: "group" }], actor, "create node group"); sendJson(response, 201, c.groups.detail(result.allocation["group:group"])); return true; }
   if (!id) return false;
   let op;
@@ -27,8 +29,8 @@ export async function handleResearchGroupRoutes({ request, response, pathname, u
   else if (request.method === "PATCH" && segment === "primary-relations") op = { ...body, op: "setGroupPrimaryRelations", groupId: id };
   else if (request.method === "DELETE" && !segment) op = { ...body, op: "deleteGroup", groupId: id };
   else return false;
-  c.changes.direct([op], actor, body.reason ?? "edit node group");
-  const remainingInScope = segment === "members" ? (body.patch?.remove ?? []).filter(nodeId => c.groups.range(id).nodeIds.includes(nodeId)) : [];
+  c.changes.direct([op], actor, typeof body.reason === "string" ? body.reason : "edit node group");
+  const remainingInScope = segment === "members" ? parseInput(z.object({remove:z.array(z.string()).default([])}),body.patch ?? {}).remove.filter(nodeId => c.groups.range(id).nodeIds.includes(nodeId)) : [];
   sendJson(response, 200, request.method === "DELETE" ? { deleted: true, id } : { ...c.groups.detail(id), remainingInScope });
   return true;
 }

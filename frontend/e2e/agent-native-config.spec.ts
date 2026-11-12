@@ -1,3 +1,4 @@
+import { runtimeArtifact } from "./support/runtime-artifacts";
 import { test, expect } from "@playwright/test";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import os from "node:os";
@@ -116,7 +117,7 @@ for (const [provider, label] of [
         .evaluate((element) => getComputedStyle(element).fontFamily),
     ).not.toMatch(/monospace/i);
     await page.screenshot({
-      path: `runtime/agent-native-${provider}.png`,
+      path: runtimeArtifact(`agent-native-${provider}.png`),
       fullPage: true,
     });
   });

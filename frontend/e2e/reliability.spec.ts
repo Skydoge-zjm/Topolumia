@@ -72,10 +72,10 @@ test("research text keeps its original language and a block conflict can be relo
       .getByRole("button", { name: "Accept and save", exact: true })
       .click();
     await card
-      .getByRole("link", { name: "Open saved node", exact: true })
+      .getByRole("link", { name: "Open saved object · 不同学习率探索", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "不同学习率探索", exact: true }),
+      page.getByRole("heading", { level: 1, name: "Source title", exact: true }),
     ).toBeVisible();
     const nodeId =
       candidate.allocation["node:" + candidate.operations[0].clientRef];
@@ -98,7 +98,7 @@ test("research text keeps its original language and a block conflict can be relo
       .click();
     await expect(page.getByRole("alert")).toContainText("Research object changed");
     await page
-      .getByRole("button", { name: "Reload latest content", exact: true })
+      .getByRole("alert").getByRole("button", { name: "Reload", exact: true })
       .click();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(

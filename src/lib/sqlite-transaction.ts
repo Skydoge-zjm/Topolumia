@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 
 /** Savepoints also compose inside a business mutation's outer transaction. */
-export function sqliteTransaction(db, operation) {
+export function sqliteTransaction<T>(db: Pick<DatabaseSync, "exec">, operation: () => T): T {
   const name = `research_${randomUUID().replaceAll("-", "")}`;
   db.exec(`SAVEPOINT ${name}`);
   try {

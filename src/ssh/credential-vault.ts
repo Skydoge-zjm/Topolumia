@@ -3,12 +3,15 @@ import { spawn } from "node:child_process";
 import { bundledRoot, mvpRoot } from "../config.js";
 import { access, readFile } from "node:fs/promises";
 import { AppError } from "../lib/errors.js";
+import * as z from "zod/v4";
+const credentialsSchema = z.record(z.string(), z.object({ passphrases: z.record(z.string(), z.string()).optional(), password: z.string().optional() }));
+export type SessionCredentials = z.infer<typeof credentialsSchema>;
 
 export class SshCredentialVault {
   get available() {
     return process.platform === "win32";
   }
-  async transform(operation, input) {
+  async transform(operation: "protect" | "unprotect", input: string): Promise<string> {
     if (!this.available)
       throw new AppError(
         "SSH_VAULT_UNAVAILABLE",
@@ -24,7 +27,7 @@ export class SshCredentialVault {
     )
       script = path.join(mvpRoot, "scripts", "runtime", "ssh-protect-secret.ps1");
     const source = await readFile(script, "utf8");
-    return new Promise((resolve, reject) => {
+    return new Promise<string>((resolve, reject) => {
       const child = spawn(
         "powershell.exe",
         [
@@ -68,10 +71,10 @@ export class SshCredentialVault {
       child.stdin.end(input);
     });
   }
-  async protect(value) {
+  async protect(value: unknown) {
     return this.transform("protect", JSON.stringify(value));
   }
-  async reveal(value) {
-    return value ? JSON.parse(await this.transform("unprotect", value)) : {};
+  async reveal(value: string | null | undefined): Promise<SessionCredentials> {
+    return value ? credentialsSchema.parse(JSON.parse(await this.transform("unprotect", value))) : {};
   }
 }

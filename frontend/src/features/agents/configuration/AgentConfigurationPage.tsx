@@ -35,7 +35,7 @@ export interface ConfiguredAgent extends CheckState {
   version: string | null;
   authStatus: string;
   resolvedModel: string | null;
-  nativeConfiguration?: { available: boolean; provider: string; filename: string } | null;
+  nativeConfiguration?: { available: boolean; provider: string; configKey?: string; filename: string } | null;
 }
 export interface AgentConfiguration {
   schemaVersion: string;

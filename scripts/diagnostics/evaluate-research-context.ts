@@ -18,11 +18,11 @@ const commands = new ResearchCommandService({ state, topologyService, projectId:
 const actor = { isServerAdmin: true, projectId: "context-evaluation", user: { id: "fixture", displayName: "Synthetic researcher" }, permissions: ["*"] };
 const relevant = [
   { op: "addNode", clientRef: "paper", kind: "paper", core: { nodeName: "Noise schedule research", paperTitle: "A synthetic sampling study", abstract: "A comparison of sampling schedules." } },
-  { op: "addNode", clientRef: "evaluator", kind: "assumption", core: { nodeName: "LPIPS backbone evaluator", summary: "The evaluation backbone must remain fixed." } },
-  { op: "addNode", clientRef: "metrics", kind: "gap", core: { nodeName: "Per-image metric artifact", summary: "Missing individual image measurements." } },
-  { op: "addNode", clientRef: "seeds", kind: "hypothesis", core: { nodeName: "Seed sampler variance", summary: "Sampling variation may explain the comparison." } },
+  { op: "addNode", clientRef: "evaluator", kind: "note", core: { nodeName: "LPIPS backbone evaluator", summary: "The evaluation backbone must remain fixed." } },
+  { op: "addNode", clientRef: "metrics", kind: "note", core: { nodeName: "Per-image metric artifact", summary: "Missing individual image measurements." } },
+  { op: "addNode", clientRef: "seeds", kind: "note", core: { nodeName: "Seed sampler variance", summary: "Sampling variation may explain the comparison." } },
 ];
-const noise = Array.from({ length: 500 }, (_, i) => ({ op: "addNode", clientRef: `unrelated-${i}`, kind: "observation",
+const noise = Array.from({ length: 500 }, (_, i) => ({ op: "addNode", clientRef: `unrelated-${i}`, kind: "note",
   core: { nodeName: `Unrelated geometry ${i}`, summary: "Unrelated geometry background. ".repeat(60) } }));
 const fullEvidence = "METHOD_EVIDENCE: compare schedules with the same evaluator and three seeds.\n" + "Detailed derivation.\n".repeat(600) + "FULL_EVIDENCE_END";
 

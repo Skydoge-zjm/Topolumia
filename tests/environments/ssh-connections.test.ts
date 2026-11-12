@@ -13,6 +13,28 @@ import {
   resolveSshAlias,
 } from "../../src/ssh/ssh-config.js";
 
+for (const phase of ["target", "known-hosts"]) test(`disconnect cancels SSH before a delayed ${phase} can dial`, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "topolumia-ssh-cancel-"));
+  let release, entered;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  let clients = 0;
+  const service = new SshConnectionService({ root, vault: { available: false }, clientFactory: () => { clients++; throw new Error("Cancelled connection must not allocate a client"); }, commandRunner: async () => { if (phase === "known-hosts") { entered(); await gate; } return { ok: false, stdout: "" }; } });
+  t.after(async () => { release(); await service.close(); await rm(root, { recursive: true, force: true }); });
+  const profile = await service.save("owner", { name: "Synthetic", mode: "manual", host: "127.0.0.1", user: "fixture", auth: "password" });
+  const originalTarget = service.target.bind(service);
+  service.target = async value => { if (phase === "target") { entered(); await gate; } return originalTarget(value); };
+  await service.connect("owner", profile.id);
+  await waiting;
+  const session = service.sessions.get(service.sessionKey("owner", profile.id));
+  await service.disconnect("owner", profile.id);
+  release();
+  await session.task;
+  assert.equal(clients, 0);
+  assert.equal(session.status, "disconnected");
+  assert.equal(session.clients.length, 0);
+});
+
 async function poll(read, predicate) {
   for (let i = 0; i < 300; i++) {
     const value = await read();

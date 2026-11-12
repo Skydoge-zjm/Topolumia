@@ -10,8 +10,8 @@ import Ajv from 'ajv';
 import { ClaudeCliStreamDriver } from '../../dist/src/adapters/agents/claude/claude-cli-stream-driver.js';
 import { CodexAppServerDriver } from '../../dist/src/adapters/agents/codex/codex-app-server-driver.js';
 import { JsonlProcess } from '../../dist/src/adapters/agents/shared/jsonl-process.js';
-import { OpenCodeTrace } from '../../dist/src/adapters/agents/opencode/opencode-trace.js';
-import { OpenCodeAgentAdapter } from '../../dist/src/adapters/agents/opencode/opencode-agent-adapter.js';
+import { OpenCodeTrace } from '../../dist/src/adapters/agents/opencode/v1/opencode-trace.js';
+import { OpenCodeAgentAdapter } from '../../dist/src/adapters/agents/opencode/v1/opencode-agent-adapter.js';
 import { AgentSessionGateway } from '../../dist/src/services/agents/agent-session-gateway.js';
 import { compactConversationEvents } from '../../dist/src/domain/agents/agent-conversation.js';
 
@@ -137,11 +137,11 @@ try {
   record('OPENCODE_NATIVE_EVENT_REPLAY_DUPLICATES', 'opencode', 'hello', replayText, replayText !== 'hello');
 
   const hashes = {};
-  for (const file of ['src/adapters/agents/shared/agent-driver.ts', 'src/adapters/agents/shared/jsonl-process.ts', 'src/adapters/agents/codex/codex-app-server-driver.ts', 'src/adapters/agents/codex/codex-reasoning.ts', 'src/adapters/agents/claude/claude-cli-stream-driver.ts', 'src/adapters/agents/opencode/opencode-trace.ts', 'src/adapters/agents/opencode/opencode-agent-adapter.ts', 'src/domain/agents/agent-conversation.ts', 'src/adapters/agents/claude/claude-trace.ts', 'src/domain/agents/agent-usage.ts', 'src/services/agents/agent-session-gateway.ts']) {
+  for (const file of ['src/adapters/agents/shared/agent-driver.ts', 'src/adapters/agents/shared/jsonl-process.ts', 'src/adapters/agents/codex/codex-app-server-driver.ts', 'src/adapters/agents/codex/codex-reasoning.ts', 'src/adapters/agents/claude/claude-cli-stream-driver.ts', 'src/adapters/agents/opencode/v1/opencode-trace.ts', 'src/adapters/agents/opencode/v1/opencode-agent-adapter.ts', 'src/domain/agents/agent-conversation.ts', 'src/adapters/agents/claude/claude-trace.ts', 'src/domain/agents/agent-usage.ts', 'src/services/agents/agent-session-gateway.ts']) {
     hashes[file] = createHash('sha256').update(await readFile(file)).digest('hex');
   }
   const compiledHashes = {};
-  for (const file of ['dist/src/adapters/agents/shared/agent-driver.js', 'dist/src/adapters/agents/shared/jsonl-process.js', 'dist/src/adapters/agents/codex/codex-app-server-driver.js', 'dist/src/adapters/agents/codex/codex-reasoning.js', 'dist/src/adapters/agents/claude/claude-cli-stream-driver.js', 'dist/src/adapters/agents/opencode/opencode-trace.js', 'dist/src/adapters/agents/opencode/opencode-agent-adapter.js']) {
+  for (const file of ['dist/src/adapters/agents/shared/agent-driver.js', 'dist/src/adapters/agents/shared/jsonl-process.js', 'dist/src/adapters/agents/codex/codex-app-server-driver.js', 'dist/src/adapters/agents/codex/codex-reasoning.js', 'dist/src/adapters/agents/claude/claude-cli-stream-driver.js', 'dist/src/adapters/agents/opencode/v1/opencode-trace.js', 'dist/src/adapters/agents/opencode/v1/opencode-agent-adapter.js']) {
     compiledHashes[file] = createHash('sha256').update(await readFile(file)).digest('hex');
   }
   const report = { schemaVersion: 'native-trace-audit.v1', generatedAt: new Date().toISOString(),

@@ -19,7 +19,7 @@
 | 扩展 Agent 的科研工具与 Skill | [Agent 协作规则](product/business/agent-collaboration.md) → [接入架构](technical/architecture/agent-integration.md) | 修改共享合同，按 [验证指南](playbooks/testing.md) 选择接口测试 |
 | 修改研究记录与周期活动 | [科研模型](product/business/research-model.md) → [研究记录模块](technical/modules/research-records/README.md) | 不把会话日志当成科研历程 |
 | 修改 Python、Conda、SSH 或环境上下文 | [环境业务](product/business/research-environment.md) → [环境需求](product/requirements/tools-and-environments.md) → [环境模块](technical/modules/tools-and-environments/README.md) | 区分查看、探测和设为当前 |
-| 修改实验指标、来源刷新 | [实验与来源模块](technical/modules/experiments-and-sources/README.md) | 写入科研对象仍遵循统一变更机制 |
+| 修改实验记录、持续接入与适配器 | [科研模型](product/business/research-model.md#记录接入与复现) → [接收需求](product/requirements/research-workspace.md#持续接收) → [实验模块](technical/modules/experiments-and-sources/README.md) | 存储和授权从模块进入架构专题；区分当前实现与目标设计 |
 | 启动、测试、排障、配置与备份 | [开发](playbooks/development.md) · [测试](playbooks/testing.md) · [运行维护](playbooks/operations.md) · [Agent 排障](playbooks/agent-debugging.md) | 只执行当前任务所需操作 |
 | 新增一种内容块能力 | [扩展方法](playbooks/add-content-block.md) | 从语义到往返编辑与文件验证，不只增加表单 |
 | 维护文档或恢复长任务 | [维护约定](playbooks/documentation.md) | 本机任务状态放 docs/work，不进入默认知识读取链 |

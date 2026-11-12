@@ -125,7 +125,7 @@ test("Jupyter and framework checks use the selected Python, with CPU-only, missi
     probes.identity(),
   ]);
   assert.equal(first.executable, python.executable);
-  assert.equal(first, second);
+  assert.deepEqual(first, second);
   assert.equal(calls.filter((call) => call.mode === "identity").length, 1);
   const jupyter = await probes.probe("jupyter");
   assert.equal(jupyter.location, python.executable);

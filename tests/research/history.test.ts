@@ -44,7 +44,7 @@ test("semantic history records actual node changes, preserves before/after, and 
 test("Agent proposals preserve review attribution and rejected changes never become actual node creations", async t => {
   const { app, actor } = await fixture(t);
   const agent = { ...actor, isServerAdmin: false, isAgent: true, actorType: "agent", principalId: "history-agent", sessionId: "research-session", user: { ...actor.user, displayName: "Research Agent" }, permissions: ["research.view", "research.proposeChange"] };
-  const propose = title => app.researchCommands.createCandidate({ actor: agent, reason: `Propose ${title}`, nodes: [{kind:"inference",core:{nodeName:title,summary:"A scientific inference"}}] });
+  const propose = title => app.researchCommands.createCandidate({ actor: agent, reason: `Propose ${title}`, nodes: [{kind:"note",core:{nodeName:title,summary:"A scientific inference"}}] });
   const rejected = propose("Unconfirmed inference");
   app.researchCommands.reviewCandidate({ actor, patchId: rejected.id, decision: "reject", reason: "Insufficient evidence", expectedRevision: 1 });
   assert.ok(!app.state.topology.nodes.some(node => node.label.zh === "Unconfirmed inference"));
@@ -66,7 +66,7 @@ test("Agent proposals preserve review attribution and rejected changes never bec
 test("deleting a node atomically removes graph relationships and group memberships without erasing history or reviving on refresh", async t => {
   const { app, request, actor } = await fixture(t);
   const initial = app.researchNodes.createNode("experiment", { nodeName: "Replication" }, actor);
-  const other = app.researchNodes.createNode("question", { nodeName: "Question" }, actor);
+  const other = app.researchNodes.createNode("note", { nodeName: "Question" }, actor);
   await request("POST", "/api/research-relations", { from: { kind: "node", id: other.node.id }, to: { kind: "node", id: initial.node.id }, type: "tested_by", expectedEndpointRevisions: Object.entries({ [other.node.id]: 1, [initial.node.id]: 1 }).map(([id, revision]) => ({ object: { kind: "node", id }, revision })) });
   await request("POST",`/api/research-objects/node/${encodeURIComponent(initial.node.id)}/content-blocks`,{title:"Retained research note",type:"richText",payload:{format:"markdown",body:"Keep the pre-deletion research evidence."}});
   const detail = app.researchNodes.detail(initial.node.id), count = app.state.topology.edges.filter(edge => edge.from.id === detail.node.id || edge.to.id === detail.node.id).length;
@@ -101,7 +101,7 @@ test("business and history roll back together on state or history persistence fa
   const version = app.state.topology.stateVersion, count = app.state.topology.nodes.length;
   const originalSave = app.collaboration.saveState.bind(app.collaboration);
   app.collaboration.saveState = () => { throw new Error("Simulated state write failure"); };
-  assert.throws(() => app.researchNodes.createNode("question", { nodeName: "Must roll back" }, actor), /Simulated/);
+  assert.throws(() => app.researchNodes.createNode("note", { nodeName: "Must roll back" }, actor), /Simulated/);
   assert.equal(app.state.topology.stateVersion, version); assert.equal(app.state.topology.nodes.length, count); assert.equal(app.history.list().total, 0);
   app.collaboration.saveState = originalSave;
   const originalAppend = app.history.append.bind(app.history);
@@ -118,7 +118,7 @@ test("business and history roll back together on state or history persistence fa
 });
 test("history is project-scoped, immutable through HTTP, and supports bounded pagination", async t => {
   const { app, actor, request } = await fixture(t);
-  for (let i = 0; i < 4; i++) app.researchNodes.createNode("question", { nodeName: `Question ${i}` }, actor);
+  for (let i = 0; i < 4; i++) app.researchNodes.createNode("note", { nodeName: `Question ${i}` }, actor);
   const first = (await request("GET", "/api/research-history?limit=2")).data;
   assert.equal(first.items.length, 2); assert.equal(first.total, 4); assert.equal(first.nextOffset, 2);
   const second = (await request("GET", "/api/research-history?limit=2&offset=2")).data;

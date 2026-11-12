@@ -1,4 +1,4 @@
-export function requiredProjectPermission(pathname, method) {
+export function requiredProjectPermission(pathname: string, method: string) {
   if (
     !pathname.startsWith("/api/") ||
     pathname.startsWith("/api/auth/") ||
@@ -14,6 +14,7 @@ export function requiredProjectPermission(pathname, method) {
     pathname.startsWith("/api/projects/")
   )
     return null;
+  if (pathname.startsWith("/api/research/experiments/mlflow/")) return "project.manageSettings";
   if (pathname === "/api/settings" && method !== "GET")
     return "project.manageSettings";
   if (pathname.startsWith("/api/tools-environment") && method !== "GET")
@@ -45,13 +46,10 @@ export function requiredProjectPermission(pathname, method) {
     return "research.proposeChange";
   if (
     pathname === "/api/source-refresh" ||
-    pathname === "/api/sync" ||
-    pathname.includes("/experiment-gateway/sync")
+    pathname === "/api/sync"
   )
     return "source.refresh";
   if (
-    pathname.includes("/experiment-gateway/metrics") ||
-    pathname.includes("/simulations") ||
     pathname.includes("/executions/docker/run")
   )
     return "experiment.run";

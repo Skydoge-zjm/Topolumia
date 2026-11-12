@@ -13,9 +13,9 @@ test.beforeAll(async () => {
   const actor = app.collaboration.actorForUser(user.id, app.config.project.id);
   const runtime = app.runtimes.get(app.config.project.id);
   const make = (kind: string, name: string) => app.researchNodes.createNode(kind, { nodeName: name }, actor).node.id;
-  question = make("question", "Does conditioning reduce distortion?");
-  hypothesis = make("hypothesis", "Conditioning is the main effect");
-  make("hypothesis", "Seed variance explains the gain");
+  question = make("note", "Does conditioning reduce distortion?");
+  hypothesis = make("note", "Conditioning is the main effect");
+  make("note", "Seed variance explains the gain");
   experiment = make("experiment", "Ablation G1");
   make("paper", "Unlinked survey");
   runtime.records.save({ type: "meeting", title: "Weekly sync", status: "draft", timezone: "UTC", occurredAt: "2026-10-01T09:00:00Z", body: "Notes",
@@ -51,10 +51,13 @@ test("signed-out visitors land on the entry page and reach the overview after si
   const structure = page.getByRole("region", { name: "研究结构" });
   await expect(structure.getByText("科研对象").locator("..")).toContainText("5");
   await expect(structure.getByText("科研关系").locator("..")).toContainText("2");
-  const argument = page.getByRole("region", { name: "论证完整度" });
-  await expect(argument.getByText("已有证据检验的假说").locator("..")).toContainText("1 / 2");
+  const argument = page.getByRole("region", { name: "对象关联" });
+  await expect(argument.getByRole("meter", { name: "已关联的实验", exact: true })).toHaveAttribute("aria-valuenow", "1");
+  await expect(argument.getByRole("meter", { name: "已关联的实验", exact: true })).toHaveAttribute("aria-valuemax", "1");
+  await expect(argument.getByRole("meter", { name: "已关联的笔记", exact: true })).toHaveAttribute("aria-valuenow", "2");
+  await expect(argument.getByRole("meter", { name: "已关联的笔记", exact: true })).toHaveAttribute("aria-valuemax", "3");
   await expect(argument.getByRole("link", { name: "Unlinked survey" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "研究问题" }).getByRole("link", { name: "Does conditioning reduce distortion?" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "研究笔记" }).getByRole("link", { name: "Does conditioning reduce distortion?" })).toBeVisible();
   await expect(page.getByRole("region", { name: "待办行动" }).getByRole("link", { name: "Rerun G1 with three seeds" })).toBeVisible();
   await expect(page.getByRole("link", { name: /逾期行动/ })).toContainText("1");
   await expect(page.getByRole("region", { name: "最近科研活动" }).locator(".research-history-entry").first()).toBeVisible();

@@ -3,8 +3,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { CLI_CONTRACT } from "../domain/research/research-interface.js";
 import { researchTools } from "../domain/research/research-mcp-contract.js";
 import { setTimeout as delay } from "node:timers/promises";
+import { Readable } from "node:stream";
+import type { ResearchMcpBinding } from "../domain/agents/agent-types.js";
 
-export async function openResearchMcp(binding) {
+export async function openResearchMcp(binding: Pick<ResearchMcpBinding, "command" | "args" | "cwd" | "env">) {
   const transport = new StdioClientTransport({
     command: binding.command,
     args: binding.args,
@@ -12,7 +14,7 @@ export async function openResearchMcp(binding) {
     env: binding.env,
     stderr: "pipe",
   });
-  transport.stderr?.resume();
+  if (transport.stderr instanceof Readable) transport.stderr.resume();
   const client = new Client({
     name: "topolumia-integration",
     version: "1.0.0",
@@ -42,7 +44,7 @@ export async function openResearchMcp(binding) {
     throw error;
   }
 }
-export async function verifyResearchMcp(binding) {
+export async function verifyResearchMcp(binding: Pick<ResearchMcpBinding, "command" | "args" | "cwd" | "env">) {
   const connection = await openResearchMcp(binding);
   try {
     const { tools } = await connection.client.listTools();
@@ -56,12 +58,15 @@ export async function verifyResearchMcp(binding) {
       undefined,
       { timeout: 25000 },
     );
+    const structured = result.structuredContent as Record<string, unknown> | undefined;
+    const nativeExecution = result._meta?.execution;
+    const execution = nativeExecution && typeof nativeExecution === "object" ? nativeExecution as Record<string, unknown> : undefined;
     if (
       result.isError ||
-      result.structuredContent?.projectId !==
+      structured?.projectId !==
         binding.env.TOPOLUMIA_PROJECT_ID ||
-      result._meta?.execution?.contract !== CLI_CONTRACT ||
-      !result._meta?.execution?.pid
+      execution?.contract !== CLI_CONTRACT ||
+      !execution?.pid
     )
       throw new Error("科研 MCP 授权或真实 CLI 往返失败。");
     return {

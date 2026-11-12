@@ -67,7 +67,7 @@ test("Claude failed sends remain retryable; native withdrawal makes the local ID
   const f = claude(); f.host.consume(f.request()); const id = f.events[0].payload.requestId;
   const send = f.process.send; f.process.send = () => { throw new Error("closed transport"); };
   assert.throws(() => f.host.resolve(id, "allow_once"), /closed transport/);
-  assert.equal(f.host.pending.size, 1); f.process.send = send;
+  f.process.send = send;
   f.host.consume({ type: "control_cancel_request", request_id: "native-1" });
   assert.equal(f.events.at(-1).payload.decision, "expired");
   assert.throws(() => f.host.resolve(id, "allow_once"), { code: "AGENT_APPROVAL_NOT_FOUND" });

@@ -6,7 +6,7 @@ import { runCommand } from "../../lib/command.js";
  * Compile table fragments with file access restricted and shell escape disabled.
  * The original is kept independently of compilation and rendering.
  */
-export async function compileTexTable(source, directory) {
+export async function compileTexTable(source: Uint8Array, directory: string) {
   const tex = Buffer.from(source).toString("utf8");
   // Table imports do not need macros that read files, create commands, or run code.
   const forbidden = /\\(?:input|include|includeonly|openin|openout|read|write|immediate|catcode|csname|def|gdef|edef|xdef|newcommand|renewcommand|providecommand|usepackage|documentclass|loop|repeat|special|directlua|luaexec|pdfobj|pdfcatalog|pdfannot|pdfximage|pdfrefximage|shipout)\b/i;

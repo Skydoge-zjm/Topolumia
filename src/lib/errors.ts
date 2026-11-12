@@ -13,7 +13,7 @@ export class AppError extends Error {
   }
 }
 
-export function asAppError(error) {
+export function asAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
   return new AppError("INTERNAL_ERROR", "服务处理请求时发生未预期错误。", {
     status: 500,
@@ -22,7 +22,7 @@ export function asAppError(error) {
   });
 }
 
-export function errorPayload(error) {
+export function errorPayload(error: unknown) {
   const appError = asAppError(error);
   return {
     error: {

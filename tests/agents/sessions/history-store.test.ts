@@ -6,6 +6,17 @@ import path from "node:path";
 import { AgentHistoryStore } from "../../../src/services/agents/agent-history-store.js";
 import { AgentSessionGateway } from "../../../src/services/agents/agent-session-gateway.js";
 
+test("summary polling reuses restored sessions without materializing their histories again", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "topolumia-summary-cache-"));
+  const gateway = new AgentSessionGateway({ historyFile: path.join(root, "history.sqlite"), profileRegistry: { createAdapter: async () => ({ profile: { provider: "fixture" }, start: async () => ({ capabilities: {} }), close: async () => {} }) } });
+  t.after(async () => { await gateway.closeAll(); await rm(root, { recursive: true, force: true }); });
+  await gateway.initialize();
+  const session = await gateway.create({ profileId: "fixture", title: "Retained history" });
+  gateway.historyStore.get = () => { throw new Error("Summary polling must not deserialize restored history"); };
+  gateway.historyStore.list = () => { throw new Error("Summary polling must not scan full histories"); };
+  for (let index = 0; index < 5; index++) assert.equal(gateway.list({ summary: true })[0].id, session.id);
+});
+
 test("all conversation history survives restart independently of runtime capacity", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "research-workbench-history-"));
   const file = path.join(root, "history.sqlite");

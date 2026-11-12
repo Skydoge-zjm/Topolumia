@@ -13,7 +13,7 @@ import {
 import { claudeSettingsFile } from "../../../src/adapters/agents/shared/native-config.js";
 import { CodexAppServerDriver } from "../../../src/adapters/agents/codex/codex-app-server-driver.js";
 import { ClaudeCliStreamDriver } from "../../../src/adapters/agents/claude/claude-cli-stream-driver.js";
-import { OpenCodeServer } from "../../../src/adapters/agents/opencode/opencode-server.js";
+import { OpenCodeServer } from "../../../src/adapters/agents/opencode/v1/opencode-server.js";
 
 async function fixture(t) {
   const root = await mkdtemp(
@@ -248,7 +248,7 @@ test("Codex startup and thread configuration preserve custom settings and merge 
     doc = await f.app.nativeConfigs.document("codex");
   await f.app.nativeConfigs.save(
     "codex",
-    'model = "gpt-6-luna"\nmodel_reasoning_effort = "high"\napproval_policy = "never"\nsandbox_mode = "read-only"\ndeveloper_instructions = "Custom research guidance"\n[mcp_servers.papers]\ncommand = "papers"\n[mcp_servers.topolumia]\nurl = "https://old.invalid"\n',
+    'model = "gpt-6-luna"\nmodel_reasoning_effort = "high"\napproval_policy = "never"\nsandbox_mode = "read-only"\ndeveloper_instructions = "Custom research guidance"\n[mcp_servers.papers]\ncommand = "papers"\n[mcp_servers.topolumia]\nurl = "https://old.invalid"\nomit_tools_from = ["code_mode"]\ntool_input_schema_max_bytes = 8000\ndisabled_tools = ["transfer_asset"]\n',
     doc.revision,
   );
   const fixtureFile = fileURLToPath(
@@ -295,6 +295,9 @@ test("Codex startup and thread configuration preserve custom settings and merge 
     assert.equal(params.sandbox, "read-only");
     assert.equal(params.config.mcp_servers.papers.command, "papers");
     assert.equal(params.config.mcp_servers.topolumia.url, undefined);
+    assert.deepEqual(params.config.mcp_servers.topolumia.omit_tools_from, ["code_mode"]);
+    assert.equal(params.config.mcp_servers.topolumia.tool_input_schema_max_bytes, 8000);
+    assert.deepEqual(params.config.mcp_servers.topolumia.disabled_tools, ["transfer_asset"]);
     assert.match(params.developerInstructions, /Custom research guidance/);
     assert.match(
       params.developerInstructions,
@@ -401,7 +404,7 @@ test("OpenCode receives a native file and complete inline config without losing 
     args: [
       fileURLToPath(
         new URL(
-          "../../../fixtures/native/opencode-config-server.js",
+          "../../../fixtures/native/opencode/v1/config-server.js",
           import.meta.url,
         ),
       ),

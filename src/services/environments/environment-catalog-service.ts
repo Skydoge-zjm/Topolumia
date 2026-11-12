@@ -12,22 +12,32 @@ import { AppError } from "../../lib/errors.js";
 import { ResearchEnvironmentProbes } from "./research-environment-probes.js";
 import { ResearchEnvironmentService } from "./research-environment-service.js";
 import { withEnvironmentCapacity } from "./environment-capacity.js";
+import type { AppConfig } from "../../config.js";
+import type { CommandRunner } from "../../lib/command.js";
+import type { UserSettings } from "../platform/user-settings-store.js";
+import type { ResearchInspection } from "./environment-types.js";
 
 const sourceIds = ["python", "conda", "venv"];
-const exists = (file) =>
+type CatalogEntry = { id: string; source: string; prefix: string; pythonCommand: string; name: string; manager: string; hasPython: boolean; selection: { kind: string; prefix?: string; pythonCommand?: string }; version?: string | null };
+type PackageItem = { name: string; version: string; source: string };
+type PackageState = { status: string; checkedAt: string | null; items: PackageItem[]; detail: string | null; fingerprint?: string };
+type WorkerSlot = { closed: boolean; worker: ResearchEnvironmentService; packages: PackageState; packageTask: Promise<void> | null; config: AppConfig };
+export type RemoteCatalog = { id: string; available?: () => boolean; isCurrent: (entry: CatalogEntry) => boolean; discover: (source: string) => Promise<{ entries: Omit<CatalogEntry, "id" | "selection">[] }> };
+type CatalogOptions = { config: AppConfig; settings: { filePath: string; settings?: UserSettings }; commandRunner: CommandRunner; activate: (selection: CatalogEntry["selection"], options?: Parameters<ResearchEnvironmentService["select"]>[1]) => Promise<unknown>; currentReport: () => ResearchInspection | null; remote?: RemoteCatalog | null };
+const exists = (file: string) =>
   access(file).then(
     () => true,
     () => false,
   );
-const keyPath = (value) =>
+const keyPath = (value: string) =>
   process.platform === "win32"
     ? path.resolve(value).toLowerCase()
     : path.resolve(value);
-const digest = (value) =>
+const digest = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
-const canonical = async (value) =>
+const canonical = async (value: string) =>
   realpath(value).catch(() => path.resolve(value));
-const pythonAt = (prefix, source = "conda") =>
+const pythonAt = (prefix: string, source = "conda") =>
   path.join(
     prefix,
     process.platform === "win32"
@@ -36,7 +46,7 @@ const pythonAt = (prefix, source = "conda") =>
         : "python.exe"
       : "bin/python",
   );
-const emptyPackages = () => ({
+const emptyPackages = (): PackageState => ({
   status: "unchecked",
   checkedAt: null,
   items: [],
@@ -44,15 +54,25 @@ const emptyPackages = () => ({
 });
 
 export class EnvironmentCatalogService {
-  constructor({ config, settings, commandRunner, activate, currentReport, remote = null }) {
-    Object.assign(this, {
-      config,
-      settings,
-      commandRunner,
-      onActivate: activate,
-      currentReport,
-      remote,
-    });
+  config: AppConfig;
+  settings: CatalogOptions["settings"];
+  commandRunner: CommandRunner;
+  onActivate: CatalogOptions["activate"];
+  currentReport: CatalogOptions["currentReport"];
+  remote: RemoteCatalog | null;
+  root: string;
+  entries = new Map<string, CatalogEntry>();
+  workers = new Map<string, WorkerSlot>();
+  pendingWorkers = new Map<string, Promise<WorkerSlot>>();
+  discoveries = new Map<string, Promise<ReturnType<EnvironmentCatalogService["view"]>>>();
+  sources: Map<string, { id: string; status: string; count: number | null; detail: string | null }>;
+  signature: string;
+  closed = false;
+  persistence = Promise.resolve();
+  registered: string[] = [];
+  tasks = new Set<Promise<unknown>>();
+  constructor({ config, settings, commandRunner, activate, currentReport, remote = null }: CatalogOptions) {
+    this.config = config; this.settings = settings; this.commandRunner = commandRunner; this.onActivate = activate; this.currentReport = currentReport; this.remote = remote;
     this.root = path.join(
       path.dirname(settings.filePath),
       "environment-catalog",
@@ -76,7 +96,7 @@ export class EnvironmentCatalogService {
   fingerprint() {
     return digest(this.remote ? [this.remote.id, this.config.project.root, this.config.toolCommands] : [this.config.project.root, this.config.toolCommands]);
   }
-  track(task) {
+  track<T>(task: Promise<T>): Promise<T> {
     this.tasks.add(task);
     void task.finally(() => this.tasks.delete(task)).catch(() => {});
     return task;
@@ -96,7 +116,7 @@ export class EnvironmentCatalogService {
         )
           this.entries.set(entry.id, entry);
       this.registered = Array.isArray(saved.registered)
-        ? saved.registered.filter((id) => this.entries.has(id))
+        ? saved.registered.filter((id: string) => this.entries.has(id))
         : [];
       if (saved.signature === this.signature)
         for (const id of saved.readySources ?? [])
@@ -116,7 +136,7 @@ export class EnvironmentCatalogService {
     this.signature = this.fingerprint();
     const registeredEntries = this.registered
       .map((id) => this.entries.get(id))
-      .filter(Boolean);
+      .filter((entry): entry is CatalogEntry => Boolean(entry));
     for (const slot of this.workers.values()) {
       slot.closed = true;
       this.track(slot.worker.close());
@@ -154,7 +174,7 @@ export class EnvironmentCatalogService {
       });
     await this.persistence;
   }
-  isCurrent(entry) {
+  isCurrent(entry: CatalogEntry) {
     if (this.remote) return this.remote.isCurrent(entry);
     if (this.settings.settings?.researchLocation === "ssh") return false;
     const selected = this.config.researchEnvironment;
@@ -175,7 +195,7 @@ export class EnvironmentCatalogService {
       keyPath(python.prefix) === keyPath(entry.prefix),
     );
   }
-  descriptor(entry) {
+  descriptor(entry: CatalogEntry) {
     const report =
       this.workers.get(entry.id)?.worker.view() ??
       (this.isCurrent(entry) ? this.currentReport() : null);
@@ -189,7 +209,7 @@ export class EnvironmentCatalogService {
       checkedAt: report?.checkedAt ?? null,
     };
   }
-  list(source) {
+  list(source: string) {
     return [...this.entries.values()]
       .filter((e) => e.source === source)
       .sort(
@@ -220,8 +240,8 @@ export class EnvironmentCatalogService {
       })),
     };
   }
-  runner(slot = null) {
-    return (...args) =>
+  runner(slot: Pick<WorkerSlot, "closed"> | null = null): CommandRunner {
+    return (...args: Parameters<CommandRunner>) =>
       withEnvironmentCapacity(async () => {
         if (this.closed || slot?.closed)
           throw new Error("Environment inspection closed");
@@ -237,7 +257,7 @@ export class EnvironmentCatalogService {
     registered = false,
     commit = true,
     identityPath = null,
-  }) {
+  }: { source: string; prefix: string; pythonCommand: string; name: string; manager?: string; registered?: boolean; commit?: boolean; identityPath?: string | null }) {
     const directory = this.remote ? path.posix.normalize(prefix) : await canonical(prefix);
     const identity =
       source === "python" ? this.remote ? path.posix.normalize(identityPath ?? pythonCommand) : await canonical(pythonCommand) : directory;
@@ -259,15 +279,15 @@ export class EnvironmentCatalogService {
     if (registered && !this.registered.includes(id)) this.registered.push(id);
     return entry;
   }
-  async discover(source, refresh = false) {
+  async discover(source: string, refresh = false) {
     this.synchronize();
     if (this.remote?.available && !this.remote.available()) return this.view();
     if (!sourceIds.includes(source))
       throw new AppError("ENVIRONMENT_SOURCE_INVALID", "未知的环境来源。", {
         status: 422,
       });
-    if (this.discoveries.has(source)) return this.discoveries.get(source);
-    if (!refresh && this.sources.get(source).status === "ready")
+    if (this.discoveries.has(source)) return this.discoveries.get(source)!;
+    if (!refresh && this.sources.get(source)!.status === "ready")
       return this.view();
     const signature = this.signature;
     this.sources.set(source, {
@@ -278,7 +298,7 @@ export class EnvironmentCatalogService {
     });
     const job = (async () => {
       const previous = this.list(source);
-      const discovered = [];
+      const discovered: CatalogEntry[] = [];
       try {
         const config = structuredClone(this.config);
         config.researchEnvironment = {
@@ -414,7 +434,7 @@ export class EnvironmentCatalogService {
       if (this.discoveries.get(source) === job) this.discoveries.delete(source);
     }
   }
-  require(id) {
+  require(id: string) {
     this.synchronize();
     const entry = this.entries.get(id);
     if (!entry)
@@ -425,7 +445,7 @@ export class EnvironmentCatalogService {
       );
     return entry;
   }
-  async register(pythonCommand) {
+  async register(pythonCommand: unknown) {
     if (
       typeof pythonCommand !== "string" ||
       !pythonCommand.trim() ||
@@ -488,10 +508,10 @@ export class EnvironmentCatalogService {
     await this.persist();
     return { catalog: this.view(), environment: this.descriptor(entry) };
   }
-  async worker(id) {
+  async worker(id: string): Promise<WorkerSlot> {
     const entry = this.require(id);
-    if (this.workers.has(id)) return this.workers.get(id);
-    if (this.pendingWorkers.has(id)) return this.pendingWorkers.get(id);
+    if (this.workers.has(id)) return this.workers.get(id)!;
+    if (this.pendingWorkers.has(id)) return this.pendingWorkers.get(id)!;
     const signature = this.signature;
     const loading = (async () => {
       if (this.workers.size >= 40) {
@@ -512,32 +532,22 @@ export class EnvironmentCatalogService {
       }
       const config = structuredClone(this.config);
       config.researchEnvironment = {
-        kind: "default",
         prefix: "",
         pythonCommand: "python",
         ...entry.selection,
       };
-      const slot = {
+      const slot: WorkerSlot = {
         closed: false,
-        worker: null,
+        worker: new ResearchEnvironmentService({
+          config, includeHost: false,
+          settings: { filePath: path.join(this.root, id, "settings.json"), update: async () => { throw new Error("Inspection cannot change project settings"); } },
+          applySettings: async () => { throw new Error("Inspection cannot activate an environment"); },
+          commandRunner: (...args) => this.runner(slot)(...args),
+        }),
         packages: emptyPackages(),
         packageTask: null,
         config,
       };
-      slot.worker = new ResearchEnvironmentService({
-        config,
-        includeHost: false,
-        settings: {
-          filePath: path.join(this.root, id, "settings.json"),
-          update: async () => {
-            throw new Error("Inspection cannot change project settings");
-          },
-        },
-        applySettings: async () => {
-          throw new Error("Inspection cannot activate an environment");
-        },
-        commandRunner: this.runner(slot),
-      });
       await slot.worker.initialize();
       if (slot.worker.view().status === "idle" && this.isCurrent(entry))
         await slot.worker.adopt(this.currentReport());
@@ -554,7 +564,7 @@ export class EnvironmentCatalogService {
             Array.isArray(saved.items) &&
             saved.items.length <= 10000 &&
             saved.items.every(
-              (item) =>
+              (item: PackageItem) =>
                 typeof item.name === "string" &&
                 typeof item.version === "string" &&
                 ["conda", "pip", "python"].includes(item.source),
@@ -584,14 +594,14 @@ export class EnvironmentCatalogService {
         this.pendingWorkers.delete(id);
     }
   }
-  async report(id) {
+  async report(id: string) {
     const slot = await this.worker(id);
     return {
       environment: this.descriptor(this.require(id)),
       inspection: slot.worker.view(),
     };
   }
-  async check(id, { componentId = null, refresh = false } = {}) {
+  async check(id: string, { componentId = null, refresh = false }: { componentId?: string | null; refresh?: boolean } = {}) {
     const entry = this.require(id),
       slot = await this.worker(id);
     if (!entry.hasPython)
@@ -605,13 +615,13 @@ export class EnvironmentCatalogService {
       slot.worker.start(componentId);
     return this.report(id);
   }
-  async activate(id) {
+  async activate(id: string) {
     const entry = this.require(id),
       slot = await this.worker(id);
     await this.onActivate(entry.selection, { report: slot.worker.view() });
     return this.view();
   }
-  async packagePage(id, { query = "", offset = 0, limit = 50 } = {}) {
+  async packagePage(id: string, { query = "", offset = 0, limit = 50 } = {}) {
     if (
       typeof query !== "string" ||
       query.length > 200 ||
@@ -647,7 +657,7 @@ export class EnvironmentCatalogService {
       nextOffset: offset + limit < items.length ? offset + limit : null,
     };
   }
-  async refreshPackages(id) {
+  async refreshPackages(id: string) {
     const entry = this.require(id),
       slot = await this.worker(id);
     if (slot.packages.status === "running") return this.packagePage(id);
@@ -663,7 +673,7 @@ export class EnvironmentCatalogService {
           slot.config,
           this.runner(slot),
         );
-        let items;
+        let items: PackageItem[];
         if (entry.source === "conda") {
           const result = await this.runner(slot)(
             await probes.executable("conda"),

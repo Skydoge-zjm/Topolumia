@@ -1,8 +1,9 @@
 import * as z from "zod/v4";
-import { contentBlockInput, sourceRef, paperCoreSchema, genericCoreSchema } from "../content-blocks.js";
+import { contentBlockInput, sourceRef, paperCoreSchema, genericCoreSchema, nullablePatchShape } from "../content-blocks.js";
 import { researchNodeKinds } from "../node-kinds.js";
 import { groupCoreSchema, groupMembersSchema, membershipPatchSchema, primaryRelationsSchema } from "../groups.js";
 import { objectRefSchema, endpointVersionsSchema } from "../object-schemas.js";
+import { experimentPatchSchema } from "../experiment-records.js";
 
 const id = z.string().min(1).max(240);
 const revision = z.number().int().positive();
@@ -22,14 +23,15 @@ export const proposalNode = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("paper"), core: paperCoreSchema.describe('Bibliographic fields only. Put arXiv/DOI in identifiers:{arxiv:"2502.14321v3",doi:"…"}; year is numeric. Extra dates, paper type and reading details belong in titled blocks, not invented core fields.'), ...nodeFields }),
   z.strictObject({ kind: z.enum(researchNodeKinds.filter(k => k !== "paper")), core: genericCoreSchema, ...nodeFields }),
 ]);
-const blockPatch = z.strictObject(Object.fromEntries(Object.entries(proposalBlock.shape).map(([key, schema]) => [
-  key, (typeof schema.removeDefault === "function" ? schema.removeDefault() : schema).optional().nullable(),
-]))).describe("Only supplied fields change. payload, representations and sourceRefs replace that field; null removes an optional field.");
+const blockPatch = z.strictObject(nullablePatchShape(proposalBlock.shape)).describe("Only supplied fields change. payload, representations and sourceRefs replace that field; null removes an optional field.");
 export const nodeChange = z.strictObject({
   nodeId: id.describe("An existing formal node ID, or an ID returned by this candidate's receipt. No temporary reference syntax."),
   expectedCoreRevision: revision.optional(),
   expectedCollectionRevision: revision.optional(),
   corePatch: z.record(z.string(), z.unknown()).optional().describe("Merge supplied core fields; null removes an optional field. First change to formal core requires expectedCoreRevision and a current core read."),
+  recordBlockId: id.optional(),
+  expectedExperimentRevision: revision.optional(),
+  experimentPatch: experimentPatchSchema.optional().describe("Edit a record block's run registry or link a versioned block/file/table row to an existing run. Read the experiment first; agent changes remain candidates."),
   sourceRefs: sourceRefs.optional().describe("Replace node sources; omitted sources stay unchanged."),
   addBlocks: blocks.optional(),
   updateBlocks: z.array(z.strictObject({ blockId: id, expectedRevision: revision.optional(), patch: blockPatch })).max(80).optional(),
@@ -40,7 +42,7 @@ export const proposalGroup = z.strictObject({
   core: groupCoreSchema, members: groupMembersSchema.optional(), parentId: id.nullable().optional(),
   expectedParentRevision: revision.optional(), ...nodeFields,
 });
-export const groupChange = nodeChange.omit({ nodeId: true }).extend({
+export const groupChange = nodeChange.omit({ nodeId: true, experimentPatch: true, expectedExperimentRevision: true }).extend({
   groupId: id, expectedMembershipRevision: revision.optional(), membersPatch: membershipPatchSchema.optional(),
   parentId: id.nullable().optional(), expectedParentRevisions: z.record(z.string(), revision).optional(),
   primaryRelations: primaryRelationsSchema.optional(), expectedRelationRevision: revision.optional(),
@@ -63,7 +65,7 @@ const edits = {
   deleteNodes: z.array(z.strictObject({ nodeId: id, expectedNodeRevision: revision.optional() })).max(20).optional(),
   evidenceReadIds: z.array(id).max(80).optional(),
 };
-const hasChanges = value => ["nodes", "nodeChanges", "groups", "groupChanges", "relations", "relationChanges", "deleteNodes", "deleteGroups"].some(key => value[key]?.length);
+const hasChanges = (value: Partial<Record<"nodes" | "nodeChanges" | "groups" | "groupChanges" | "relations" | "relationChanges" | "deleteNodes" | "deleteGroups", unknown[]>>) => (["nodes", "nodeChanges", "groups", "groupChanges", "relations", "relationChanges", "deleteNodes", "deleteGroups"] as const).some(key => value[key]?.length);
 export const createProposalSchema = z.strictObject({
   reason: z.string().min(1).max(2000),
   idempotencyKey: id.optional().describe("Optional retry key. The execution layer generates one when omitted and returns it; retry with the returned key after an uncertain result."),

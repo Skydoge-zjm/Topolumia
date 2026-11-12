@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ResearchRecord } from "@/features/research/model";
-import { argumentHealth, openActions, ratio, researchStructure, upcoming, type Topology } from "./overviewModel";
+import { researchConnections, openActions, ratio, researchStructure, upcoming, type Topology } from "./overviewModel";
 
 const node = (id: string, kind: string) => ({ id, kind, label: id, summary: "", status: "active" });
 const edge = (id: string, from: string, to: string, type: string) => ({ id, from: { kind: "node" as const, id: from }, to: { kind: "node" as const, id: to }, type, revision: 1 });
 const graph: Topology = {
-  nodes: [node("q", "question"), node("h1", "hypothesis"), node("h2", "hypothesis"), node("e", "experiment"), node("c", "claim"), node("o", "observation"), node("lone", "paper")],
+  nodes: [node("q", "note"), node("h1", "note"), node("h2", "note"), node("e", "experiment"), node("c", "note"), node("o", "note"), node("lone", "paper")],
   edges: [edge("r1", "e", "h1", "tested_by"), edge("r2", "o", "c", "supports"), edge("r3", "o", "h2", "contradicts"), edge("r4", "q", "h1", "informs")],
   groups: [],
 };
@@ -14,26 +14,26 @@ describe("overview derivations", () => {
   it("counts objects by research family", () => {
     const structure = researchStructure(graph);
     expect(structure).toMatchObject({ nodes: 7, groups: 0, relations: 4 });
-    expect(structure.families).toEqual({ inquiry: 3, evidence: 1, empirical: 2, reasoning: 1, direction: 0 });
+    expect(structure.families).toEqual({ evidence: 1, empirical: 1, reasoning: 5 });
   });
 
   it("measures argument coverage from formal relations only", () => {
-    const health = argumentHealth(graph);
-    expect(health.hypotheses).toEqual({ done: 2, total: 2 });
-    expect(health.claims).toEqual({ done: 1, total: 1 });
+    const health = researchConnections(graph);
+    expect(health.experiments).toEqual({ done: 1, total: 1 });
+    expect(health.notes).toEqual({ done: 5, total: 5 });
     expect(health.contested.sort()).toEqual(["h2", "o"]);
     expect(health.isolated).toEqual(["lone"]);
     expect(health.connected).toEqual({ done: 6, total: 7 });
   });
 
-  it("treats a claim as supported only when support points at it", () => {
+  it("measures connections without inferring a scientific role from a note", () => {
     const reversed = { ...graph, edges: [edge("r", "c", "o", "supports")] };
-    expect(argumentHealth(reversed).claims.done).toBe(0);
+    expect(researchConnections(reversed).notes).toEqual({ done: 2, total: 5 });
   });
 
   it("counts group membership as connected", () => {
     const grouped = { ...graph, groups: [{ id: "g", core: { nodeName: "G" }, parentId: null, members: [{ nodeId: "lone" }], primaryRelations: {}, revision: 1, membershipRevision: 1, relationRevision: 1 }] };
-    expect(argumentHealth(grouped).isolated).toEqual([]);
+    expect(researchConnections(grouped).isolated).toEqual([]);
   });
 
   it("reports no ratio for an empty denominator", () => {

@@ -1,11 +1,20 @@
+import { stripVTControlCharacters } from "node:util";
 import { access, stat } from "node:fs/promises";
 import * as z from "zod/v4";
 import { AppError } from "../../lib/errors.js";
-import { runCommand } from "../../lib/command.js";
+import { runCommand, type CommandRunner } from "../../lib/command.js";
 import { ResearchEnvironmentProbes } from "./research-environment-probes.js";
 import { ResearchEnvironmentService } from "./research-environment-service.js";
 import { EnvironmentCatalogService } from "./environment-catalog-service.js";
 import { withEnvironmentCapacity } from "./environment-capacity.js";
+import type { AppConfig } from "../../config.js";
+import type { AdapterRegistry } from "../platform/adapter-registry.js";
+import type { UserSettingsStore, UserSettings } from "../platform/user-settings-store.js";
+import type { ComponentResult } from "./environment-types.js";
+type ToolDefinition = { id: string; label: string; description: string; group: string; category?: string };
+type ToolResult = ComponentResult & { checkedAt: string | null };
+type ToolOptions = { config: AppConfig; registry: AdapterRegistry; userSettings: UserSettingsStore; applySettings: (settings: UserSettings) => Promise<unknown>; commandRunner?: CommandRunner };
+type PythonInspection = Awaited<ReturnType<ResearchEnvironmentProbes["inspectPython"]>> | { status: string; detail: string; frameworks: unknown[]; checkedAt: string };
 
 const value = z.string().max(500);
 const envName = z
@@ -33,7 +42,7 @@ const schemas = {
   tensorboard: z.strictObject({ logdir: value, pythonCommand: value.min(1).optional() }),
 };
 
-const definitions = [
+const definitions: ToolDefinition[] = [
   {
     id: "workspace",
     label: "项目目录",
@@ -122,20 +131,18 @@ for (const [id, label] of [["torch", "PyTorch"], ["jax", "JAX"], ["tensorflow", 
 }
 
 export class ToolEnvironmentService {
+  config: AppConfig; registry: AdapterRegistry; userSettings: UserSettingsStore; applySettings: ToolOptions["applySettings"]; commandRunner: CommandRunner;
+  results = new Map<string, ToolResult>(); inFlight = new Map<string, Promise<unknown>>(); generation = 0;
+  configurationQueue: Promise<unknown> = Promise.resolve(); researchEnvironment: ResearchEnvironmentProbes;
+  pythonInspection: PythonInspection | null = null; runtimeCheckedAt: string; research: ResearchEnvironmentService; catalog: EnvironmentCatalogService;
   constructor({
     config,
     registry,
     userSettings,
     applySettings,
     commandRunner = runCommand,
-  }) {
-    Object.assign(this, {
-      config,
-      registry,
-      userSettings,
-      applySettings,
-      commandRunner,
-    });
+  }: ToolOptions) {
+    this.config = config; this.registry = registry; this.userSettings = userSettings; this.applySettings = applySettings; this.commandRunner = commandRunner;
     this.results = new Map();
     this.inFlight = new Map();
     this.generation = 0;
@@ -150,19 +157,19 @@ export class ToolEnvironmentService {
       commandRunner: (...args) => withEnvironmentCapacity(() => this.commandRunner(...args)) });
     this.catalog = new EnvironmentCatalogService({ config, settings: userSettings,
       commandRunner: (...args) => this.commandRunner(...args),
-      activate: (selection, options) => this.selectEnvironment(selection, options),
+      activate: async (selection, options) => { await this.selectEnvironment(selection, options); },
       currentReport: () => this.research.view() });
   }
 
   async initialize() { await this.research.initialize(); await this.catalog.initialize(); }
 
-  queueConfiguration(operation) {
+  queueConfiguration<T>(operation: () => Promise<T>) {
     const pending = this.configurationQueue.then(operation);
     this.configurationQueue = pending.catch(() => {});
     return pending;
   }
 
-  selectEnvironment(input, options = {}) {
+  selectEnvironment(input: unknown, options: Parameters<ResearchEnvironmentService["select"]>[1] = {}) {
     return this.queueConfiguration(async () => {
     await this.research.select(input, options);
     if (this.userSettings.settings.researchLocation === "ssh") {
@@ -181,11 +188,11 @@ export class ToolEnvironmentService {
     return definitions;
   }
 
-  configuration(id) {
+  configuration(id: string) {
     const settings = this.userSettings.settings.sources;
     if (id === "python") return { command: this.config.researchEnvironment.pythonCommand };
     if (["conda", "uv", "nvidia", "cuda"].includes(id))
-      return { command: this.userSettings.settings.tools[id].command };
+      return { command: this.userSettings.settings.tools[id as "conda" | "uv" | "nvidia" | "cuda"].command };
     if (id === "mlflow") {
       const { baseUrl, experimentName, experimentId, tokenEnv } =
         settings.mlflow;
@@ -199,7 +206,7 @@ export class ToolEnvironmentService {
     return null;
   }
 
-  configured(id) {
+  configured(id: string) {
     if (id === "mlflow" || id === "wandb")
       return Boolean(this.config[id].baseUrl);
     if (id === "tensorboard") return Boolean(this.config.tensorboard.logdir);
@@ -212,7 +219,7 @@ export class ToolEnvironmentService {
       const configuration = this.configuration(entry.id);
       const configured = this.configured(entry.id);
       const result = this.results.get(entry.id);
-      const env = configuration?.tokenEnv;
+      const env = configuration && "tokenEnv" in configuration ? configuration.tokenEnv : undefined;
       let component = researchEnvironment.components.find(c => c.id === entry.id);
       if (entry.id === "nvidia" && result?.checkedAt && (!component?.checkedAt || result.checkedAt > component.checkedAt)) component = { ...result, id: "nvidia", scope: "host" };
       const runtime = entry.id === "node" ? { status: "ready", version: process.versions.node, location: process.execPath,
@@ -264,14 +271,14 @@ export class ToolEnvironmentService {
     };
   }
 
-  async configure(id, input) {
+  async configure(id: string, input: unknown) {
     if (!Object.hasOwn(schemas, id))
       throw new AppError(
         "TOOL_NOT_CONFIGURABLE",
         "此工具的运行位置由当前项目或本机安装决定。",
         { status: 404 },
       );
-    const parsed = schemas[id].safeParse(input);
+    const parsed = schemas[id as keyof typeof schemas].safeParse(input);
     if (!parsed.success)
       throw new AppError("TOOL_CONFIGURATION_INVALID", "工具配置格式不正确。", {
         status: 422,
@@ -279,7 +286,7 @@ export class ToolEnvironmentService {
           fields: parsed.error.issues.map((issue) => issue.path.join(".")),
         },
       });
-    if (id === "python") return this.selectEnvironment({ kind: "custom", pythonCommand: parsed.data.command });
+    if (id === "python" && "command" in parsed.data) return this.selectEnvironment({ kind: "custom", pythonCommand: parsed.data.command });
     const update = async () => {
       const settings = { [id]: parsed.data };
       const updated = await this.userSettings.update(
@@ -314,7 +321,7 @@ export class ToolEnvironmentService {
           if (this.generation === generation) {
             this.pythonInspection = result;
             this.results.set("python", {
-              ...this.researchEnvironment.describePython(result.python),
+              ...result.python ? this.researchEnvironment.describePython(result.python) : { status: "unavailable" },
               checkedAt: result.checkedAt,
             });
           }
@@ -335,7 +342,7 @@ export class ToolEnvironmentService {
     return this.inventory();
   }
 
-  async check(id = null) {
+  async check(id: string | null = null) {
     if (!id || ["cuda", "torch", "jax", "tensorflow"].includes(id)) this.research.start(id ?? null);
     const entries = this.entries();
     const selected = id ? entries.filter((entry) => entry.id === id) : entries;
@@ -364,7 +371,7 @@ export class ToolEnvironmentService {
     return this.inventory();
   }
 
-  safeDetail(raw) {
+  safeDetail(raw: unknown) {
     let detail = String(raw ?? "检查失败").replace(
       /; fixture fallback available/gi,
       "",
@@ -376,8 +383,7 @@ export class ToolEnvironmentService {
       const secret = process.env[key];
       if (secret) detail = detail.split(secret).join("[redacted]");
     }
-    const lines = detail
-      .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    const lines = stripVTControlCharacters(detail)
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -390,9 +396,9 @@ export class ToolEnvironmentService {
     ).slice(0, 260);
   }
 
-  async probe(entry) {
-    const ready = (detail) => ({ status: "ready", detail, recovery: null });
-    const failure = (detail, recovery) => ({
+  async probe(entry: ToolDefinition): Promise<ComponentResult> {
+    const ready = (detail: string) => ({ status: "ready", detail, recovery: null });
+    const failure = (detail: unknown, recovery: string) => ({
       status: "unavailable",
       detail: this.safeDetail(detail),
       recovery,
@@ -426,9 +432,10 @@ export class ToolEnvironmentService {
         const query = config.experimentId
           ? `get?experiment_id=${encodeURIComponent(config.experimentId)}`
           : `get-by-name?experiment_name=${encodeURIComponent(config.experimentName)}`;
-        const { experiment } = await this.registry.mlflow.request(
+        const response = await this.registry.mlflow.request(
           `/api/2.0/mlflow/experiments/${query}`,
         );
+        const { experiment } = z.object({ experiment: z.object({ experiment_id: z.string(), name: z.string() }).optional() }).parse(response);
         if (
           !experiment ||
           (config.experimentId
@@ -449,13 +456,15 @@ export class ToolEnvironmentService {
           "query ToolConnection($entity: String!, $project: String!) { project(name: $project, entityName: $entity) { id name } }",
           { entity: config.entity, project: config.project },
         );
-        if (!result.project?.id)
+        if (!z.object({ project: z.object({ id: z.string() }).nullable().optional() }).parse(result).project?.id)
           return failure(
             "服务可访问，但找不到指定 W&B 项目或当前凭据无权读取。",
             "检查组织、项目名称和访问权限。",
           );
         return ready(`项目连接可用 · ${config.entity}/${config.project}`);
       }
+      if (entry.id === "tensorboard") { const directory = await stat(this.config.tensorboard.logdir); return directory.isDirectory() ? ready("日志目录可访问") : failure("日志路径不是目录", "检查本地 TensorBoard 日志目录。"); }
+      if (entry.id !== "git" && entry.id !== "docker") return failure("未知工具", "检查工具配置。");
       const health = await this.registry[entry.id].health();
       if (health.status !== "ready")
         return failure(
@@ -468,7 +477,7 @@ export class ToolEnvironmentService {
         );
       return ready(health.detail);
     } catch (error) {
-      return failure(error.message, "检查配置、访问权限和运行依赖后重试。");
+      return failure(error instanceof Error ? error.message : String(error), "检查配置、访问权限和运行依赖后重试。");
     }
   }
 }

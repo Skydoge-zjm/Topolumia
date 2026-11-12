@@ -3,15 +3,23 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, projectId } from "@/shared/lib/api";
 import { renderMarkdown } from "@/shared/lib/markdown";
-import { SelectMenu } from "@/shared/ui/SelectMenu";
-import { ExternalLink, FileCode2, FileText, Table2 } from "lucide-react";
+import { safeUrl } from "@/features/research/model";
+import { ChevronDown, Download, ExternalLink, FileText } from "lucide-react";
 import { AssetTablePreview } from "./AssetTablePreview";
+import { ExperimentRecordBlock } from "./ExperimentRecordBlock";
+import { AssetTextPreview } from "./AssetTextPreview";
+import { ChartBlock } from "./ChartBlock";
+import { CodeView } from "./CodeView";
+import { ImageFigure } from "./ImageFigure";
+import { MetricView } from "./MetricView";
+import "./details.css";
 
 export type ContentBlock = {
   id: string;
   owner?: ResearchObjectRef;
   title: string;
   type: string;
+  role?: "body";
   order: number;
   payload: any;
   assetIds?: string[];
@@ -23,34 +31,115 @@ export type ContentBlock = {
   primaryRepresentationId?: string;
 };
 
-export function ContentBlockRenderer({ block, en, owner, assetUrl, candidateId }: { block: ContentBlock; en: boolean; owner: ResearchObjectRef; assetUrl?: (id: string) => string; candidateId?: string }) {
-  const reps=block.representations ?? [];
-  const hasInline=Boolean(block.payload && (["richText","metric","link","quote","code","chart"].includes(block.type) || block.type==="table" && block.payload.columns?.length));
-  const defaultView=block.primaryRepresentationId || (hasInline ? "inline" : reps[0]?.id);
-  const [selected,setSelected]=useState<string | undefined>();
-  const current=selected && (selected === "inline" || reps.some(r=>r.id===selected)) ? selected : defaultView;
-  const representation=reps.find(r=>r.id===current);
-  const options=[...(hasInline ? [{value:"inline",label:en?"Content":"内容数据"}] : []),...reps.map(r=>({value:r.id,label:r.label || r.role || r.kind}))];
-  return <div translate="no">{options.length>1 && <SelectMenu ariaLabel={en?"Content representation":"内容表示方式"} value={current || options[0].value} onChange={setSelected} options={options} />}{representation ? representation.kind==="link" ? <a className="content-block-link" href={representation.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={15}/>{representation.label || representation.url}</a> : <AssetRepresentation block={block} representation={representation} owner={owner} en={en} candidateId={candidateId} /> : <InlineContent block={block} owner={owner} en={en} assetUrl={assetUrl} candidateId={candidateId} />}</div>;
+const TEXT_FILE = /\.(md|txt|json|jsonl|yaml|yml|toml|ini|cfg|py|sh|ps1|log|out|tex|r|sql|js|ts)$/i;
+const TABLE_FILE = /\.(tex|xlsx|csv)$/i;
+const roleLabels: Record<string, [string, string]> = { source: ["原始来源", "Original"], transcription: ["转录数据", "Transcription"], rendering: ["排版版本", "Rendering"], supplement: ["补充材料", "Supplement"] };
+const assetHref = (id: string) => "/api/research-assets/" + encodeURIComponent(id) + "/content?projectId=" + encodeURIComponent(projectId());
+function fileSize(bytes?: number) {
+  if (!bytes || !Number.isFinite(bytes)) return "";
+  const units = ["B", "KB", "MB", "GB"]; let value = bytes, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return (value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)) + " " + units[unit];
 }
-function AssetRepresentation({block,representation,owner,en,candidateId}:{block:ContentBlock;representation:any;owner: ResearchObjectRef;en:boolean;candidateId?:string}){
-  const id=representation.assetId,query=useQuery({queryKey:["research-asset",projectId(),id],queryFn:()=>api<any>("/api/research-assets/"+encodeURIComponent(id))});
-  const a=query.data?.asset,href="/api/research-assets/"+encodeURIComponent(id)+"/content?projectId="+encodeURIComponent(projectId());
-  if(query.isPending)return <p role="status">{en?"Loading file…":"正在读取文件…"}</p>;
-  if(query.error)return <p role="alert">{query.error.message}</p>;
-  if(a?.mediaType?.startsWith("image/"))return <figure className="content-block-image"><a href={href} target="_blank" rel="noopener noreferrer" aria-label={en?"Open original image":"查看原图"} title={en?"Open original image":"查看原图"}><img src={href} alt={block.payload?.alt || block.title} loading="lazy"/></a><figcaption>{block.payload?.caption || representation.label}</figcaption></figure>;
-  if(/\.(tex|xlsx|csv)$/i.test(a?.originalName ?? ""))return <div><AssetTablePreview candidateId={candidateId} owner={owner} assetId={id} en={en} blockId={block.id} blockRevision={block.revision} representationId={representation.id} originalName={a.originalName}/>{block.type==="table" && block.payload?.caption && <p className="research-hint">{block.payload.caption}</p>}</div>;
-  if(a?.mediaType==="application/pdf")return <div><iframe title={block.title} src={href} style={{width:"100%",height:560,border:0}}/><a href={href}>{en?"Download PDF":"下载 PDF"}</a></div>;
-  return <a className="content-block-file" href={href}><FileText size={16}/>{a?.originalName || representation.label || (en?"Download file":"下载文件")}</a>;
+
+export function ContentBlockRenderer({ block, en, owner, candidateId }: { block: ContentBlock; en: boolean; owner: ResearchObjectRef; assetUrl?: (id: string) => string; candidateId?: string }) {
+  const reps = block.representations ?? [];
+  const hasInline = Boolean(block.payload && (["richText", "metric", "link", "quote", "code", "chart", "experimentRecord"].includes(block.type) || block.type === "table" && block.payload.columns?.length));
+  const defaultView = block.primaryRepresentationId || (hasInline ? "inline" : reps[0]?.id);
+  const [selected, setSelected] = useState<string | undefined>();
+  const current = selected && (selected === "inline" || reps.some(rep => rep.id === selected)) ? selected : defaultView;
+  const representation = reps.find(rep => rep.id === current);
+  // An experiment record manages its own source files; they are not alternative views of the block.
+  const options = block.type === "experimentRecord" ? [] : [...(hasInline ? [{ value: "inline", label: en ? "Content" : "内容数据", role: "" }] : []), ...reps.map(rep => ({ value: rep.id as string, label: (rep.label || rep.url || roleLabels[rep.role]?.[en ? 1 : 0] || rep.kind) as string, role: rep.role as string }))];
+  return (
+    <div translate="no" className="content-block-body" data-block-type={block.type}>
+      {options.length > 1 && <div className="representation-tabs" role="tablist" aria-label={en ? "Content representation" : "内容表示方式"}>
+        {options.map(option => (
+          <button key={option.value} type="button" role="tab" aria-selected={(current ?? options[0].value) === option.value} title={option.label} onClick={() => setSelected(option.value)}>
+            <span>{option.label}</span>{option.role && roleLabels[option.role] && option.label !== roleLabels[option.role][en ? 1 : 0] && <small>{roleLabels[option.role][en ? 1 : 0]}</small>}
+          </button>
+        ))}
+      </div>}
+      {representation
+        ? representation.kind === "link"
+          ? <LinkCard url={representation.url} label={representation.label} en={en} />
+          : <AssetRepresentation key={representation.id} block={block} representation={representation} owner={owner} en={en} candidateId={candidateId} />
+        : <InlineContent block={block} owner={owner} en={en} candidateId={candidateId} />}
+    </div>
+  );
 }
-function InlineContent({block,en,owner,candidateId}: {block:ContentBlock;en:boolean;owner: ResearchObjectRef;assetUrl?: (id:string)=>string;candidateId?:string}){
-  const p=block.payload ?? {};
-  if(block.type==="richText")return p.format==="plain" ? <div className="research-pre-wrap">{p.body || "—"}</div> : <div className="agent-markdown" dangerouslySetInnerHTML={{__html:renderMarkdown(p.body || "", { en })}}/>;
-  if(block.type==="metric")return <div className="research-table-scroll"><table><thead><tr><th>{en?"Metric":"指标"}</th><th>{en?"Value":"数值"}</th><th>{en?"Condition":"条件"}</th></tr></thead><tbody>{(p.items ?? []).map((item:any,index:number)=><tr key={index}><td>{item.name}</td><td>{String(item.value)} {item.unit}</td><td>{[item.split,item.condition].filter(Boolean).join(" · ")}</td></tr>)}</tbody></table></div>;
-  if(block.type==="table" && p.columns)return <div><AssetTablePreview candidateId={candidateId} owner={owner} en={en} blockId={block.id} blockRevision={block.revision} table={{schemaVersion:"research-table-preview.v1",columns:p.columns,rows:p.rows,sourceFormat:p.sourceFormat ?? "manual",totalRows:p.rows.length,truncated:false,grid:p.grid}}/>{p.caption && <p className="research-hint">{p.caption}</p>}</div>;
-  if(block.type==="link")return <a className="content-block-link" href={p.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={15}/>{p.label || p.url}</a>;
-  if(block.type==="quote")return <blockquote className="content-block-quote"><p>{p.text}</p>{p.translation && <p>{p.translation}</p>}<small>{p.note}</small></blockquote>;
-  if(block.type==="code")return <pre className="content-block-code"><code>{p.code}</code></pre>;
-  if(block.type==="chart")return <div className="content-block-placeholder"><Table2 size={16}/>{en?"Chart rendering is not available yet.":"图表渲染尚未实现。"}</div>;
-  return <div className="content-block-placeholder"><FileCode2 size={16}/>{block.excerpt || (en?"Select a file representation.":"请选择文件表示。")}</div>;
+
+function LinkCard({ url, label, kind, note, en }: { url?: string; label?: string; kind?: string; note?: string; en: boolean }) {
+  const href = safeUrl(url ?? "");
+  if (!href) return <p className="research-hint">{url || (en ? "No address recorded." : "尚未填写链接地址。")}</p>;
+  const host = new URL(href).host.replace(/^www\./, "");
+  return (
+    <div className="link-card">
+      <a href={href} target="_blank" rel="noopener noreferrer">
+        <ExternalLink size={15} aria-hidden="true" />
+        <span className="link-card-label">{label || href}</span>
+      </a>
+      <span className="link-card-host">{host}</span>
+      {kind && <span className="relation-type">{kind}</span>}
+      {note && <p>{note}</p>}
+    </div>
+  );
+}
+
+/** One line identifying a stored file; the original is always one click away. */
+function FileRow({ href, name, mediaType, bytes, en, children }: { href: string; name: string; mediaType?: string; bytes?: number; en: boolean; children?: React.ReactNode }) {
+  return (
+    <div className="file-row">
+      <FileText size={16} aria-hidden="true" />
+      <span className="file-row-name" title={name}>{name}</span>
+      <span className="file-row-meta">{[fileSize(bytes), mediaType && !/octet-stream/.test(mediaType) ? mediaType.split("/").pop() : ""].filter(Boolean).join(" · ")}</span>
+      {children}
+      <a className="content-block-file" href={href} download aria-label={(en ? "Download " : "下载 ") + name} title={en ? "Download original" : "下载原文件"}><Download size={15} /></a>
+    </div>
+  );
+}
+
+function AssetRepresentation({ block, representation, owner, en, candidateId }: { block: ContentBlock; representation: any; owner: ResearchObjectRef; en: boolean; candidateId?: string }) {
+  const id = representation.assetId, query = useQuery({ queryKey: ["research-asset", projectId(), id], queryFn: () => api<any>("/api/research-assets/" + encodeURIComponent(id)) });
+  // Text sources of a few screens open by default; documents open on request so a long node stays scannable.
+  const [open, setOpen] = useState<boolean | null>(null);
+  const asset = query.data?.asset, href = assetHref(id), name: string = asset?.originalName || representation.label || (en ? "File" : "文件");
+  if (query.isPending) return <p role="status" className="research-hint">{en ? "Loading file…" : "正在读取文件…"}</p>;
+  if (query.error) return <p role="alert">{query.error.message}<button className="button" onClick={() => void query.refetch()}>{en ? "Retry" : "重试"}</button></p>;
+  if (asset?.mediaType?.startsWith("image/")) return <ImageFigure src={href} alt={block.payload?.alt || block.title} caption={block.payload?.caption || (representation.label !== name ? representation.label : undefined)} locator={block.payload?.locator} en={en} />;
+  if (TABLE_FILE.test(name)) return <div><AssetTablePreview candidateId={candidateId} owner={owner} assetId={id} en={en} blockId={block.id} blockRevision={block.revision} representationId={representation.id} originalName={name} />{block.type === "table" && block.payload?.caption && <p className="content-block-caption">{block.payload.caption}</p>}</div>;
+  const pdf = asset?.mediaType === "application/pdf", textFile = TEXT_FILE.test(name) || /^text\//.test(asset?.mediaType ?? "");
+  if (!pdf && !textFile) return <FileRow href={href} name={name} mediaType={asset?.mediaType} bytes={asset?.sizeBytes} en={en} />;
+  const shown = open ?? (textFile && (asset?.sizeBytes ?? 0) <= 24_000);
+  return (
+    <div className="file-preview">
+      <FileRow href={href} name={name} mediaType={asset?.mediaType} bytes={asset?.sizeBytes} en={en}>
+        <button type="button" className="file-row-toggle" aria-expanded={shown} onClick={() => setOpen(!shown)}>{shown ? (en ? "Hide preview" : "收起预览") : (en ? "Preview" : "预览")}<ChevronDown size={14} /></button>
+      </FileRow>
+      {shown && (pdf
+        ? <iframe className="file-preview-pdf" title={block.title} src={href} />
+        : <AssetTextPreview assetId={id} checksum={asset.checksum} filename={name} en={en} />)}
+    </div>
+  );
+}
+
+function InlineContent({ block, en, owner, candidateId }: { block: ContentBlock; en: boolean; owner: ResearchObjectRef; candidateId?: string }) {
+  const p = block.payload ?? {};
+  if (block.type === "experimentRecord") return <ExperimentRecordBlock block={block} owner={owner} en={en} candidateId={candidateId} />;
+  if (block.type === "richText") return !String(p.body ?? "").trim()
+    ? <p className="research-hint">{en ? "Nothing written yet." : "尚未填写内容。"}</p>
+    : p.format === "plain" ? <div className="research-pre-wrap research-prose">{p.body}</div> : <div className="agent-markdown research-prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(p.body, { en }) }} />;
+  if (block.type === "metric") return <MetricView items={p.items ?? []} en={en} />;
+  if (block.type === "table" && p.columns) return <div><AssetTablePreview candidateId={candidateId} owner={owner} en={en} blockId={block.id} blockRevision={block.revision} table={{ schemaVersion: "research-table-preview.v1", columns: p.columns, rows: p.rows, sourceFormat: p.sourceFormat ?? "manual", totalRows: p.rows.length, truncated: false, grid: p.grid }} />{p.caption && <p className="content-block-caption">{p.caption}</p>}</div>;
+  if (block.type === "link") return <LinkCard url={p.url} label={p.label} kind={p.kind} note={p.note} en={en} />;
+  if (block.type === "quote") return (
+    <figure className={"content-block-quote" + (p.translation ? " has-translation" : "")}>
+      <blockquote><p>{p.text}</p></blockquote>
+      {p.translation && <div className="content-block-quote-translation"><p>{p.translation}</p></div>}
+      {p.note && <figcaption>{p.note}</figcaption>}
+    </figure>
+  );
+  if (block.type === "code") return <CodeView code={String(p.code ?? "")} language={p.language} filename={p.filename} en={en} />;
+  if (block.type === "chart") return <ChartBlock payload={p} owner={owner} en={en} />;
+  return <p className="research-hint">{block.excerpt || (en ? "No file attached to this block yet." : "这个内容块还没有附加文件。")}</p>;
 }

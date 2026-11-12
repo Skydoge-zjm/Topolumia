@@ -26,6 +26,7 @@ export function SshEnvironmentSelector({
   onSelect,
   onRefresh,
   error,
+  onConfigureDirectory,
 }: {
   overview?: SshOverview;
   project: string;
@@ -36,6 +37,7 @@ export function SshEnvironmentSelector({
   onSelect: (id: string) => void;
   onRefresh: () => void;
   error?: Error | null;
+  onConfigureDirectory?: () => void;
 }) {
   const [open, setOpen] = useState(false),
     [editor, setEditor] = useState<string | null>(null),
@@ -48,6 +50,8 @@ export function SshEnvironmentSelector({
     viewed = profiles.find((p) => p.id === selectedId),
     current = overview?.current;
   const update = () => {
+    void client.invalidateQueries({ queryKey: ["project-workspace", project] });
+    void client.invalidateQueries({ queryKey: ["collaboration-context", project] });
     void client.invalidateQueries({ queryKey: sshOverviewKey(project, actor) });
     onRefresh();
   };
@@ -118,7 +122,7 @@ export function SshEnvironmentSelector({
                 : current.source === "venv"
                   ? "venv / "
                   : ""}
-              {["default", "custom"].includes(current.name)
+              {current.name === "unselected" ? en ? "Select Python environment" : "待选择 Python 环境" : ["default", "custom"].includes(current.name)
                 ? en
                   ? "Python"
                   : "Python"
@@ -185,6 +189,7 @@ export function SshEnvironmentSelector({
               <button
                 className="button"
                 onClick={() => {
+                  if (onConfigureDirectory) { onConfigureDirectory(); return; }
                   setEditor(null);
                   setLogin(null);
                   setDirectory(viewed.id);

@@ -6,14 +6,14 @@ import type { AgentApproval } from "../../domain/agents/agent-approval.js";
 function actualPath(file: string): string {
   try { return realpathSync(file); }
   catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const parent = path.dirname(file);
     if (parent === file) throw error;
     return path.join(actualPath(parent), path.basename(file));
   }
 }
 
-export function approvalRisk(approval: Partial<AgentApproval>, workspaceRoot: string): AgentApproval["risk"] {
+export function approvalRisk(approval: Pick<Partial<AgentApproval>, "category" | "command" | "permissions" | "network" | "paths" | "fileChanges" | "cwd">, workspaceRoot: string): AgentApproval["risk"] {
   if (approval.category !== "file-change" || approval.command || approval.permissions || approval.network) return "elevated";
   if (!Array.isArray(approval.paths ?? []) || !Array.isArray(approval.fileChanges ?? [])) return "elevated";
   const paths = [...(approval.paths ?? []), ...(approval.fileChanges ?? []).map(change => change.path)];

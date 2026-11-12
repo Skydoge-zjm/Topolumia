@@ -2,34 +2,43 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import type { AppConfig } from "../../config.js";
 import { AppError } from "../../lib/errors.js";
 
 const textExtensions = new Set([".md", ".txt", ".yaml", ".yml", ".json", ".py"]);
-const ignoredNames = new Set([".git", "node_modules", ".cache", "__pycache__", ".env", ".topolumia-transfer", ".topolumia-skills", ".codex", ".claude", ".opencode"]);
+const ignoredNames = new Set([".git", "node_modules", ".cache", "__pycache__", ".env", ".topolumia", ".topolumia-transfer", ".topolumia-skills", ".codex", ".claude", ".opencode"]);
 
-export function isPathInside(parent, candidate) {
+export type IndexedFile = {
+  ref: string; source: string; kind: string; externalId: string; version: string; label: string;
+  locator: string; observedAt: string; relativePath: string; extension: string; size: number; hash: string;
+  excerpt: string | null; capabilities: { text: boolean; values: boolean; original: boolean };
+};
+type TextEntry = { version: string; text: string };
+type WalkContext = {
+  files: IndexedFile[]; skipped: { symlink: number; extension: number; tooLargeForExcerpt: number; limit: number; inaccessible: number };
+  allowedExtensions: Set<string>; projectRoot: string; textIndex: Map<string, TextEntry>;
+};
+export function isPathInside(parent: string, candidate: string) {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-async function hashFile(filePath) {
+async function hashFile(filePath: string) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest("hex");
 }
 
-function normalizeRelative(value) {
+function normalizeRelative(value: string) {
   return value.split(path.sep).join("/");
 }
 
 export class FilesystemAdapter {
-  constructor(config) {
-    this.config = config;
-    this.id = "filesystem-local";
-    this.textIndex = new Map();
-  }
+  readonly id = "filesystem-local";
+  textIndex = new Map<string, TextEntry>();
+  constructor(public config: AppConfig) {}
 
-  isResearchPath(file) {
+  isResearchPath(file: unknown) {
     if (typeof file !== "string") return false;
     const resolved = path.resolve(file);
     if ((this.config.filesystem.excludedRoots ?? []).some(root => isPathInside(root, resolved))) return false;
@@ -37,7 +46,7 @@ export class FilesystemAdapter {
       !path.relative(root, resolved).split(path.sep).some(part => ignoredNames.has(part)));
   }
 
-  async readIndexedText(source) {
+  async readIndexedText(source: Pick<IndexedFile, "extension" | "locator" | "version" | "ref">) {
     if (!textExtensions.has(source.extension)) return { text: null, totalChars: null, complete: false };
     let filePath;
     try { filePath = await realpath(source.locator); }
@@ -54,7 +63,7 @@ export class FilesystemAdapter {
     return { text, totalChars: text.length, complete: true };
   }
 
-  indexedText(source) {
+  indexedText(source: Pick<IndexedFile, "version" | "ref">) {
     const entry = this.textIndex.get(source.ref);
     return entry && entry.version === source.version ? entry.text : null;
   }
@@ -92,8 +101,8 @@ export class FilesystemAdapter {
 
   async snapshot() {
     const observedAt = new Date().toISOString();
-    const files = [];
-    const textIndex = new Map();
+    const files: IndexedFile[] = [];
+    const textIndex = new Map<string, TextEntry>();
     const skipped = { symlink: 0, extension: 0, tooLargeForExcerpt: 0, limit: 0, inaccessible: 0 };
     const allowedExtensions = new Set(this.config.filesystem.allowedExtensions.map((item) => item.toLowerCase()));
     const projectRoot = path.resolve(this.config.project.root);
@@ -134,7 +143,7 @@ export class FilesystemAdapter {
     };
   }
 
-  async #walk(directory, depth, context) {
+  async #walk(directory: string, depth: number, context: WalkContext): Promise<void> {
     if (depth > this.config.filesystem.maxDepth) return;
     if (context.files.length >= this.config.filesystem.maxFiles) {
       context.skipped.limit += 1;
@@ -187,7 +196,7 @@ export class FilesystemAdapter {
       }
       let hash = await hashFile(candidate);
       const relativePath = normalizeRelative(path.relative(context.projectRoot, candidate));
-      let excerpt = null;
+      let excerpt: string | null = null;
       if (textExtensions.has(extension)) {
         if (stat.size <= this.config.filesystem.maxTextBytes) {
           const bytes = await readFile(candidate);

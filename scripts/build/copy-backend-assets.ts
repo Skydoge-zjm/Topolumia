@@ -20,6 +20,6 @@ await copyTree(
   path.join(outputRoot, "fixtures"),
   (source) => !source.endsWith(".ts") && !source.endsWith(".ts.map"),
 );
-await copyTree(path.join(repositoryRoot, "scripts"), path.join(outputRoot, "scripts"), async (source) => (await stat(source)).isDirectory() || source.endsWith(".py") || source.endsWith(".ps1"));
+await copyTree(path.join(repositoryRoot, "scripts"), path.join(outputRoot, "scripts"), async (source) => (await stat(source)).isDirectory() || source.endsWith(".py") || source.endsWith(".ps1") || source.endsWith(".toml"));
 
 await copyTree(path.join(repositoryRoot, "src/agent/skills"), path.join(outputRoot, "src/agent/skills"));

@@ -1,13 +1,17 @@
+import type { AppConfig } from "../../config.js";
+import type { AgentProfile, AgentDriverOptions, AgentAdapterContract } from "../../domain/agents/agent-types.js";
+import type { NativeAgentConfigStore } from "./configuration/native-config-store.js";
+import type { AgentModelCatalog } from "../../domain/agents/agent-model-catalog.js";
+import type { RuntimeProbe } from "./managed-wrapper-registry.js";
 import path from "node:path";
 import { AppError } from "../../lib/errors.js";
 import { AcpProcessDriver } from "../../adapters/agents/acp/acp-agent-driver.js";
 import { ClaudeCodeAgentAdapter } from "../../adapters/agents/claude/claude-code-agent-adapter.js";
 import { CodexAgentAdapter } from "../../adapters/agents/codex/codex-agent-adapter.js";
-import { OpenCodeAgentAdapter } from "../../adapters/agents/opencode/opencode-agent-adapter.js";
-import { discoverOpenCodeModels } from "../../adapters/agents/opencode/opencode-server.js";
+import { createOpenCodeAdapter, discoverOpenCodeModels, openCodeDriver, openCodeVersionProfile, assertOpenCodeBinding } from "../../adapters/agents/opencode/opencode-runtime.js";
 import { ManagedWrapperRegistry } from "./managed-wrapper-registry.js";
 
-function publicProfile(profile, probe) {
+function publicProfile(profile: AgentProfile, probe: RuntimeProbe) {
   if (profile.model && !(profile.models ?? []).some(model => model.id === profile.model)) {
     profile = { ...profile, models: [{ id: profile.model, label: profile.model }, ...(profile.models ?? [])] };
   }
@@ -54,11 +58,14 @@ function publicProfile(profile, probe) {
 }
 
 export class AgentProfileRegistry {
-  constructor(config, { nativeConfigs = null } = {}) {
+  config: AppConfig; nativeConfigs: NativeAgentConfigStore | null;
+  profiles: Map<string, AgentProfile>; wrapperRegistry: ManagedWrapperRegistry;
+  probes: Map<string, RuntimeProbe>; modelCatalogs: Map<string, { at: number; value: Promise<AgentModelCatalog> }>;
+  constructor(config: AppConfig, { nativeConfigs = null }: { nativeConfigs?: NativeAgentConfigStore | null } = {}) {
     this.config = config;
     this.nativeConfigs = nativeConfigs;
     this.profiles = new Map((config.agentSessions?.profiles ?? []).map((profile) => [profile.id, Object.freeze({ ...(nativeConfigs?.effective(profile) ?? profile) })]));
-    this.wrapperRegistry = new ManagedWrapperRegistry({ root: config.agentSessions?.managedWrappersRoot });
+    this.wrapperRegistry = new ManagedWrapperRegistry({ root: config.agentSessions.managedWrappersRoot });
     this.probes = new Map();
     this.modelCatalogs = new Map();
   }
@@ -68,7 +75,7 @@ export class AgentProfileRegistry {
     for (const profile of this.profiles.values()) {
       const probe = await this.#probe(profile, { refresh });
       let described = profile;
-      if (profile.driver === "opencode-server" && probe.availability === "ready") {
+      if (openCodeDriver(profile.driver) && probe.availability === "ready") {
         try {
           let catalog = this.modelCatalogs.get(profile.id);
           if (!catalog || Date.now() - catalog.at > 30_000 || (refresh && Date.now() - catalog.at > 1_000)) {
@@ -88,7 +95,7 @@ export class AgentProfileRegistry {
     return result;
   }
 
-  async get(profileId) {
+  async get(profileId: string) {
     const profile = this.profiles.get(profileId);
     if (!profile) {
       throw new AppError("AGENT_PROFILE_NOT_FOUND", "没有找到指定的 Agent profile。", {
@@ -138,7 +145,9 @@ export class AgentProfileRegistry {
     return profile;
   }
 
-  async createAdapter(profileId, options = {}) {
+  async createAdapter(profileId: string, options: AgentDriverOptions = {}): Promise<AgentAdapterContract> {
+    const configured = this.profiles.get(profileId);
+    if (configured) assertOpenCodeBinding(configured, options.expectedDriver);
     const base = await this.get(profileId);
     const profile = this.nativeConfigs ? await this.nativeConfigs.snapshot(base) : base;
     const invocation = this.wrapperRegistry.invocation(profile);
@@ -155,7 +164,7 @@ export class AgentProfileRegistry {
     };
     if (profile.driver === "codex-app-server") return new CodexAgentAdapter(driverProfile, driverOptions);
     if (profile.driver === "claude-cli-stream") return new ClaudeCodeAgentAdapter(driverProfile, driverOptions);
-    if (profile.driver === "opencode-server") return new OpenCodeAgentAdapter(driverProfile, driverOptions);
+    if (openCodeDriver(profile.driver)) return createOpenCodeAdapter(driverProfile, driverOptions);
     return new AcpProcessDriver(driverProfile, driverOptions);
   }
 
@@ -166,12 +175,12 @@ export class AgentProfileRegistry {
     this.wrapperRegistry.probeCache.clear();
   }
 
-  async #probe(profile, options = {}) {
-    if (!options.refresh && this.probes.has(profile.id)) return this.probes.get(profile.id);
+  async #probe(profile: AgentProfile, options: { refresh?: boolean } = {}): Promise<RuntimeProbe> {
+    if (!options.refresh && this.probes.has(profile.id)) return this.probes.get(profile.id)!;
     let effective;
     try { effective = this.nativeConfigs ? await this.nativeConfigs.snapshot(profile) : profile; }
     catch { return { availability: "unavailable", reason: "native_configuration_invalid", runtime: { command: profile.command, available: false }, auth: { required: false, status: "unchecked" } }; }
-    const probe = await this.wrapperRegistry.probe(effective, options);
+    const probe = await this.wrapperRegistry.probe(openCodeVersionProfile(effective), options);
     this.probes.set(profile.id, probe);
     return probe;
   }

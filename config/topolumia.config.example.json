@@ -10,9 +10,7 @@
   },
   "project": {
     "id": "diffusion-sr-reproduction",
-    "name": "DiffusionSR Reproduction",
-    "root": ".",
-    "workspacesRoot": "workspaces"
+    "name": "DiffusionSR Reproduction"
   },
   "researchEnvironment": {
     "kind": "default",
@@ -24,15 +22,6 @@
     "intervalMs": 60000,
     "freshForMs": 15000,
     "foregroundThresholdMs": 30000
-  },
-  "experimentGateway": {
-    "listTtlMs": 15000,
-    "detailTtlMs": 30000,
-    "seriesTtlMs": 30000,
-    "contextTtlMs": 30000,
-    "descriptorTtlMs": 30000,
-    "maxListRuns": 300,
-    "maxCacheEntries": 256
   },
   "filesystem": {
     "roots": [
@@ -47,7 +36,9 @@
     "baseUrl": "",
     "experimentId": "",
     "experimentName": "diffusion-sr-reproduction",
-    "tokenEnv": "MLFLOW_TRACKING_TOKEN"
+    "tokenEnv": "MLFLOW_TRACKING_TOKEN",
+    "pageSize": 200,
+    "maxRuns": 1000
   },
   "wandb": {
     "baseUrl": "",
@@ -55,16 +46,14 @@
     "authScheme": "basic",
     "entity": "your-entity",
     "project": "diffusion-sr-reproduction",
-    "tokenEnv": "WANDB_API_KEY",
-    "fixtureFile": "fixtures/wandb-runs.json"
+    "tokenEnv": "WANDB_API_KEY"
   },
   "tensorboard": {
     "logdir": "",
-    "fixtureFile": "fixtures/tensorboard-runs.json",
-    "pythonCommand": "python",
-    "parserScript": "scripts/runtime/tensorboard-event-parser.py",
-    "parserTimeoutMs": 10000,
-    "maxDepth": 4
+    "pythonCommand": "python"
+  },
+  "experimentRecords": {
+    "pythonCommand": "python"
   },
   "docker": {
     "executionEnabled": false
@@ -72,7 +61,84 @@
   "agentSessions": {
     "maxSessions": 50,
     "maxEventsPerSession": 1000,
-    "historyFile": "runtime/agent-sessions/history.json",
-    "managedWrappersRoot": "managed-wrappers"
+    "profiles": [
+      {
+        "id": "codex-acp",
+        "label": "Codex",
+        "provider": "codex",
+        "driver": "codex-app-server",
+        "command": "codex",
+        "args": [
+          "app-server",
+          "--listen",
+          "stdio://"
+        ],
+        "versionArgs": [
+          "--version"
+        ],
+        "minVersion": "0.147.0",
+        "authProbe": {
+          "kind": "codex",
+          "args": [
+            "login",
+            "status"
+          ]
+        },
+        "approvalPolicy": "on-request",
+        "sandbox": "workspace-write"
+      },
+      {
+        "id": "claude-agent-acp",
+        "label": "Claude Code",
+        "provider": "claude",
+        "driver": "claude-cli-stream",
+        "command": "claude",
+        "versionArgs": [
+          "--version"
+        ],
+        "authProbe": {
+          "kind": "claude",
+          "args": [
+            "auth",
+            "status",
+            "--json"
+          ]
+        }
+      },
+      {
+        "id": "opencode-v2",
+        "label": "OpenCode 2",
+        "provider": "opencode",
+        "driver": "opencode-server-v2",
+        "command": "opencode",
+        "args": [
+          "serve"
+        ],
+        "versionArgs": [
+          "--version"
+        ],
+        "minVersion": "2.2.7",
+        "maxVersion": "3.0.0",
+        "requireVersion": true,
+        "approvalPolicy": "on-request"
+      },
+      {
+        "id": "opencode-acp",
+        "label": "OpenCode 1（旧版）",
+        "provider": "opencode",
+        "driver": "opencode-server-v1",
+        "command": "opencode",
+        "args": [
+          "serve"
+        ],
+        "versionArgs": [
+          "--version"
+        ],
+        "minVersion": "1.19.0",
+        "maxVersion": "2.0.0",
+        "requireVersion": true,
+        "approvalPolicy": "on-request"
+      }
+    ]
   }
 }

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { startMvpServer } from "../../dist/src/server.js";
-import { OpenCodeAgentAdapter } from "../../dist/src/adapters/agents/opencode/opencode-agent-adapter.js";
+import { OpenCodeAgentAdapter } from "../../dist/src/adapters/agents/opencode/v1/opencode-agent-adapter.js";
 
 // Protocol fixtures exercise the real adapters and Gateway. No model or real
 // shell command is executed and no persistent permission is saved.
@@ -22,8 +22,8 @@ test.beforeAll(async () => {
     let text = ""; for await (const chunk of req) text += chunk;
     const body = text ? JSON.parse(text) : {};
     const json = value => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
-    if (url.pathname === "/event") { res.writeHead(200, { "content-type": "text/event-stream" }); clients.add(res); res.write('data: {"type":"server.connected","properties":{}}\n\n'); req.on("close", () => clients.delete(res)); return; }
-    if (url.pathname === "/config/providers") return json({ providers: [{ id: "fixture", name: "Fixture", models: { "gpt-6-luna": { id: "gpt-6-luna", name: "Luna", status: "active", capabilities: { input: { text: true } }, variants: {} } } }], default: { fixture: "gpt-6-luna" } });
+    if (url.pathname === "/event") { res.writeHead(200, { "content-type": "text/event-stream" }); clients.add(res); res.write('data: {"type":"server.connected","properties":{}}\n\n'); res.on("close", () => clients.delete(res)); return; }
+    if (url.pathname === "/config/providers") return json({ providers: [{ id: "fixture", name: "Fixture", models: { "gpt-6-luna": { id: "gpt-6-luna", name: "Luna", status: "active", capabilities: { input: { text: true } }, variants: { low: {} } } } }], default: { fixture: "gpt-6-luna" } });
     if (url.pathname === "/config") return json({ model: "fixture/gpt-6-luna" });
     if (url.pathname === "/mcp") return json({ [body.name]: { status: "connected" } });
     if (url.pathname === "/session/status") return json(Object.fromEntries([...nativeSessions].filter(([, s]) => s.busy).map(([id]) => [id, { type: "busy" }])));
@@ -57,7 +57,7 @@ test.beforeAll(async () => {
   });
   nativeServer.listen(0, "127.0.0.1"); await once(nativeServer, "listening");
   const nativeClient = createOpencodeClient({ baseUrl: `http://127.0.0.1:${nativeServer.address().port}`, directory: process.cwd(), throwOnError: true });
-  app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false }, agentSessions: { profiles: [
+  app = await startMvpServer({ port: 0, testMode: false, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { project: { workspacesRoot: path.join(root, "workspaces") }, sourceRefresh: { enabled: false }, agentSessions: { profiles: [
     { id: "codex-approval", label: "Codex", provider: "codex", driver: "codex-app-server", command: process.execPath, args: [path.resolve("dist/fixtures/native/codex-app-server.js")], model: "gpt-6-luna" },
     { id: "codex-permissions", label: "Codex permissions", provider: "codex", driver: "codex-app-server", command: process.execPath, args: [path.resolve("dist/fixtures/native/codex-app-server.js")], model: "gpt-6-luna", env: { CODEX_FIXTURE_APPROVAL_KIND: "permissions" } },
     { id: "claude-approval", label: "Claude Code", provider: "claude", driver: "claude-cli-stream", command: process.execPath, launcherArgs: [path.resolve("dist/fixtures/native/claude-cli.js")], model: "gpt-6-luna" },

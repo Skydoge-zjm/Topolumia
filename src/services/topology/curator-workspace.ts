@@ -1,10 +1,15 @@
 import path from "node:path";
+import { appPaths } from "../../lib/app-paths.js";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { compactId } from "../../lib/hash.js";
 import { AppError } from "../../lib/errors.js";
+import type { AppConfig } from "../../config.js";
+import type { ResearchSource, SourceSnapshot } from "../../domain/research/types.js";
+import type { ResearchEvent } from "../research/research-state.js";
+import type { CuratorInput, CuratorMaterialization } from "./curator-types.js";
 import { isPathInside } from "../../adapters/sources/filesystem-adapter.js";
 
-function safeName(value) {
+function safeName(value: unknown) {
   return String(value ?? "node")
     .normalize("NFKD")
     .replace(/[^a-zA-Z0-9_-]+/g, "-")
@@ -13,62 +18,27 @@ function safeName(value) {
     .toLowerCase() || "node";
 }
 
-async function writeJson(filePath, value) {
+async function writeJson(filePath: string, value: unknown) {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function sourceEntries(snapshot) {
+function sourceEntries(snapshot: SourceSnapshot | null | undefined) {
   if (!snapshot) return [];
   return [
     ...(snapshot.git ? [snapshot.git] : []),
-    ...(snapshot.mlflow?.runs ?? []),
-    ...(snapshot.experiments?.wandb?.runs ?? []),
-    ...(snapshot.experiments?.tensorboard?.runs ?? []),
-    ...(snapshot.experiments?.simulation?.runs ?? []),
     ...(snapshot.files?.files ?? []),
-  ].filter((item) => item?.ref);
+  ].filter((item): item is ResearchSource & { ref: string } => typeof item.ref === "string");
 }
 
-function sourcePayload(source) {
-  const kind = source.kind ?? (source.ref?.startsWith("git:") ? "codeSnapshot" : "source");
-  const metricHistory = source.metricHistory && typeof source.metricHistory === "object"
-    ? Object.fromEntries(Object.entries(source.metricHistory).slice(0, 24).map(([key, points]) => [key, Array.isArray(points) ? points.slice(-48) : points]))
-    : undefined;
-  const summary = {
-    ...(source.summary ?? {}),
-    status: source.summary?.status ?? source.status,
-    metrics: source.summary?.metrics ?? source.metrics,
-    metricSummary: source.summary?.metricSummary ?? source.metricSummary,
-    metricHistory: source.summary?.metricHistory ?? metricHistory,
-    params: source.summary?.params ?? source.params,
-    tags: source.summary?.tags ?? source.tags,
-    artifacts: source.summary?.artifacts ?? (Array.isArray(source.artifacts) ? source.artifacts.slice(0, 24) : undefined),
-    capabilities: source.summary?.capabilities ?? source.capabilities,
-    head: source.summary?.head ?? source.head,
-    branch: source.summary?.branch ?? source.branch,
-    dirty: source.summary?.dirty ?? source.dirty,
-    relativePath: source.summary?.relativePath ?? source.relativePath,
-    extension: source.summary?.extension ?? source.extension,
-    size: source.summary?.size ?? source.size,
-    hash: source.summary?.hash ?? source.hash,
-  };
-  return {
-    ref: source.ref,
-    source: source.source ?? null,
-    kind,
-    label: source.label ?? source.relativePath ?? source.ref,
-    version: source.version ?? source.stateVersion ?? null,
-    summary,
-    excerpt: typeof source.excerpt === "string" ? source.excerpt.slice(0, 14_000) : null,
-    metadata: {
-      group: source.group ?? source.metadata?.group ?? null,
-      experimentId: source.experimentId ?? source.metadata?.experimentId ?? null,
-      relativePath: source.relativePath ?? source.metadata?.relativePath ?? null,
-    },
-  };
+function sourcePayload(source: ResearchSource & { ref: string }) {
+  const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const summary = { ...object(source.summary) };
+  for (const key of ["head", "branch", "dirty", "relativePath", "extension", "size", "hash"]) summary[key] ??= source[key];
+  const metadata = object(source.metadata);
+  return { ref: source.ref, source: source.source ?? null, kind: source.kind ?? (source.ref.startsWith("git:") ? "codeSnapshot" : "source"), label: source.label ?? source.relativePath ?? source.ref, version: source.version ?? source.stateVersion ?? null, summary, excerpt: typeof source.excerpt === "string" ? source.excerpt.slice(0, 14_000) : null, metadata: { relativePath: source.relativePath ?? metadata.relativePath ?? null } };
 }
 
-function compactEvent(event) {
+function compactEvent(event: ResearchEvent) {
   const payload = event?.payload ?? {};
   return {
     id: event?.id ?? null,
@@ -93,15 +63,16 @@ function compactEvent(event) {
 }
 
 export class CuratorWorkspaceService {
-  constructor(config = {}) {
-    this.root = path.resolve(config.runtimeRoot ?? path.resolve(process.cwd(), "runtime", "curator"));
+  root: string; maxEvents: number; maxSources: number; maxNodes: number; maxExcerptChars: number;
+  constructor(config: Partial<AppConfig["curator"]> = {}) {
+    this.root = path.resolve(config.runtimeRoot ?? path.join(appPaths().cacheRoot, "curator"));
     this.maxEvents = config.maxEvents ?? 120;
     this.maxSources = config.maxSources ?? 100;
     this.maxNodes = config.maxNodes ?? 180;
     this.maxExcerptChars = config.maxExcerptChars ?? 14_000;
   }
 
-  async materialize({ topology, snapshot, events = [], context = {}, outputSchema }) {
+  async materialize({ topology, snapshot, events = [], context = {}, outputSchema }: CuratorInput & { outputSchema: unknown }): Promise<CuratorMaterialization> {
     if (!topology) throw new AppError("CURATOR_TOPOLOGY_REQUIRED", "Curator 需要当前正式拓扑。", { status: 409 });
     const runId = compactId("curator_run");
     const workspacePath = path.resolve(this.root, safeName(runId));
@@ -115,10 +86,10 @@ export class CuratorWorkspaceService {
     const sourceRoot = path.join(workspacePath, "sources");
     await Promise.all([mkdir(nodeRoot, { recursive: true }), mkdir(sourceRoot, { recursive: true })]);
 
-    const graphNodes = [...(topology.nodes ?? []).map(node => ({...node,object:{kind:"node",id:node.id}})), ...(topology.groups ?? []).map(group => ({id:group.id,kind:"group",object:{kind:"group",id:group.id},label:group.core.nodeName,summary:group.core.summary??"",parentId:group.parentId,members:group.members}))].slice(0, this.maxNodes);
+    const graphNodes = [...(topology.nodes ?? []).map(node => ({...node,object:{kind:"node",id:node.id}})), ...(topology.groups ?? []).map(group => ({id:group.id,kind:"group",object:{kind:"group",id:group.id},label:group.core.nodeName,summary:group.core.summary??"",code:undefined,status:undefined,parentId:group.parentId,members:group.members}))].slice(0, this.maxNodes);
     const graphEdges = (topology.edges ?? []).filter((edge) => graphNodes.some((node) => node.id === edge.from.id && node.object.kind === edge.from.kind) && graphNodes.some((node) => node.id === edge.to.id && node.object.kind === edge.to.kind));
     const usedNames = new Set();
-    const nodeFileById = {};
+    const nodeFileById: Record<string, string> = {};
     for (const [index, node] of graphNodes.entries()) {
       let base = `${String(index + 1).padStart(3, "0")}-${safeName(node.id)}`;
       while (usedNames.has(base)) base = `${base}-${index + 1}`;
@@ -135,7 +106,7 @@ export class CuratorWorkspaceService {
 
     const allSources = sourceEntries(snapshot).map(sourcePayload).slice(0, this.maxSources);
     const sourceFiles = [];
-    const sourceFileByRef = {};
+    const sourceFileByRef: Record<string, string> = {};
     for (const [index, source] of allSources.entries()) {
       const relative = `sources/${String(index + 1).padStart(3, "0")}-${safeName(source.kind)}-${safeName(source.ref).slice(0, 40)}.json`;
       sourceFiles.push({ ref: source.ref, kind: source.kind, label: source.label, file: relative });

@@ -8,7 +8,7 @@
 npm ci
 ```
 
-没有本机配置时，复制 [配置样例](../../config/topolumia.config.example.json) 为 config/topolumia.config.json。不要覆盖已有文件；保留用户选择的主机、项目根与端口。
+可以直接使用默认配置启动；需要本机配置时，将[配置样例](../../config/topolumia.config.example.json)复制为 ~/.topolumia/topolumia.config.json。所有平台使用同一用户根目录，源码内 config/topolumia.config.json 不自动加载。不要覆盖已有配置；保留用户选择的主机、项目根与端口。
 
 ```powershell
 npm run build
@@ -37,7 +37,7 @@ npm run dev:frontend
 
 从相关模块入口进入代码，只读取必要背景。小修复直接进行；长任务才在 work/active 创建 plan.md，保存目标、关键进度与下一步。界面沿用共享组件与普通字体。
 
-验证按 [测试指南](testing.md) 选择。构建是转译与产物生成，不代表所有后端代码经过完整类型检查。不得通过修改真实研究数据来制造回归测试前置条件。
+验证按 [测试指南](testing.md) 选择。后端 typecheck 对全部 src/**/*.ts 执行 strict 检查；build:backend 先通过该检查，再生成源码、测试和脚本产物。不得通过修改真实研究数据来制造回归测试前置条件。
 
 ## 本机进程
 

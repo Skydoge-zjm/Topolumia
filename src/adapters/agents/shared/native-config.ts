@@ -1,23 +1,25 @@
 import path from "node:path";
 import { mkdir, writeFile, rename } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import type { AgentProfile, NativeConfig } from "../../../domain/agents/agent-types.js";
 
-export function mergeNativeConfig(base, override) {
-  if (!base || typeof base !== "object" || Array.isArray(base)) base = {};
-  const result = { ...base };
+export function mergeNativeConfig(base: unknown, override: Record<string, unknown> | undefined): NativeConfig {
+  const object = base && typeof base === "object" && !Array.isArray(base) ? base as Record<string, unknown> : {};
+  const result: Record<string, unknown> = { ...object };
   for (const [key, value] of Object.entries(override ?? {}))
     result[key] =
       value && typeof value === "object" && !Array.isArray(value)
-        ? mergeNativeConfig(base[key], value)
+        ? mergeNativeConfig(object[key], value as Record<string, unknown>)
         : value;
   return result;
 }
-export async function claudeSettingsFile(profile, sessionAllows) {
+export async function claudeSettingsFile(profile: AgentProfile, sessionAllows: Set<string>) {
   if (!profile.nativeConfigFile) return null;
   if (!sessionAllows.size) return profile.nativeConfigFile;
   const config = profile.nativeConfig ?? {};
-  const allow = Array.isArray(config.permissions?.allow)
-    ? config.permissions.allow
+  const permissions = Array.isArray(config.permissions) ? undefined : config.permissions;
+  const allow = Array.isArray(permissions?.allow)
+    ? permissions.allow
     : [];
   const settings = mergeNativeConfig(config, {
     permissions: { allow: [...new Set([...allow, ...sessionAllows])] },

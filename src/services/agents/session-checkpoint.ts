@@ -1,8 +1,9 @@
+import type { StoredAgentSession, AgentRuntimeSession } from "../../domain/agents/agent-types.js";
 import { restoreConversationEvents } from "./agent-conversation-history.js";
 import { traceFromConversation } from "../../domain/agents/agent-trace.js";
-const clone = (value) =>
-  value === undefined ? undefined : structuredClone(value);
-export function sessionCheckpoint(session) {
+const clone = <T>(value: T): T =>
+  structuredClone(value);
+export function sessionCheckpoint(session: StoredAgentSession | AgentRuntimeSession) {
   const conversationEvents =
     session.conversationEvents ?? restoreConversationEvents(session);
   const latestMessageCursor =
@@ -38,6 +39,7 @@ export function sessionCheckpoint(session) {
     resumedFrom: session.resumedFrom ?? null,
     status: session.status,
     nativeSessionId: session.nativeSessionId,
+    nativeDriver: session.nativeDriver,
     sync: clone(session.sync ?? null),
     nativeSnapshot: session.nativeSnapshot ?? null,
     usage: clone(session.usage ?? null),
@@ -55,7 +57,7 @@ export function sessionCheckpoint(session) {
     pendingApprovals: Array.isArray(session.pendingApprovals)
       ? clone(session.pendingApprovals)
       : [...(session.pendingApprovals?.values?.() ?? [])].map(clone),
-    lastCursor: Math.max(session.lastCursor ?? 0, session.cursor ?? 0),
+    lastCursor: Math.max(session.lastCursor ?? 0, "cursor" in session ? session.cursor : 0),
     events:
       session.traceFormat === "final.v1"
         ? (session.events ?? [])

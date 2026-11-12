@@ -1,4 +1,7 @@
 import { open } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { StoredAgentSession } from "../../domain/agents/agent-types.js";
+import type { AgentAttachmentStore } from "./agent-attachment-service.js";
 import { pipeline } from "node:stream/promises";
 import { AppError } from "../../lib/errors.js";
 import { actorKey } from "../../domain/agents/agent-conversation.js";
@@ -30,13 +33,13 @@ export function imageType(header: Buffer): string | undefined {
 
 /** The caller selects a recorded invocation, never an arbitrary filesystem path. */
 export async function streamAgentImage(
-  response,
-  snapshot,
+  response: ServerResponse,
+  snapshot: Pick<StoredAgentSession, "id" | "conversationEvents" | "events">,
   eventId: string,
   cwd: string,
-  mediaStore,
+  mediaStore: AgentAttachmentStore,
   variant = "original",
-  request?,
+  request?: IncomingMessage,
 ) {
   const events = [
     ...(snapshot.conversationEvents ?? []),
@@ -74,11 +77,11 @@ export async function streamAgentImage(
       "该图像没有可读取的本地文件。",
       { status: 404 },
     );
-  const captured = await mediaStore.snapshot(snapshot.id, event, cwd);
+  const captured = await mediaStore.snapshot(snapshot.id, event!, cwd);
   await streamStoredAgentImage(request, response, await mediaStore.content(snapshot.id, captured.id, variant));
 }
 
-export async function streamStoredAgentImage(request, response, media) {
+export async function streamStoredAgentImage(request: IncomingMessage | undefined, response: ServerResponse, media: Awaited<ReturnType<AgentAttachmentStore["content"]>>) {
   const tag = `"${media.checksum}"`;
   const headers = { "etag": tag, "cache-control": "private, no-cache", "x-content-type-options": "nosniff" };
   if (request?.headers?.["if-none-match"] === tag) { response.writeHead(304, headers); response.end(); return; }

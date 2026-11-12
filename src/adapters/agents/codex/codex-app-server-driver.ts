@@ -1,3 +1,6 @@
+import type { AgentProfile, AgentDriverOptions, AgentStartInput, AgentPromptInput, AgentTurnResult } from "../../../domain/agents/agent-types.js";
+import { codexMessageSchema, type CodexMessage, type CodexItem, type CodexParams, type CodexTurn } from "../shared/native-protocol.js";
+import type { ProcessCloseDetail } from "../shared/jsonl-process.js";
 import { AppError } from "../../../lib/errors.js";
 import { codexMcpConfig } from "../../../agent/research-mcp-binding.js";
 import { codexReasoningParts } from "./codex-reasoning.js";
@@ -9,25 +12,25 @@ import { mergeNativeConfig } from "../shared/native-config.js";
 
 const CODEX_CLIENT_VERSION = "0.1.0";
 
-function isCodexToolItem(item) {
+function isCodexToolItem(item: CodexItem) {
   const type = String(item?.type ?? "").toLowerCase();
   return ["commandexecution", "filechange", "mcptoolcall", "dynamictoolcall", "collabagenttoolcall", "subagentactivity", "websearch", "imageview", "imagegeneration"].includes(type);
 }
 
-function codexToolStatus(value) {
+function codexToolStatus(value: unknown) {
   const status = String(value ?? "").toLowerCase();
   if (["failed", "declined", "error"].includes(status)) return "failed";
   return "completed";
 }
 
-async function readCodexHistory(processRef, threadId) {
-  const thread = await processRef.request("thread/read", { threadId }, 60_000);
-  const readPages = async (method, options) => {
-    const data = [];
-    const cursors = new Set();
-    let cursor;
+async function readCodexHistory(processRef: JsonlProcess, threadId: string) {
+  const thread = await processRef.request<{ thread?: { id?: string; sessionId?: string } }>("thread/read", { threadId }, 60_000);
+  const readPages = async <T>(method: string, options: Record<string, unknown>) => {
+    const data: T[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | null | undefined;
     do {
-      const page = await processRef.request(method, { threadId, sortDirection: "asc", ...options, ...(cursor ? { cursor } : {}) }, 60_000);
+      const page = await processRef.request<{ data?: T[]; nextCursor?: string | null }>(method, { threadId, sortDirection: "asc", ...options, ...(cursor ? { cursor } : {}) }, 60_000);
       data.push(...(page.data ?? []));
       cursor = page.nextCursor;
       if (cursor && cursors.has(cursor)) throw errorFromMessage("CODEX_HISTORY_CURSOR_REPEATED", "Codex 历史分页游标重复，未完成同步。");
@@ -36,13 +39,18 @@ async function readCodexHistory(processRef, threadId) {
     } while (cursor);
     return { data, nextCursor: null };
   };
-  const turns = await readPages("thread/turns/list", { limit: 100, itemsView: "full" });
-  const items = await readPages("thread/items/list", { limit: 1_000 });
+  const turns = await readPages<CodexTurn>("thread/turns/list", { limit: 100, itemsView: "full" });
+  const items = await readPages<{ turnId?: string; item?: CodexItem }>("thread/items/list", { limit: 1_000 });
   return { thread, turns, items, syncedAt: new Date().toISOString() };
 }
 
 export class CodexAppServerDriver extends AgentDriver {
-  constructor(profile, options = {}) {
+  process!: JsonlProcess;
+  pendingApprovals: Map<string, { id: string | number; method: string; params: CodexParams; results: ReturnType<typeof codexApproval>["results"] }>;
+  itemDetails: Map<string, CodexItem>; itemTypes: Map<string, string | undefined>;
+  turnWait: { turnId: string; resolve: (result: AgentTurnResult) => void; reject: (error: unknown) => void; cancelTimer?: ReturnType<typeof setTimeout>; interruptSent?: boolean } | null;
+  cancelRequested: boolean; nativeTurns: Map<string, string>; pendingTurnEvents: CodexMessage[]; nativeTurnId: string | null = null;
+  constructor(profile: AgentProfile, options: AgentDriverOptions = {}) {
     super(profile, options);
     this.pendingApprovals = new Map();
     this.itemDetails = new Map();
@@ -53,7 +61,7 @@ export class CodexAppServerDriver extends AgentDriver {
     this.pendingTurnEvents = [];
   }
 
-  async start({ cwd, developerInstructions = null, resumeThreadId = null, researchMcp = null } = {}) {
+  async start({ cwd, developerInstructions = null, resumeThreadId = null, researchMcp = null }: AgentStartInput = {}) {
     this.cwd = cwd ?? process.cwd();
     this.process = new JsonlProcess({
       command: this.profile.command,
@@ -66,23 +74,23 @@ export class CodexAppServerDriver extends AgentDriver {
       onClose: (detail) => this.#onClose(detail),
     });
     await this.process.start();
-    const initialized = await this.process.request("initialize", {
+    const initialized = await this.process.request<{ userAgent?: string }>("initialize", {
       clientInfo: { name: "research-workbench", title: "Topolumia", version: CODEX_CLIENT_VERSION },
       capabilities: { experimentalApi: false },
     }, 60_000);
     this.process.notify("initialized", {});
     const config = mergeNativeConfig(this.profile.nativeConfig, { shell_environment_policy: { set: this.environment } });
-    if (researchMcp) config.mcp_servers = { ...config.mcp_servers, [researchMcp.name]: codexMcpConfig(researchMcp) };
+    if (researchMcp) config.mcp_servers = { ...config.mcp_servers, [researchMcp.name]: codexMcpConfig(researchMcp, config.mcp_servers?.[researchMcp.name]) };
     const policy = this.profile.nativeConfig ? {
       ...(this.profile.approvalPolicy !== undefined ? { approvalPolicy: this.profile.approvalPolicy } : {}),
       ...(!config.default_permissions && this.profile.sandbox !== undefined ? { sandbox: this.profile.sandbox } : {}),
     } : { approvalPolicy: this.profile.approvalPolicy ?? "on-request", sandbox: this.profile.sandbox ?? "workspace-write" };
     const instructions = [this.profile.nativeConfig?.developer_instructions, developerInstructions].filter(Boolean).join("\n\n");
     const started = resumeThreadId
-      ? await this.process.request("thread/resume", { threadId: resumeThreadId, cwd: this.cwd,
+      ? await this.process.request<{ thread?: { id?: string; sessionId?: string } }>("thread/resume", { threadId: resumeThreadId, cwd: this.cwd,
         model: this.profile.model ?? null, ...policy,
         ...(config ? { config } : {}), ...(instructions ? { developerInstructions: instructions } : {}) }, 60_000)
-      : await this.process.request("thread/start", {
+      : await this.process.request<{ thread?: { id?: string; sessionId?: string } }>("thread/start", {
         cwd: this.cwd,
         model: this.profile.model ?? null,
         ...policy,
@@ -122,7 +130,7 @@ export class CodexAppServerDriver extends AgentDriver {
     return readCodexHistory(this.process, this.nativeSessionId);
   }
 
-  async prompt({ turnId, content, model, reasoningEffort }) {
+  async prompt({ turnId, content, model, reasoningEffort }: AgentPromptInput): Promise<AgentTurnResult> {
     if (!this.process || this.process.closed || !this.nativeSessionId) {
       throw errorFromMessage("CODEX_SESSION_NOT_STARTED", "Codex app-server session 尚未启动。", {}, 409);
     }
@@ -131,12 +139,12 @@ export class CodexAppServerDriver extends AgentDriver {
     this.cancelRequested = false;
     this.nativeTurnId = null;
     this.pendingTurnEvents = [];
-    const completion = new Promise((resolve, reject) => {
+    const completion = new Promise<AgentTurnResult>((resolve, reject) => {
       this.turnWait = { turnId, resolve, reject };
     });
     void completion.catch(() => {});
     try {
-      const started = await this.process.request("turn/start", {
+      const started = await this.process.request<{ turn?: CodexTurn }>("turn/start", {
         threadId: this.nativeSessionId,
         input: [
           ...(this.contextText(content) ? [{ type: "text", text: this.contextText(content) }] : []),
@@ -183,17 +191,17 @@ export class CodexAppServerDriver extends AgentDriver {
     }, 5_000).catch(forceStop);
   }
 
-  async resolvePermission(requestId, optionId, cancelled = false, selection = {}) {
+  async resolvePermission(requestId: string, optionId: string | null, cancelled = false, selection: { permissionKeys?: string[] } = {}) {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) throw new AppError("AGENT_APPROVAL_NOT_FOUND", "没有找到 Codex approval 请求。", { status: 404 });
     const selectedId = cancelled ? pending.results.has("cancel") ? "cancel" : "reject_once" : optionId;
-    const mapped = pending.results.get(selectedId);
+    const mapped = pending.results.get(selectedId ?? "");
     if (!mapped) throw new AppError("AGENT_APPROVAL_OPTION_INVALID", "Codex 未提供该审批选项。", { status: 422 });
-    let result = structuredClone(mapped);
-    if (pending.method === "item/permissions/requestApproval" && selectedId.startsWith("allow_") && selection.permissionKeys !== undefined) {
+    const result = structuredClone(mapped);
+    if (pending.method === "item/permissions/requestApproval" && selectedId?.startsWith("allow_") && selection.permissionKeys !== undefined) {
       const keys = selection.permissionKeys;
       if (!Array.isArray(keys) || !keys.length || keys.some(key => !["network", "fileSystem"].includes(key) || pending.params.permissions?.[key] == null)) throw new AppError("AGENT_APPROVAL_PERMISSION_INVALID", "所选权限不是本次请求的子集。", { status: 422 });
-      result.permissions = Object.fromEntries(keys.map(key => [key, pending.params.permissions[key]]));
+      result.permissions = Object.fromEntries(keys.map(key => [key, pending.params.permissions![key]]));
     }
     this.process.send({ id: pending.id, result });
     this.pendingApprovals.delete(requestId);
@@ -207,7 +215,13 @@ export class CodexAppServerDriver extends AgentDriver {
     if (this.turnWait) this.#settleTurn({ stopReason: "cancelled" });
   }
 
-  #onMessage(message) {
+  #onMessage(value: unknown) {
+    const parsed = codexMessageSchema.safeParse(value);
+    if (!parsed.success) {
+      this.emit("provider.event", { kind: "protocol-error", detail: parsed.error.message });
+      return;
+    }
+    const message = parsed.data;
     if (message?.method && message?.id !== undefined && message?.id !== null) {
       this.#onServerRequest(message);
       return;
@@ -229,7 +243,7 @@ export class CodexAppServerDriver extends AgentDriver {
     }
     const localTurnId = nativeTurnId ? this.nativeTurns.get(nativeTurnId) : this.activeTurnId;
     if (nativeTurnId && (!this.turnWait || localTurnId !== this.turnWait.turnId)) return;
-    const emit = (type, payload = {}) => this.emit(type, { nativeTurnId: nativeTurnId ?? this.nativeTurnId, ...payload }, localTurnId);
+    const emit = (type: string, payload: Record<string, unknown> = {}) => this.emit(type, { nativeTurnId: nativeTurnId ?? this.nativeTurnId, ...payload }, localTurnId);
     if (method === "item/agentMessage/delta") {
       emit("assistant.message.delta", { messageId: params.itemId ?? null, nativeMessageId: params.itemId, blockId: params.itemId, delta: params.delta ?? "" });
       return;
@@ -258,6 +272,7 @@ export class CodexAppServerDriver extends AgentDriver {
     }
     if (method === "item/started") {
       const item = params.item ?? {};
+      if (!item.id) return;
       this.itemDetails.set(item.id, item);
       this.itemTypes.set(item.id, item.type);
       if (isCodexToolItem(item)) {
@@ -267,6 +282,7 @@ export class CodexAppServerDriver extends AgentDriver {
     }
     if (method === "item/completed") {
       const item = params.item ?? {};
+      if (!item.id) return;
       this.itemDetails.set(item.id, item);
       this.itemTypes.set(item.id, item.type);
       if (String(item.type ?? "").toLowerCase() === "agentmessage") {
@@ -319,7 +335,8 @@ export class CodexAppServerDriver extends AgentDriver {
     emit("provider.event", { method, params });
   }
 
-  #onServerRequest(message) {
+  #onServerRequest(message: CodexMessage) {
+    if (message.id == null || !message.method) return;
     const nativeTurnId = message.params?.turnId;
     if (!this.turnWait || message.params?.threadId && message.params.threadId !== this.nativeSessionId
       || nativeTurnId && this.nativeTurnId && nativeTurnId !== this.nativeTurnId
@@ -337,19 +354,19 @@ export class CodexAppServerDriver extends AgentDriver {
       return;
     }
     if ([...this.pendingApprovals.values()].some(pending => pending.id === message.id)) return;
-    const { payload, results } = codexApproval(message, this.itemDetails.get(message.params?.itemId));
+    const { payload, results } = codexApproval(message, this.itemDetails.get(message.params?.itemId ?? ""));
     this.pendingApprovals.set(payload.requestId, { id: message.id, method: message.method, params: message.params ?? {}, results });
-    this.emit("approval.requested", payload);
+    this.emit("approval.requested", { ...payload });
   }
 
-  #onClose(detail) {
-    this.emit("driver.process.closed", detail);
+  #onClose(detail: ProcessCloseDetail) {
+    this.emit("driver.process.closed", { ...detail });
     if (this.turnWait && !detail.expected) {
       this.#settleTurn(null, errorFromMessage("AGENT_PROCESS_CLOSED", "Codex app-server 进程已结束。", detail));
     }
   }
 
-  #settleTurn(result = null, error = null) {
+  #settleTurn(result: AgentTurnResult | null = null, error: unknown = null) {
     const wait = this.turnWait;
     if (!wait) return;
     this.turnWait = null;
@@ -362,14 +379,15 @@ export class CodexAppServerDriver extends AgentDriver {
 }
 
 export class CodexAppServerReader {
-  constructor(profile, options = {}) {
+  profile: AgentProfile; environment: Record<string, string>; requestTimeoutMs: number; process: JsonlProcess | null;
+  constructor(profile: AgentProfile, options: AgentDriverOptions = {}) {
     this.profile = profile;
     this.environment = { ...(profile.env ?? {}), ...(options.env ?? {}) };
     this.requestTimeoutMs = options.requestTimeoutMs ?? 60_000;
     this.process = null;
   }
 
-  async readThread({ threadId } = {}) {
+  async readThread({ threadId }: { threadId?: string | null } = {}) {
     if (!threadId) throw errorFromMessage("CODEX_THREAD_REQUIRED", "需要提供 Codex native thread id。", {}, 422);
     const processRef = new JsonlProcess({
       command: this.profile.command,
