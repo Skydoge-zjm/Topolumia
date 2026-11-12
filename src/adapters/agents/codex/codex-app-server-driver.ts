@@ -80,7 +80,7 @@ export class CodexAppServerDriver extends AgentDriver {
     }, 60_000);
     this.process.notify("initialized", {});
     const config = mergeNativeConfig(this.profile.nativeConfig, { shell_environment_policy: { set: this.environment } });
-    if (researchMcp) config.mcp_servers = { ...config.mcp_servers, [researchMcp.name]: codexMcpConfig(researchMcp) };
+    if (researchMcp) config.mcp_servers = { ...config.mcp_servers, [researchMcp.name]: codexMcpConfig(researchMcp, config.mcp_servers?.[researchMcp.name]) };
     const policy = this.profile.nativeConfig ? {
       ...(this.profile.approvalPolicy !== undefined ? { approvalPolicy: this.profile.approvalPolicy } : {}),
       ...(!config.default_permissions && this.profile.sandbox !== undefined ? { sandbox: this.profile.sandbox } : {}),

@@ -54,8 +54,16 @@ export function withoutResearchCredentials(environment = process.env) {
     ),
   );
 }
-export function codexMcpConfig(binding: ResearchMcpBinding) {
+export function codexMcpConfig(binding: ResearchMcpBinding, settings: Record<string, unknown> = {}) {
+  const toolSettings = Object.fromEntries(
+    ["omit_tools_from", "tool_input_schema_max_bytes", "enabled_tools", "disabled_tools"]
+      .filter(key => settings[key] !== undefined)
+      .map(key => [key, settings[key]]),
+  );
   return {
+    omit_tools_from: ["direct"],
+    tool_input_schema_max_bytes: 5000,
+    ...toolSettings,
     command: binding.command,
     args: binding.args,
     env: binding.env,

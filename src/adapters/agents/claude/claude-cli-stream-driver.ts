@@ -102,7 +102,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
       command: this.profile.command,
       args,
       cwd: this.cwd,
-      env: { ...this.environment, ...(this.researchMcp ? { ENABLE_TOOL_SEARCH: "false" } : {}) },
+      env: this.environment,
       label: this.profile.label,
       requestTimeoutMs: this.requestTimeoutMs,
       onMessage: (message) => this.#onMessage(message, processRef),
