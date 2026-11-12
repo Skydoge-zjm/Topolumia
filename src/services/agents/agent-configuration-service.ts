@@ -4,9 +4,10 @@ import type { NativeAgentConfigStore } from "./configuration/native-config-store
 import type { UserSettingsStore } from "../platform/user-settings-store.js";
 import type { CollaborationStore } from "../platform/collaboration-store.js";
 import type { ResearchActor } from "../../domain/research/types.js";
-import type { OpenCodeCatalog } from "../../adapters/agents/opencode/opencode-server.js";
+import type { AgentModelCatalog } from "../../domain/agents/agent-model-catalog.js";
+import { resolveCatalogModel } from "../../domain/agents/agent-model-catalog.js";
 interface CheckScope { actor?: ResearchActor; collaboration?: Pick<CollaborationStore, "issueAgentCredential" | "revokeAgentCredential">; baseUrl?: string }
-interface CheckResult { status: string; detail: string; checkedAt?: string | null; recovery: string | null; installed?: boolean | null; version?: string | null; authStatus?: string; resolvedModel?: string | null; catalog?: OpenCodeCatalog; toolCount?: number }
+interface CheckResult { status: string; detail: string; checkedAt?: string | null; recovery: string | null; installed?: boolean | null; version?: string | null; authStatus?: string; resolvedModel?: string | null; catalog?: AgentModelCatalog; toolCount?: number }
 import { randomUUID } from "node:crypto";
 import * as z from "zod/v4";
 import { buildResearchMcpBinding } from "../../agent/research-mcp-binding.js";
@@ -14,9 +15,9 @@ import { verifyResearchMcp } from "../../mcp/research-probe.js";
 import { AppError } from "../../lib/errors.js";
 import {
   discoverOpenCodeModels,
-  resolveOpenCodeModelId,
-} from "../../adapters/agents/opencode/opencode-server.js";
-import { nativeFormats, parseNativeConfig, serializeNativeConfig } from "./configuration/native-format.js";
+  openCodeDriver, openCodeVersionProfile,
+} from "../../adapters/agents/opencode/opencode-runtime.js";
+import { nativeFormats, nativeConfigKey, parseNativeConfig, serializeNativeConfig } from "./configuration/native-format.js";
 
 const modelPattern = /^[\p{L}\p{N}][\p{L}\p{N}._:/@+~-]{0,159}$/u;
 const configurationSchema = z
@@ -41,7 +42,7 @@ interface ConfigurationOptions { config: AppConfig; profileRegistry: AgentProfil
 export class AgentConfigurationService {
   config!: AppConfig; profileRegistry!: AgentProfileRegistry; userSettings!: UserSettingsStore;
   applySettings!: ConfigurationOptions["applySettings"]; discoverModels!: typeof discoverOpenCodeModels; nativeConfigs!: NativeAgentConfigStore | null;
-  results: Map<string, CheckResult>; catalogs: Map<string, OpenCodeCatalog>; inFlight: Map<string, Promise<void>>;
+  results: Map<string, CheckResult>; catalogs: Map<string, AgentModelCatalog>; inFlight: Map<string, Promise<void>>;
   generation: number; configurationQueue: Promise<unknown>;
   constructor({
     config,
@@ -102,7 +103,7 @@ export class AgentConfigurationService {
           version: null,
           authStatus: "unchecked",
           resolvedModel: null,
-          nativeConfiguration: this.nativeConfigs && nativeFormats[profile.provider] ? { available: true, provider: profile.provider, filename: nativeFormats[profile.provider].filename } : null,
+          nativeConfiguration: this.nativeConfigs && nativeFormats[nativeConfigKey(profile)] ? { available: true, provider: profile.provider, configKey: nativeConfigKey(profile), filename: nativeFormats[nativeConfigKey(profile)].filename } : null,
           ...unchecked,
           ...this.results.get(profile.id),
         };
@@ -136,22 +137,22 @@ export class AgentConfigurationService {
     const update = async () => {
       const profile = this.profile(id);
       let model = parsed.data.model;
-      if (model && profile.driver === "opencode-server") {
+      if (model && openCodeDriver(profile.driver)) {
         const configuredProfile = this.nativeConfigs ? await this.nativeConfigs.snapshot(profile) : profile;
         const catalog = await this.discoverModels(
           { ...configuredProfile, model: undefined },
           this.config.project.root,
         );
-        model = resolveOpenCodeModelId(catalog.models, model);
+        model = resolveCatalogModel(catalog.models, model);
       }
       const agent = {
         ...(model ? { profileModels: { [id]: model } } : {}),
         ...(parsed.data.makeDefault ? { defaultProfileId: id } : {}),
       };
       if (model && this.nativeConfigs) {
-        const doc = await this.nativeConfigs.read(profile.provider);
+        const doc = await this.nativeConfigs.read(nativeConfigKey(profile));
         if (doc.error) throw doc.error;
-        await this.nativeConfigs!.save(profile.provider, serializeNativeConfig(profile.provider, { ...doc.parsed, model }), doc.revision);
+        await this.nativeConfigs!.save(nativeConfigKey(profile), serializeNativeConfig(nativeConfigKey(profile), { ...doc.parsed, model }), doc.revision);
       }
       const updated = await this.userSettings.update({ agent });
       await this.applySettings(updated.settings);
@@ -163,16 +164,16 @@ export class AgentConfigurationService {
     return pending;
   }
 
-  configurationDocument(id: string) { return this.nativeConfigs!.document(this.profile(id).provider); }
+  configurationDocument(id: string) { return this.nativeConfigs!.document(nativeConfigKey(this.profile(id))); }
   async saveConfigurationDocument(id: string, input: unknown) {
     const parsed = z.strictObject({ content: z.string().max(524288), expectedRevision: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).safeParse(input);
     if (!parsed.success) throw new AppError("AGENT_NATIVE_CONFIG_INVALID", "请提供配置正文和当前修订。", { status: 422 });
     const operation = this.configurationQueue.then(async () => {
       const profile = this.profile(id);
-      parseNativeConfig(profile.provider, parsed.data.content);
-      const doc = await this.nativeConfigs!.save(profile.provider, parsed.data.content, parsed.data.expectedRevision);
+      parseNativeConfig(nativeConfigKey(profile), parsed.data.content);
+      const doc = await this.nativeConfigs!.save(nativeConfigKey(profile), parsed.data.content, parsed.data.expectedRevision);
       this.profileRegistry.applyUserSettings();
-      this.invalidate([...this.profileRegistry.profiles.values()].filter(item => item.provider === profile.provider).map(item => item.id));
+      this.invalidate([...this.profileRegistry.profiles.values()].filter(item => nativeConfigKey(item) === nativeConfigKey(profile)).map(item => item.id));
       return doc;
     });
     this.configurationQueue = operation.catch(() => {}); return operation;
@@ -228,7 +229,7 @@ export class AgentConfigurationService {
       }
       const original = this.profile(id);
       const profile = this.nativeConfigs ? await this.nativeConfigs.snapshot(original) : original;
-      const probe = await this.profileRegistry.wrapperRegistry.probe(profile, {
+      const probe = await this.profileRegistry.wrapperRegistry.probe(openCodeVersionProfile(profile), {
         refresh: true,
       });
       const result = {
@@ -253,13 +254,13 @@ export class AgentConfigurationService {
               ? "在本机完成该 Agent 的登录或 Provider 认证后重新检查。"
               : "检查该 Agent 的安装、版本和本机配置。",
         };
-      if (profile.driver === "opencode-server") {
+      if (openCodeDriver(profile.driver)) {
         const catalog = await this.discoverModels(
           { ...profile, model: undefined },
           this.config.project.root,
         );
         const resolvedModel = profile.model
-          ? resolveOpenCodeModelId(catalog.models, profile.model)
+          ? resolveCatalogModel(catalog.models, profile.model)
           : catalog.model;
         if (!resolvedModel) throw new Error("OpenCode 尚未配置可用模型。");
         return {

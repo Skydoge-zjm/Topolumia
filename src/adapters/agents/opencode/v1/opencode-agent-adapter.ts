@@ -2,13 +2,13 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Event, OpencodeClient, TextPartInput, FilePartInput, PermissionRuleset } from "@opencode-ai/sdk/v2/client";
-import type { AgentStartInput, AgentPromptInput } from "../../../domain/agents/agent-types.js";
-import { promptImages } from "../shared/prompt-images.js";
-import { AgentAdapter } from "../shared/agent-adapter.js";
+import type { AgentStartInput, AgentPromptInput } from "../../../../domain/agents/agent-types.js";
+import { promptImages } from "../../shared/prompt-images.js";
+import { AgentAdapter } from "../../shared/agent-adapter.js";
 import { OpenCodeServer, readOpenCodeCatalog, resolveOpenCodeModelId, type OpenCodeCatalog, type OpenCodeProfile } from "./opencode-server.js";
 import { OpenCodeTrace, type OpenCodeEvent } from "./opencode-trace.js";
-import { AppError } from "../../../lib/errors.js";
-import { compactId } from "../../../lib/hash.js";
+import { AppError } from "../../../../lib/errors.js";
+import { compactId } from "../../../../lib/hash.js";
 
 interface TurnResult { stopReason: "end_turn" | "cancelled" | "incomplete" }
 interface PendingTurn {

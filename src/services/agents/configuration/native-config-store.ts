@@ -18,6 +18,7 @@ import {
   parseNativeConfig,
   serializeNativeConfig,
   nativeProfile,
+  nativeConfigKey,
 } from "./native-format.js";
 
 const digest = (content: string) => createHash("sha256").update(content).digest("hex");
@@ -76,7 +77,7 @@ export class NativeAgentConfigStore {
   }
   async initialize(profiles: AgentProfile[]) {
     for (const provider of Object.keys(nativeFormats)) {
-      const profile = profiles.find((profile) => profile.provider === provider);
+      const profile = profiles.find((profile) => nativeConfigKey(profile) === provider);
       if (!profile) continue;
       const file = this.file(provider);
       try {
@@ -135,7 +136,7 @@ export class NativeAgentConfigStore {
             path.join(
               bundledRoot,
               "src/services/agents/configuration/schemas",
-              `${provider}.json`,
+              nativeFormats[provider].schemaFile ?? `${provider}.json`,
             ),
             "utf8",
           ),
@@ -143,7 +144,8 @@ export class NativeAgentConfigStore {
       );
     return {
       schemaVersion: "agent-native-config.v1",
-      provider,
+      provider: provider === "opencode-v2" ? "opencode" : provider,
+      configKey: provider,
       ...nativeFormats[provider],
       path: entry.file,
       content: entry.content,
@@ -157,16 +159,16 @@ export class NativeAgentConfigStore {
     };
   }
   effective(profile: AgentProfile) {
-    const entry = this.entries.get(profile.provider);
+    const entry = this.entries.get(nativeConfigKey(profile));
     return entry?.parsed ? nativeProfile(profile, entry.parsed!) : profile;
   }
   async snapshot(profile: AgentProfile) {
-    if (!nativeFormats[profile.provider]) return profile;
-    const entry = await this.read(profile.provider);
+    if (!nativeFormats[nativeConfigKey(profile)]) return profile;
+    const entry = await this.read(nativeConfigKey(profile));
     if (entry.error) throw entry.error;
     const file = path.join(
       path.dirname(entry.file),
-      `snapshots-${digest(entry.content)}-${nativeFormats[profile.provider].filename}`,
+      `snapshots-${digest(entry.content)}-${nativeFormats[nativeConfigKey(profile)].filename}`,
     );
     await this.safeDirectory(path.dirname(file));
     try {

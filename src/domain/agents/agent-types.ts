@@ -4,12 +4,14 @@ import type { StoredAgentImageAttachment as AgentAttachment, AgentImageAttachmen
 
 export type AgentProvider = "codex" | "claude" | "opencode" | "fixture" | (string & {});
 export interface AgentModel { id: string; label: string; reasoningEfforts?: string[] }
+export interface NativePermissionRule { action: string; resource: string; effect: "allow" | "deny" | "ask" }
+export interface ClaudeNativePermissions { defaultMode?: string; allow?: string[]; deny?: string[]; ask?: string[]; [key: string]: unknown }
 /** Provider options are preserved as data; known launch controls are typed here. */
 export interface NativeConfig extends Record<string, unknown> {
-  model?: string; model_provider?: string; model_reasoning_effort?: string;
+  model?: string | { providerID: string; model: string; variant?: string }; model_provider?: string; model_reasoning_effort?: string;
   approval_policy?: string; sandbox_mode?: string; developer_instructions?: string;
   effortLevel?: string; env?: Record<string, string>;
-  permissions?: { defaultMode?: string; allow?: string[]; deny?: string[]; ask?: string[]; [key: string]: unknown };
+  permissions?: ClaudeNativePermissions | NativePermissionRule[];
   mcp_servers?: Record<string, Record<string, unknown>>;
 }
 export interface AgentProfile {
@@ -17,7 +19,7 @@ export interface AgentProfile {
   driver?: string; transport?: string; source?: string; description?: string;
   args?: string[]; launcherArgs?: string[]; extraArgs?: string[]; env?: Record<string, string>;
   cwd?: string; runtimeCommand?: string; runtimeArgs?: string[]; requiresRuntime?: string;
-  managedWrapper?: string; versionArgs?: string[]; versionTimeoutMs?: number; minVersion?: string;
+  managedWrapper?: string; versionArgs?: string[]; versionTimeoutMs?: number; minVersion?: string; maxVersion?: string; requireVersion?: boolean;
   model?: string | null; reasoningEffort?: string | null; models?: AgentModel[]; reasoningEfforts?: string[];
   approvalPolicy?: string; permissionMode?: string; sandbox?: string; ephemeral?: boolean; allowedTools?: string[];
   authProbe?: { kind?: string; args?: string[]; timeoutMs?: number };
@@ -31,7 +33,7 @@ export interface ResearchMcpBinding {
 export interface DriverEvent { type: string; turnId?: string | null; payload: Record<string, unknown> }
 export interface AgentDriverOptions {
   cwd?: string; env?: Record<string, string>; requestTimeoutMs?: number;
-  model?: string | null; reasoningEffort?: string | null; onEvent?: (event: DriverEvent) => void;
+  model?: string | null; reasoningEffort?: string | null; onEvent?: (event: DriverEvent) => void; expectedDriver?: string;
 }
 export interface AgentStartInput {
   cwd?: string; context?: Record<string, unknown> | null; developerInstructions?: string | null;
@@ -88,6 +90,7 @@ export interface SessionContext extends Record<string, unknown> { topologyStateV
 export interface AgentSync { source?: string; status?: string; lastSyncedAt?: string | null; lastEventAt?: string | null; lastReason?: string; lastNativeUpdatedAt?: unknown; error?: unknown }
 export interface PermissionGrant { requestId?: string; optionId?: string; label?: string; mode?: string; patterns: string[]; grantedAt: string; runtimeInstanceId: string }
 export interface StoredAgentSession {
+  nativeDriver?: string;
   schemaVersion: string; id: string; title: string; profileId: string; researchInterface: string; researchSessionId: string;
   runtimeInstanceId: string; ownerUserId: string | null; model: string | null; reasoningEffort: string | null;
   provider: string | null; status: string; nativeSessionId: string | null; capabilities: AgentCapabilities;

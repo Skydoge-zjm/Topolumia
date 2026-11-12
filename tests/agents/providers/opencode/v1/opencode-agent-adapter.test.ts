@@ -7,10 +7,10 @@ import os from "node:os";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { OpenCodeAgentAdapter } from "../../../../src/adapters/agents/opencode/opencode-agent-adapter.js";
-import { readOpenCodeCatalog, resolveOpenCodeModelId } from "../../../../src/adapters/agents/opencode/opencode-server.js";
-import { AgentProfileRegistry } from "../../../../src/services/agents/agent-profile-registry.js";
-import { AgentSessionGateway } from "../../../../src/services/agents/agent-session-gateway.js";
+import { OpenCodeAgentAdapter } from "../../../../../src/adapters/agents/opencode/v1/opencode-agent-adapter.js";
+import { readOpenCodeCatalog, resolveOpenCodeModelId } from "../../../../../src/adapters/agents/opencode/v1/opencode-server.js";
+import { AgentProfileRegistry } from "../../../../../src/services/agents/agent-profile-registry.js";
+import { AgentSessionGateway } from "../../../../../src/services/agents/agent-session-gateway.js";
 
 async function fixture(t) {
   const clients = new Set<http.ServerResponse>();
@@ -79,7 +79,7 @@ async function fixture(t) {
 }
 
 test("OpenCode registry chooses its native adapter, not ACP", async () => {
-  const registry = new AgentProfileRegistry({ agentSessions: { profiles: [{ id: "opencode-acp", label: "OpenCode", provider: "opencode", driver: "opencode-server", command: process.execPath }] } });
+  const registry = new AgentProfileRegistry({ agentSessions: { profiles: [{ id: "opencode-acp", label: "OpenCode", provider: "opencode", driver: "opencode-server", command: process.execPath, versionArgs: ["-e", "console.log('1.19.0')"] }] } });
   const adapter = await registry.createAdapter("opencode-acp");
   assert.ok(adapter instanceof OpenCodeAgentAdapter);
   await adapter.close();

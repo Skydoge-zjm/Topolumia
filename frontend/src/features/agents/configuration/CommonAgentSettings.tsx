@@ -2,20 +2,27 @@ import type { ReactNode } from "react";
 import { AutocompleteInput } from "@/shared/ui/AutocompleteInput";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import type { ConfiguredAgent } from "./AgentConfigurationPage";
+import { openCodeV1PermissionValue } from "./opencode/v1/permissions";
+import { openCodeV2PermissionValue } from "./opencode/v2/permissions";
 
 export function CommonAgentSettings({
   agent,
   value,
   update,
   en,
+  configKey,
 }: {
   agent: ConfiguredAgent;
   value: Record<string, any>;
   update: (path: string[], value: any) => void;
   en: boolean;
+  configKey?: string;
 }) {
   const effortKey =
     agent.provider === "codex" ? "model_reasoning_effort" : "effortLevel";
+  const modelValue = typeof value.model === "string" ? value.model
+    : configKey === "opencode-v2" && value.model && typeof value.model.providerID === "string" && typeof value.model.model === "string"
+      ? `${value.model.providerID}/${value.model.model}${value.model.variant ? `#${value.model.variant}` : ""}` : "";
   return (
     <div className="native-settings-list">
       <SettingRow label={en ? "Default model" : "默认模型"}>
@@ -27,7 +34,7 @@ export function CommonAgentSettings({
             value: model.id,
             label: model.label,
           }))}
-          value={typeof value.model === "string" ? value.model : ""}
+          value={modelValue}
           onChange={(model) => update(["model"], model || undefined)}
           maxLength={160}
         />
@@ -151,7 +158,7 @@ export function CommonAgentSettings({
           <ConfigChoice
             label={en ? "Tool permissions" : "工具权限"}
             en={en}
-            value={value.permissions ?? value.permission}
+            value={configKey === "opencode-v2" ? openCodeV2PermissionValue(value) : openCodeV1PermissionValue(value)}
             onChange={(item) => update(["permission"], item)}
             choices={[
               { value: "ask", label: en ? "Ask before use" : "调用前确认" },

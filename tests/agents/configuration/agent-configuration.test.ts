@@ -32,7 +32,7 @@ async function fixture(t) {
   ].map((profile) => ({
     ...profile,
     command: process.execPath,
-    versionArgs: ["--version"],
+    versionArgs: profile.provider === "opencode" ? ["-e", "console.log('1.19.0')"] : ["--version"],
     model: "gpt-6-luna",
     models: [{ id: "gpt-6-luna", label: "6 Luna" }],
   }));

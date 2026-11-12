@@ -17,8 +17,9 @@ export async function claudeSettingsFile(profile: AgentProfile, sessionAllows: S
   if (!profile.nativeConfigFile) return null;
   if (!sessionAllows.size) return profile.nativeConfigFile;
   const config = profile.nativeConfig ?? {};
-  const allow = Array.isArray(config.permissions?.allow)
-    ? config.permissions.allow
+  const permissions = Array.isArray(config.permissions) ? undefined : config.permissions;
+  const allow = Array.isArray(permissions?.allow)
+    ? permissions.allow
     : [];
   const settings = mergeNativeConfig(config, {
     permissions: { allow: [...new Set([...allow, ...sessionAllows])] },

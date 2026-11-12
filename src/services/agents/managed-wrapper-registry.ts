@@ -147,7 +147,7 @@ export class ManagedWrapperRegistry {
         });
         const version = parseVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
         result.runtime.version = version;
-        if (profile.minVersion && version && compareVersions(version, profile.minVersion) < 0) {
+        if ((profile.requireVersion && (!versionResult.ok || !version)) || (profile.minVersion && version && compareVersions(version, profile.minVersion) < 0) || (profile.maxVersion && version && compareVersions(version, profile.maxVersion) >= 0)) {
           result.availability = "incompatible";
           result.reason = "runtime_version_incompatible";
         }

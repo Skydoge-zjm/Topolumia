@@ -5,11 +5,11 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { startMvpServer } from "../../../../src/server.js";
-import { buildResearchMcpBinding } from "../../../../src/agent/research-mcp-binding.js";
-import { MCP_SESSION_HINT } from "../../../../src/domain/research/research-interface.js";
-import { OpenCodeServer } from "../../../../src/adapters/agents/opencode/opencode-server.js";
-import { OpenCodeAgentAdapter } from "../../../../src/adapters/agents/opencode/opencode-agent-adapter.js";
+import { startMvpServer } from "../../../../../src/server.js";
+import { buildResearchMcpBinding } from "../../../../../src/agent/research-mcp-binding.js";
+import { MCP_SESSION_HINT } from "../../../../../src/domain/research/research-interface.js";
+import { OpenCodeServer } from "../../../../../src/adapters/agents/opencode/v1/opencode-server.js";
+import { OpenCodeAgentAdapter } from "../../../../../src/adapters/agents/opencode/v1/opencode-agent-adapter.js";
 
 // Runs the installed OpenCode binary against a local OpenAI-compatible provider.
 // It exercises the native process and its tool loop without spending user quota.
@@ -58,9 +58,10 @@ test("installed OpenCode: real MCP/CLI execution, second turn, snapshot, resume 
     };
     return server;
   };
+  const env = { XDG_DATA_HOME: path.join(root, "native-data"), XDG_CONFIG_HOME: path.join(root, "native-config"), XDG_CACHE_HOME: path.join(root, "native-cache"), OPENCODE_DISABLE_MODELS_FETCH: "true" };
   const events = [];
-  const profile = { id: "native-integration", label: "OpenCode", provider: "opencode", command: "opencode", args: ["serve"], model: "native-fixture/fixture" };
-  const adapter = new OpenCodeAgentAdapter(profile, { requestTimeoutMs: 45_000, serverFactory, onEvent: e => events.push(e) });
+  const profile = { id: "native-integration", label: "OpenCode", provider: "opencode", command: process.env.TOPOLUMIA_OPENCODE_V1 ?? "opencode", args: ["serve"], model: "native-fixture/fixture" };
+  const adapter = new OpenCodeAgentAdapter(profile, { requestTimeoutMs: 45_000, env, serverFactory, onEvent: e => events.push(e) });
   ownedAdapters.push(adapter);
   const start = await adapter.start({ cwd: workbench.config.project.root, developerInstructions: MCP_SESSION_HINT, researchMcp });
   const result = await adapter.prompt({ turnId: "native-mcp", content: [{ type: "text", text: "Use Topolumia MCP get_context then report success." }] });
@@ -81,7 +82,7 @@ test("installed OpenCode: real MCP/CLI execution, second turn, snapshot, resume 
   assert.ok(requests >= 3);
   await adapter.close();
   await assert.rejects(fetch(`${nativeUrl}/global/health`, { signal: AbortSignal.timeout(1_000) }));
-  const resumed = new OpenCodeAgentAdapter(profile, { requestTimeoutMs: 30_000, serverFactory });
+  const resumed = new OpenCodeAgentAdapter(profile, { requestTimeoutMs: 30_000, env, serverFactory });
   ownedAdapters.push(resumed);
   const restored = await resumed.start({ cwd: workbench.config.project.root, resumeThreadId: start.nativeSessionId, researchMcp });
   assert.equal(restored.nativeSessionId, start.nativeSessionId);

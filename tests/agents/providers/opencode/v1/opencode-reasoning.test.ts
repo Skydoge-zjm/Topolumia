@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OpenCodeTrace } from "../../../../src/adapters/agents/opencode/opencode-trace.js";
-import { compactConversationEvents } from "../../../../src/domain/agents/agent-conversation.js";
+import { OpenCodeTrace } from "../../../../../src/adapters/agents/opencode/v1/opencode-trace.js";
+import { compactConversationEvents } from "../../../../../src/domain/agents/agent-conversation.js";
 
 test("OpenCode reasoning retains native part boundaries and final snapshot corrections without replay duplication", () => {
   const events = [];

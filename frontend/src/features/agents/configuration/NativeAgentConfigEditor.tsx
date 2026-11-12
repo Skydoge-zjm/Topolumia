@@ -13,6 +13,8 @@ import {
 import type { NativeConfigDocument } from "./nativeConfigModel";
 import type { ConfiguredAgent } from "./AgentConfigurationPage";
 import "./NativeAgentConfig.css";
+import { setOpenCodeV1Permission } from "./opencode/v1/permissions";
+import { setOpenCodeV2Permission } from "./opencode/v2/permissions";
 
 const configUrl = (id: string) =>
   `/api/agent-configuration/profiles/${encodeURIComponent(id)}/native-config`;
@@ -139,7 +141,7 @@ function NativeConfigForm({
       if (agent.provider === "codex" && path[0] === "sandbox_mode")
         next = setConfigPath(next, ["default_permissions"], undefined);
       if (agent.provider === "opencode" && path[0] === "permission")
-        next = setConfigPath(next, ["permissions"], undefined);
+        next = (initial.configKey === "opencode-v2" ? setOpenCodeV2Permission : setOpenCodeV1Permission)(parsed.value, item);
       setSource(serializeConfig(agent.provider, next));
       setError("");
     } catch (error) {
@@ -189,6 +191,7 @@ function NativeConfigForm({
         >
           <CommonAgentSettings
             agent={agent}
+            configKey={initial.configKey}
             en={en}
             value={parsed.value ?? {}}
             update={update}

@@ -1,6 +1,6 @@
 import { startMvpServer } from "../../src/server.js";
 import { loadConfig } from "../../src/config.js";
-import { resolveOpenCodeModelId } from "../../src/adapters/agents/opencode/opencode-server.js";
+import { resolveCatalogModel as resolveOpenCodeModelId } from "../../src/domain/agents/agent-model-catalog.js";
 import { redactAgentSecrets } from "../../src/agent/redact-secrets.js";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import os from "node:os";

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { startMvpServer } from "../../dist/src/server.js";
-import { OpenCodeAgentAdapter } from "../../dist/src/adapters/agents/opencode/opencode-agent-adapter.js";
+import { OpenCodeAgentAdapter } from "../../dist/src/adapters/agents/opencode/v1/opencode-agent-adapter.js";
 
 // Protocol fixtures exercise the real adapters and Gateway. No model or real
 // shell command is executed and no persistent permission is saved.

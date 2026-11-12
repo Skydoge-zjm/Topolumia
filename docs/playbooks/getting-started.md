@@ -61,6 +61,8 @@ npm start
 
 先在运行 Topolumia 的机器安装并认证 Codex、Claude Code 或 OpenCode 中的一个 CLI。可参考各自的官方入口：[Codex](https://developers.openai.com/codex/cli/)、[Claude Code](https://code.claude.com/docs/en/overview)、[OpenCode](https://opencode.ai/docs/)。模型服务、账号权限和可能产生的费用由所选提供商决定。
 
+OpenCode 用户选择与本机版本对应的入口：OpenCode 2 支持 2.2.7 至 2.x；OpenCode 1（旧版）保留 1.19.0 至 1.x 的现有接入。两版配置独立。若同时保留两套 CLI，在 [应用配置示例](../../config/topolumia.config.example.json) 的相应 Profile 中指定各自可执行文件路径。旧会话继续使用其原版本，升级后可保留旧 CLI 继续，也可新建 V2 会话。
+
 进入“Agent 配置”，找到对应 Agent：
 
 1. 点击“配置”，选择该运行时实际支持、且账号可用的模型并保存。项目默认模型不保证适用于所有提供商。

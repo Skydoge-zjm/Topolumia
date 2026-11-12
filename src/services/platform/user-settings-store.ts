@@ -372,7 +372,7 @@ export function applyUserSettings(config: AppConfig, settings: UserSettings) {
   config.agentSessions.profiles = config.agentSessions.profiles.map((profile) => ({
     ...profile,
     model: settings.agent.profileModels[profile.id] || profile.model,
-    reasoningEffort: profile.driver === "opencode-server" ? undefined : settings.agent.reasoningEffort,
+    reasoningEffort: profile.provider === "opencode" ? undefined : settings.agent.reasoningEffort,
     ...(["codex", "opencode", "claude"].includes(profile.provider) ? { approvalPolicy: settings.agent.approvalPolicy } : {}),
     ...(profile.provider === "codex" ? { sandbox: settings.agent.sandbox } : {}),
     ...(profile.provider === "claude" ? { permissionMode: settings.agent.approvalPolicy === "never" ? "dontAsk" : "default" } : {}),

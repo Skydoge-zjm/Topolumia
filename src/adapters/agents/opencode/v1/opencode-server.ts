@@ -1,4 +1,4 @@
-import type { AgentProfile } from "../../../domain/agents/agent-types.js";
+import type { AgentProfile } from "../../../../domain/agents/agent-types.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
@@ -6,10 +6,10 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createOpencodeClient, type Config, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { resolveInvocation, resolveExecutable } from "../../../lib/command.js";
-import { AppError } from "../../../lib/errors.js";
-import { withoutResearchCredentials } from "../../../agent/research-mcp-binding.js";
-import { mergeNativeConfig } from "../shared/native-config.js";
+import { resolveInvocation, resolveExecutable } from "../../../../lib/command.js";
+import { AppError } from "../../../../lib/errors.js";
+import { withoutResearchCredentials } from "../../../../agent/research-mcp-binding.js";
+import { mergeNativeConfig } from "../../shared/native-config.js";
 
 export type OpenCodeProfile = AgentProfile;
 

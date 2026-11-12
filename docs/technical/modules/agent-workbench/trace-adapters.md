@@ -8,7 +8,10 @@
 | --- | --- | --- |
 | Codex | app-server，stdio JSON-RPC | [driver](../../../../src/adapters/agents/codex/codex-app-server-driver.ts)、[adapter](../../../../src/adapters/agents/codex/codex-agent-adapter.ts)、[reasoning](../../../../src/adapters/agents/codex/codex-reasoning.ts) |
 | Claude Code | stream-json 输入/输出与原生权限请求 | [driver](../../../../src/adapters/agents/claude/claude-cli-stream-driver.ts)、[trace](../../../../src/adapters/agents/claude/claude-trace.ts)、[permission host](../../../../src/adapters/agents/claude/claude-permission-host.ts) |
-| OpenCode | 本地 server 与 SDK 事件 | [server](../../../../src/adapters/agents/opencode/opencode-server.ts)、[adapter](../../../../src/adapters/agents/opencode/opencode-agent-adapter.ts)、[trace](../../../../src/adapters/agents/opencode/opencode-trace.ts) |
+| OpenCode 1（旧版） | 独立本地 server 与固定 V1 SDK，保留并冻结 | [server](../../../../src/adapters/agents/opencode/v1/opencode-server.ts)、[adapter](../../../../src/adapters/agents/opencode/v1/opencode-agent-adapter.ts)、[trace](../../../../src/adapters/agents/opencode/v1/opencode-trace.ts) |
+| OpenCode 2 | 独立本地 server、V2 client、实时 SSE 与持久日志补偿 | [server](../../../../src/adapters/agents/opencode/v2/opencode-server.ts)、[adapter](../../../../src/adapters/agents/opencode/v2/opencode-agent-adapter.ts)、[trace](../../../../src/adapters/agents/opencode/v2/opencode-trace.ts) |
+
+[OpenCode 注册入口](../../../../src/adapters/agents/opencode/opencode-runtime.ts) 只分派版本和模型发现。两版实现不相互导入，各自拥有 SDK、权限和消息投影；V2 的 session.text/reasoning/tool 事件按原生 assistant ID 与内容 ordinal 建立稳定身份，最终快照修复增量，恢复不增加工具次数。V1 继续提供既有能力，后续优化与维护集中在 V2。
 
 原生事件格式会随版本变化；修改时核对实际 CLI 版本和事件样例。这里记录职责，不复制完整供应商协议。
 

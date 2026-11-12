@@ -60,6 +60,85 @@
   },
   "agentSessions": {
     "maxSessions": 50,
-    "maxEventsPerSession": 1000
+    "maxEventsPerSession": 1000,
+    "profiles": [
+      {
+        "id": "codex-acp",
+        "label": "Codex",
+        "provider": "codex",
+        "driver": "codex-app-server",
+        "command": "codex",
+        "args": [
+          "app-server",
+          "--listen",
+          "stdio://"
+        ],
+        "versionArgs": [
+          "--version"
+        ],
+        "minVersion": "0.147.0",
+        "authProbe": {
+          "kind": "codex",
+          "args": [
+            "login",
+            "status"
+          ]
+        },
+        "approvalPolicy": "on-request",
+        "sandbox": "workspace-write"
+      },
+      {
+        "id": "claude-agent-acp",
+        "label": "Claude Code",
+        "provider": "claude",
+        "driver": "claude-cli-stream",
+        "command": "claude",
+        "versionArgs": [
+          "--version"
+        ],
+        "authProbe": {
+          "kind": "claude",
+          "args": [
+            "auth",
+            "status",
+            "--json"
+          ]
+        }
+      },
+      {
+        "id": "opencode-v2",
+        "label": "OpenCode 2",
+        "provider": "opencode",
+        "driver": "opencode-server-v2",
+        "command": "opencode",
+        "args": [
+          "serve"
+        ],
+        "versionArgs": [
+          "--version"
+        ],
+        "minVersion": "2.2.7",
+        "maxVersion": "3.0.0",
+        "requireVersion": true,
+        "approvalPolicy": "on-request"
+      },
+      {
+        "id": "opencode-acp",
+        "label": "OpenCode 1（旧版）",
+        "provider": "opencode",
+        "driver": "opencode-server-v1",
+        "command": "opencode",
+        "args": [
+          "serve"
+        ],
+        "versionArgs": [
+          "--version"
+        ],
+        "minVersion": "1.19.0",
+        "maxVersion": "2.0.0",
+        "requireVersion": true,
+        "approvalPolicy": "on-request"
+      }
+    ]
   }
 }

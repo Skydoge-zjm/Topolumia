@@ -39,6 +39,7 @@ export function sessionCheckpoint(session: StoredAgentSession | AgentRuntimeSess
     resumedFrom: session.resumedFrom ?? null,
     status: session.status,
     nativeSessionId: session.nativeSessionId,
+    nativeDriver: session.nativeDriver,
     sync: clone(session.sync ?? null),
     nativeSnapshot: session.nativeSnapshot ?? null,
     usage: clone(session.usage ?? null),

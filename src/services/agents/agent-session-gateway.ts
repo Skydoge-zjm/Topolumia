@@ -210,10 +210,12 @@ export class AgentSessionGateway {
         onEvent: (event) => { if (current()) this.#onDriverEvent(id, event); },
         model: input.model,
         reasoningEffort: input.reasoningEffort,
+        expectedDriver: session.nativeSessionId ? session.nativeDriver ?? (session.provider === "opencode" ? "opencode-server-v1" : undefined) : undefined,
       });
       check();
       session.adapter = adapter;
       session.provider = adapter.profile.provider;
+      session.nativeDriver = adapter.profile.driver === "opencode-server" ? "opencode-server-v1" : adapter.profile.driver;
       const started = await adapter.start({
         cwd: input.cwd,
         context: session.context,
@@ -634,6 +636,7 @@ export class AgentSessionGateway {
     if (session.adapter?.readSnapshot) return session.adapter.readSnapshot({ nativeSessionId: session.nativeSessionId });
     const adapter = await this.profileRegistry.createAdapter(session.profileId, {
       onEvent: () => {},
+      expectedDriver: session.nativeDriver ?? (session.provider === "opencode" ? "opencode-server-v1" : undefined),
       model: session.model ?? undefined,
       reasoningEffort: session.reasoningEffort ?? undefined,
     });
@@ -1062,6 +1065,7 @@ export class AgentSessionGateway {
       resumedFrom: session.resumedFrom ?? null,
       status: session.status,
       nativeSessionId: session.nativeSessionId,
+      nativeDriver: session.nativeDriver,
       sync: clone(session.sync ?? null),
       nativeSnapshot: clone(session.nativeSnapshot ?? null),
       usage: clone(session.usage ?? null),
