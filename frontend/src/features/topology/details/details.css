@@ -3,8 +3,8 @@
  * The page is one sheet: blocks are separated by hairlines, not boxed; only things that float
  * above the sheet (menus, dialogs, the lightbox) carry a border and a shadow.
  */
-.main:has(> .detail-sheet) { background: var(--color-panel); }
-.research-detail.detail-sheet { max-width: 1360px; }
+.main:has(> .detail-sheet) { background: var(--color-canvas); }
+.research-detail.detail-sheet { max-width: 1360px; padding: 24px 28px 40px; border: 1px solid var(--color-line-soft); border-radius: var(--radius-md); background: var(--color-panel); }
 .research-detail.detail-sheet.is-experiment { max-width: 1680px; }
 .research-detail.detail-sheet.is-new { max-width: 860px; }
 
@@ -340,6 +340,7 @@
   .metric-editor-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
+  .research-detail.detail-sheet { padding: 20px 16px 28px; }
   .content-block-card > header { margin-left: 0; }
   .content-block-quote.has-translation { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .content-block-editor-head { grid-template-columns: minmax(0, 1fr); }
