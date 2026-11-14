@@ -56,5 +56,7 @@ Thumbs.db
 .vscode/
 
 # Per-session research file and Skill snapshots
+.topolumia/
+.topolumia-prepare-*/
 .topolumia-transfer/
 .topolumia-skills/

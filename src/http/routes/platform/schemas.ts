@@ -12,7 +12,7 @@ import {
   topologyCuratorTriggerStatusSchema,
 } from "../../../domain/schemas.js";
 
-export async function handlePlatformSchemasRoutes(context: RouteContext) {
+export async function handlePlatformSchemasRoutes(context: Pick<RouteContext, "request" | "response" | "pathname">) {
   const { request, response, pathname } = context;
 
   if (pathname === "/api/schemas/record-ingestion" && request.method === "GET") { sendJson(response, 200, z.toJSONSchema(recordBatchSchema)); return true; }

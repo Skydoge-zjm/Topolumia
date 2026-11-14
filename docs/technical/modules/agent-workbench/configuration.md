@@ -4,7 +4,7 @@
 
 ## 文件与界面
 
-[NativeAgentConfigStore](../../../../src/services/agents/configuration/native-config-store.ts) 在项目 agent-config 根内保存各供应商原生文件；[native-format](../../../../src/services/agents/configuration/native-format.ts) 是文件名、格式、初始数据与解析规则的权威来源。
+[NativeAgentConfigStore](../../../../src/services/agents/configuration/native-config-store.ts) 在项目根/.topolumia/agent-config 内保存各供应商原生文件，配置与会话快照随项目目录保存；CLI 的账号登录沿用用户级凭据。[native-format](../../../../src/services/agents/configuration/native-format.ts) 是文件名、格式、初始数据与解析规则的权威来源。
 
 Codex 为 config.toml，Claude Code 为 settings.json，OpenCode 两版均为 opencode.jsonc。V1 保留 agent-config/opencode 目录，V2 使用独立的 agent-config/opencode-v2；配置缓存、Schema 和快照按配置身份隔离，Provider 品牌身份保持 opencode。保存校验并原子替换，防止路径符号链接和失效内容；创建会话取得配置快照，运行会话不因后续编辑被静默改写。
 

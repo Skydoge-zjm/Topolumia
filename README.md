@@ -18,7 +18,7 @@ npm start
 
 打开 <http://127.0.0.1:5510>，首次访问创建管理员账号，无预设账号密码。在「Agent 配置」中选择已安装并完成认证的 Agent CLI，设置其支持的模型；默认模型为 `gpt-6-luna`，需要相应提供商支持。Agent CLI 及模型服务需自行准备。
 
-所有平台统一使用用户主目录下的 `~/.topolumia/`（Windows 为 `%USERPROFILE%\.topolumia\`）。全局配置是 `~/.topolumia/topolumia.config.json`，结构参考 `config/topolumia.config.example.json`；`TOPOLUMIA_CONFIG` 可显式指定独立配置文件。前后端读取同一文件，源码目录中的配置不自动加载。后端使用 `server.port`，前端使用 `frontend.port`，前端代理地址使用 `frontend.apiUrl`。例如：
+账号、登录凭据和全局配置位于用户主目录 `~/.topolumia/`（Windows 为 `%USERPROFILE%\.topolumia\`）。每个项目根目录内的 `.topolumia/` 保存项目配置、科研数据库、资产和会话，可随整个项目目录备份和移动。全局配置是 `~/.topolumia/topolumia.config.json`，结构参考 `config/topolumia.config.example.json`；`TOPOLUMIA_CONFIG` 可指定独立配置文件。前后端读取同一文件，源码目录中的配置不自动加载。后端使用 `server.port`，前端使用 `frontend.port`，代理地址使用 `frontend.apiUrl`。例如：
 
 ```json
 {
@@ -35,7 +35,7 @@ npm start
 
 应用数据库、资产、项目设置和会话保存在 `~/.topolumia/data/`，缓存放 `cache/`，默认科研工作区放 `workspaces/<项目ID>/`。创建项目时显示完整保存路径，也可关联本机或 SSH 上的已有科研目录。软件源码和安装目录不存放默认用户数据。
 
-「Agent 配置」支持常用设置、完整配置项及原生文件编辑。各项目的 Codex `config.toml`、Claude Code `settings.json`、OpenCode `opencode.jsonc` 保存在应用数据目录中，启动时按各自方式加载；运行中的会话保留配置快照。
+「Agent 配置」支持常用设置、完整配置项及原生文件编辑。各项目的 Codex `config.toml`、Claude Code `settings.json`、OpenCode `opencode.jsonc` 保存在项目 `.topolumia/agent-config` 中，启动时按各自方式加载；运行中的会话保留配置快照。
 
 Agent 任务的执行时限由各自原生运行时管理，Topolumia 不额外设置整回合倒计时；长任务可以持续运行，也可在会话中主动停止。
 

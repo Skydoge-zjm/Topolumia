@@ -1,7 +1,7 @@
-import type { ApplicationOptions } from "./application/project-runtime.js";
+import type { ApplicationOptions, ProjectRuntime } from "./application/project-runtime.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { CollaborationActor } from "./services/platform/collaboration-store.js";
-import type { RouteContext } from "./http/route-context.js";
+import type { PlatformRouteContext, RouteContext } from "./http/route-context.js";
 import { createProjectRuntimeRegistry } from "./application/project-runtime.js";
 import { sendStatic } from "./http/static.js";
 
@@ -18,6 +18,8 @@ import { handleRecordIngestionRoutes, handleRecordAttachmentRead } from "./http/
 import { handleManagedRecordRoutes } from "./http/routes/managed-records.js";
 import { ManagedRecordCollectors } from "./services/environments/managed-record-collectors.js";
 import { ProjectWorkspaceService } from "./services/platform/project-workspace-service.js";
+import { ProjectDataStore, projectDataPaths } from "./services/platform/project-data-store.js";
+import { readProjectManifest } from "./services/platform/project-data-directory.js";
 import { handleExperimentRecordRoutes } from "./http/routes/research/experiment-records.js";
 import { handleResearchGroupRoutes } from "./http/routes/research/groups.js";
 import { handleResearchObjectRoutes } from "./http/routes/research/objects.js";
@@ -36,7 +38,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { loadConfig } from "./config.js";
 import { AppError, asAppError, errorPayload } from "./lib/errors.js";
-import { sendJson, headerValue } from "./lib/http.js";
+import { sendJson, headerValue, parseInput } from "./lib/http.js";
+import { deleteProjectSchema, type ProjectDeletionResult } from "./domain/projects/lifecycle.js";
 
 import { CollaborationStore } from "./services/platform/collaboration-store.js";
 
@@ -44,8 +47,6 @@ import { SshConnectionService } from "./ssh/ssh-connection-service.js";
 import { SshEnvironmentHub } from "./ssh/ssh-environment-hub.js";
 
 const routeHandlers = [
-  handlePlatformAuthRoutes,
-  handlePlatformCollaborationRoutes,
   handleAgentsConfigurationRoutes,
   handleManagedRecordRoutes,
   handleEnvironmentsRoutes,
@@ -60,7 +61,6 @@ const routeHandlers = [
   handleTopologyRoutes,
   handlePlatformSettingsRoutes,
   handleExperimentsRoutes,
-  handlePlatformSchemasRoutes,
   handleAgentsSessionsRoutes,
   handleResearchEventsRoutes,
   handlePlatformSourcesRoutes,
@@ -84,6 +84,10 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
   }
   if (options.port === 0 && !options.config?.project?.workspacesRoot) {
     config.project.workspacesRoot = path.join(path.dirname(options.userSettingsFile ?? config.userSettings.file), "workspaces");
+  }
+  if (options.port === 0 && !options.config?.project?.root) {
+    config.project.root = path.join(config.project.workspacesRoot, config.project.id);
+    if (!options.config?.filesystem?.roots) config.filesystem.roots = [config.project.root];
   }
   if (!config.collaboration.allowDevIdentity) {
     config.project = {
@@ -126,13 +130,47 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
     runtimes,
     getRuntime,
     replaceRuntime,
+    removeRuntime,
+    requireAvailableRuntime,
+    prepareProjectStorage,
     defaultRuntime,
     baseTopologyService,
     topologyLayoutService,
     applyRuntimeSettings,
     refreshForContext,
   } = await createProjectRuntimeRegistry({ config, collaboration, options });
-  const projectWorkspaces = new ProjectWorkspaceService({ config, collaboration, sshConnections, replaceRuntime });
+  const projectWorkspaces = new ProjectWorkspaceService({ config, collaboration, sshConnections, replaceRuntime: async (projectId, update) => {
+    await recordCollectors.suspendProject(projectId);
+    try { return await replaceRuntime(projectId, update); }
+    finally { recordCollectors.removedProjects.delete(projectId); }
+  } });
+  const deleteProject = async (projectId: string, input: unknown, actor: CollaborationActor): Promise<ProjectDeletionResult> => {
+    const { name } = parseInput(deleteProjectSchema, input);
+    collaboration.requireProjectDeletion(projectId, name, actor);
+    let stoppedCollectors = true;
+    let ownsCollectorCleanup = false;
+    try {
+      await removeRuntime(projectId, async runtime => {
+        ownsCollectorCleanup = true;
+        const project = collaboration.requireProject(actor, projectId);
+        let data = runtime?.projectData;
+        if (!data) {
+          try {
+            await prepareProjectStorage(project);
+            if ((await readProjectManifest(project.root))?.id === projectId)
+              data = new ProjectDataStore(projectDataPaths(project.root).database, projectId);
+          } catch { /* An inaccessible project can be removed without touching its files. */ }
+        }
+        try {
+          stoppedCollectors = await recordCollectors.removeProject(projectId, data);
+          data?.revokeCollectors();
+          if (runtime) await sshEnvironments.closeProject(runtime);
+          collaboration.deleteProject(projectId, name, actor);
+        } finally { if (!runtime) data?.close(); }
+      });
+    } finally { if (ownsCollectorCleanup) recordCollectors.removedProjects.delete(projectId); }
+    return { id: projectId, deleted: true, stoppedCollectors };
+  };
 
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(
@@ -165,12 +203,12 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
         pathname === "/api/auth/bootstrap" ||
         pathname.startsWith("/api/schemas/");
       let requestActor: CollaborationActor = { isAgent: false };
-      let requestRuntime = defaultRuntime;
+      let authenticatedRuntime: ProjectRuntime | undefined;
       if (!isPublicApi) {
         if (pathname.startsWith("/api/record-ingestion/")) {
-          requestRuntime = await getRuntime(requestedProjectId);
+          authenticatedRuntime = await getRuntime(requestedProjectId);
           const token = String(request.headers.authorization ?? "").replace(/^Bearer /i, "");
-          requestActor = requestRuntime.researchCommands.ingestion.authenticate(token, (userId, projectId) => collaboration.actorForUser(userId, projectId));
+          requestActor = authenticatedRuntime.researchCommands.ingestion.authenticate(token, (userId, projectId) => collaboration.actorForUser(userId, projectId));
         } else requestActor = collaboration.requireActor(request, requestedProjectId);
         if (requestActor.isAgent && !pathname.startsWith("/api/research/"))
           throw new AppError(
@@ -178,7 +216,7 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
             "Agent 凭据仅可调用项目研究命令。",
             { status: 403 },
           );
-        const projectCollection = pathname === "/api/projects" || pathname.startsWith("/api/project-workspaces");
+        const projectCollection = pathname === "/api/projects" || pathname.startsWith("/api/projects/") || pathname.startsWith("/api/project-workspaces");
         const invitationAcceptPath =
           /^\/api\/projects\/[^/]+\/invitations\/[^/]+\/accept$/.test(pathname);
         if (
@@ -188,12 +226,6 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
           pathname !== "/api/collaboration/context"
         )
           collaboration.requireProject(requestActor, requestedProjectId);
-        const noRuntime =
-          pathname === "/api/auth/me" ||
-          pathname === "/api/collaboration/context" ||
-          pathname === "/api/users" ||
-          projectCollection;
-        if (!noRuntime) requestRuntime = await getRuntime(requestedProjectId);
         const requiredPermission = requiredProjectPermission(
           pathname,
           request.method ?? "GET",
@@ -205,9 +237,21 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
       }
       if (requestActor.user)
         response.setHeader("x-rw-project-id", requestedProjectId);
-      return actorContext.run(requestActor, async () => {
+      return await actorContext.run(requestActor, async () => {
+        const platformContext: PlatformRouteContext = { request, response, pathname, requestedProjectId, requestActor, collaboration, projectWorkspaces, config, deleteProject };
+        if (await handlePlatformAuthRoutes(platformContext) || await handlePlatformCollaborationRoutes(platformContext) || await handlePlatformSchemasRoutes(platformContext)) return;
+        if (isStatic) {
+          if (!["GET", "HEAD"].includes(request.method ?? "GET"))
+            throw new AppError("METHOD_NOT_ALLOWED", "该资源不支持此方法。", { status: 405 });
+          await sendStatic(request, response, config.publicRoot, pathname);
+          return;
+        }
+        const requestRuntime = authenticatedRuntime ?? await getRuntime(requestedProjectId);
+        requireAvailableRuntime(requestedProjectId);
+        if (requestRuntime.retired) throw new AppError("PROJECT_WORKSPACE_BUSY", "项目工作目录正在切换，请稍后重试。", { status: 409 });
+        requestRuntime.activeRequests++;
         const {
-          config,
+          config: runtimeConfig,
           registry,
           topologyCurator,
           researchCommands,
@@ -249,6 +293,7 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
             requestRuntime,
             collaboration,
             projectWorkspaces,
+            deleteProject,
             sshConnections,
             sshEnvironments,
             recordCollectors,
@@ -256,7 +301,7 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
             runtimes,
             getRuntime,
             applyRuntimeSettings,
-            config,
+            config: runtimeConfig,
             registry,
               topologyCurator,
             researchCommands,
@@ -271,28 +316,15 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
           };
           for (const route of routeHandlers)
             if (await route(routeContext)) return;
-          if (pathname.startsWith("/api/")) {
-            throw new AppError("API_NOT_FOUND", "未找到 API。", {
-              status: 404,
-            });
-          }
-          if (!["GET", "HEAD"].includes(request.method ?? "GET")) {
-            throw new AppError("METHOD_NOT_ALLOWED", "该资源不支持此方法。", {
-              status: 405,
-            });
-          }
-          await sendStatic(
-            request,
-            response,
-            config.publicRoot,
-            pathname,
-          );
+          throw new AppError("API_NOT_FOUND", "未找到 API。", { status: 404 });
         } catch (error) {
           const appError = asAppError(error);
           state.setError(appError);
           if (!response.headersSent)
             sendJson(response, appError.status, errorPayload(appError));
           else response.end();
+        } finally {
+          requestRuntime.activeRequests--;
         }
       });
     } catch (error) {
@@ -334,7 +366,7 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
 
   return {
     ...defaultRuntime,
-    config: defaultRuntime.config,
+    config: defaultRuntime?.config ?? config,
     collaboration,
     runtimes,
     getRuntime,
@@ -344,6 +376,8 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
     recordCollectors,
     server,
     projectWorkspaces,
+    deleteProject,
+    prepareProjectStorage,
     close,
   };
 }
@@ -364,8 +398,8 @@ export async function startMvpServer(options: ApplicationOptions = {}) {
   const address = app.server.address();
   const actualPort =
     typeof address === "object" && address ? address.port : port;
-  app.sourceRefresh.start();
-  app.curatorTriggerCoordinator.start();
+  app.sourceRefresh?.start();
+  app.curatorTriggerCoordinator?.start();
   return { ...app, url: `http://${host}:${actualPort}` };
 }
 

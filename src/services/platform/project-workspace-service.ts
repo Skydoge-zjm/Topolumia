@@ -12,21 +12,52 @@ import {
 import { AppError } from "../../lib/errors.js";
 import * as z from "zod/v4";
 import type { AppConfig } from "../../config.js";
-import type { CollaborationStore, CollaborationActor } from "./collaboration-store.js";
+import type {
+  CollaborationStore,
+  CollaborationActor,
+} from "./collaboration-store.js";
 import type { AuthenticatedResearchActor } from "../../domain/research/types.js";
 import type { SshConnectionService } from "../../ssh/ssh-connection-service.js";
 import type { ProjectWorkspace } from "../../domain/projects/workspace.js";
-type WorkspaceOptions = {config:AppConfig;collaboration:CollaborationStore;sshConnections:SshConnectionService;replaceRuntime:(projectId:string,operation:()=>void)=>Promise<unknown>};
-const browseSchema = z.object({kind:z.enum(["local","ssh"]),connectionId:z.string().nullish(),directory:z.string().optional(),offset:z.number().optional(),query:z.string().optional()});
+type WorkspaceOptions = {
+  config: AppConfig;
+  collaboration: CollaborationStore;
+  sshConnections: SshConnectionService;
+  replaceRuntime: (
+    projectId: string,
+    operation: () => void | Promise<void>,
+  ) => Promise<unknown>;
+};
+const browseSchema = z.object({
+  kind: z.enum(["local", "ssh"]),
+  connectionId: z.string().nullish(),
+  directory: z.string().optional(),
+  offset: z.number().optional(),
+  query: z.string().optional(),
+});
 import {
   createProjectSchema,
   projectWorkspaceSchema,
 } from "../../domain/projects/workspace.js";
+import {
+  initializeProjectData,
+  readProjectManifest,
+  relocateProjectData,
+} from "./project-data-directory.js";
+import { projectDataPaths } from "./project-data-store.js";
 
 export class ProjectWorkspaceService {
+  creations = new Set<string>();
   constructor(public options: WorkspaceOptions) {}
-  requireAdministrator(actor: CollaborationActor | null | undefined): asserts actor is CollaborationActor & AuthenticatedResearchActor {
-    if (!actor?.isServerAdmin || !actor.user || actor.isAgent || actor.collectorGrant)
+  requireAdministrator(
+    actor: CollaborationActor | null | undefined,
+  ): asserts actor is CollaborationActor & AuthenticatedResearchActor {
+    if (
+      !actor?.isServerAdmin ||
+      !actor.user ||
+      actor.isAgent ||
+      actor.collectorGrant
+    )
       throw new AppError(
         "FORBIDDEN",
         "只有服务器管理员可以创建项目或关联主机目录。",
@@ -40,6 +71,7 @@ export class ProjectWorkspaceService {
       name: project.name,
       workspace: project.workspace,
       localHost: os.hostname(),
+      dataDirectory: projectDataPaths(project.root).directory,
       defaultDirectory:
         this.options.collaboration.projectRootFactory?.(project.id) ??
         this.options.config.project.workspacesRoot,
@@ -139,7 +171,11 @@ export class ProjectWorkspaceService {
       );
     }
   }
-  async browse(input: unknown, actor: CollaborationActor | null | undefined, list = true) {
+  async browse(
+    input: unknown,
+    actor: CollaborationActor | null | undefined,
+    list = true,
+  ) {
     this.requireAdministrator(actor);
     const parsed = browseSchema.safeParse(input);
     if (!parsed.success)
@@ -224,6 +260,20 @@ export class ProjectWorkspaceService {
       connectionRevision: revision,
     };
   }
+  async validate(
+    choice: unknown,
+    actor: CollaborationActor | null | undefined,
+  ) {
+    const workspace = await this.prepare(choice, actor);
+    const project =
+      workspace.kind === "local"
+        ? await readProjectManifest(workspace.directory)
+        : null;
+    return {
+      workspace,
+      project: project ? { id: project.id, name: project.name } : null,
+    };
+  }
   async create(input: unknown, actor: CollaborationActor | null | undefined) {
     this.requireAdministrator(actor);
     const parsed = createProjectSchema.safeParse(input);
@@ -244,40 +294,114 @@ export class ProjectWorkspaceService {
         },
       );
     const workspace = await this.prepare(parsed.data.workspace, actor);
-    const id = parsed.data.id ?? "project_" + randomUUID().replaceAll("-", "");
-    if (this.options.collaboration.projectById(id))
-      throw new AppError("PROJECT_EXISTS", "项目 ID 已存在。", { status: 409 });
-    let createdDirectory: string | null = null;
+    let id = parsed.data.id ?? "project_" + randomUUID().replaceAll("-", "");
+    const root =
+      workspace.kind === "local"
+        ? workspace.directory
+        : (this.options.collaboration.projectRootFactory?.(id) ??
+          this.options.collaboration.defaultProject.root);
+    const lock = process.platform === "win32" ? root.toLowerCase() : root;
+    if (this.creations.has(lock))
+      throw new AppError(
+        "PROJECT_CREATION_BUSY",
+        "该目录正在创建或打开项目，请稍后重试。",
+        { status: 409 },
+      );
+    this.creations.add(lock);
     try {
-      if (workspace.kind !== "local") {
-        const directory =
-          this.options.collaboration.projectRootFactory?.(id) ??
-          this.options.collaboration.defaultProject.root;
-        await mkdir(path.dirname(directory), { recursive: true });
-        try {
-          await mkdir(directory);
-          createdDirectory = directory;
-        } catch (error) {
-          if ((!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") || !(await stat(directory)).isDirectory())
-            throw error;
+      const manifest =
+        workspace.kind === "local" ? await readProjectManifest(root) : null;
+      if (manifest) {
+        id = manifest.id;
+        const registered = this.options.collaboration.projectById(id);
+        if (registered?.status === "deleted")
+          throw new AppError(
+            "PROJECT_DELETED",
+            "这个项目已从当前应用删除，不能通过创建入口恢复。",
+            { status: 409 },
+          );
+        if (registered) {
+          if (path.resolve(registered.root) === path.resolve(root))
+            return this.options.collaboration.projectView(id);
+          if (await readProjectManifest(registered.root))
+            throw new AppError(
+              "PROJECT_ALREADY_REGISTERED",
+              "该项目已在其他位置打开，请先更换原项目的工作目录。",
+              { status: 409 },
+            );
+          return await this.update(
+            id,
+            parsed.data.workspace,
+            registered.workspace.revision,
+            actor,
+          );
         }
       }
-      return this.options.collaboration.createProject(
-        { ...parsed.data, id, workspace },
-        actor,
-      );
-    } catch (error) {
-      if (createdDirectory && !this.options.collaboration.projectById(id))
-        await rmdir(createdDirectory).catch(() => {});
-      if (error instanceof AppError) throw error;
-      throw new AppError(
-        "PROJECT_WORKSPACE_UNAVAILABLE",
-        "无法创建项目工作区，请检查工作区目录和主机权限。",
-        { status: 422 },
-      );
+      const atRoot = this.options.collaboration.projectAtRoot(root);
+      if (atRoot && atRoot.id !== id)
+        throw new AppError(
+          "PROJECT_DIRECTORY_REGISTERED",
+          "该目录已关联其他项目，请打开原项目或选择另一个目录。",
+          { status: 409 },
+        );
+      if (this.options.collaboration.projectById(id))
+        throw new AppError("PROJECT_EXISTS", "项目 ID 已存在。", {
+          status: 409,
+        });
+      let createdDirectory: string | null = null;
+      try {
+        if (workspace.kind !== "local") {
+          const directory =
+            this.options.collaboration.projectRootFactory?.(id) ??
+            this.options.collaboration.defaultProject.root;
+          await mkdir(path.dirname(directory), { recursive: true });
+          try {
+            await mkdir(directory);
+            createdDirectory = directory;
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              !("code" in error) ||
+              error.code !== "EEXIST" ||
+              !(await stat(directory)).isDirectory()
+            )
+              throw error;
+          }
+        }
+        await initializeProjectData({
+          id,
+          name: manifest?.name ?? parsed.data.name,
+          root,
+        });
+        return this.options.collaboration.createProject(
+          {
+            ...parsed.data,
+            id,
+            name: manifest?.name ?? parsed.data.name,
+            workspace: { ...workspace, storageVersion: 1 },
+          },
+          actor,
+        );
+      } catch (error) {
+        if (createdDirectory && !this.options.collaboration.projectById(id))
+          await rmdir(createdDirectory).catch(() => {});
+        if (error instanceof AppError) throw error;
+        throw new AppError(
+          "PROJECT_WORKSPACE_UNAVAILABLE",
+          "无法创建项目工作区，请检查工作区目录和主机权限。",
+          { status: 422 },
+        );
+      }
+    } finally {
+      this.creations.delete(lock);
     }
   }
-  async update(projectId: string, choice: unknown, expectedRevision: number, actor: CollaborationActor | null | undefined) {
+  async update(
+    projectId: string,
+    choice: unknown,
+    expectedRevision: number,
+    actor: CollaborationActor | null | undefined,
+  ) {
     this.requireAdministrator(actor);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
       throw new AppError(
@@ -312,7 +436,15 @@ export class ProjectWorkspaceService {
         workspace: project.workspace,
       };
     let result;
-    await this.options.replaceRuntime(projectId, () => {
+    await this.options.replaceRuntime(projectId, async () => {
+      const destination =
+        workspace.kind === "local"
+          ? workspace.directory
+          : (this.options.collaboration.projectRootFactory?.(projectId) ??
+            project.root);
+      if (workspace.kind !== "local")
+        await mkdir(destination, { recursive: true });
+      await relocateProjectData(project, destination);
       result = this.options.collaboration.updateProjectWorkspace(
         projectId,
         workspace,

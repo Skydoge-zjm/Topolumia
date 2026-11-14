@@ -12,9 +12,9 @@ export function buildResearchMcpBinding({
   cwd,
   runtimeInstanceId = randomUUID(),
   researchSessionId = runtimeInstanceId,
-  dataRoot = path.join(cwd, ".topolumia-skills"),
+  dataRoot = path.join(cwd, ".topolumia"),
 }: { baseUrl: string; projectId: string; sessionToken: string; cwd: string; runtimeInstanceId?: string; researchSessionId?: string; dataRoot?: string }): ResearchMcpBinding {
-  const transferRoot = path.join(cwd, ".topolumia-transfer", runtimeInstanceId);
+  const transferRoot = path.join(cwd, ".topolumia", "transfers", runtimeInstanceId);
   mkdirSync(path.join(transferRoot,"out"),{recursive:true});
   mkdirSync(path.join(transferRoot,"in"),{recursive:true});
   const source = path.join(bundledRoot,"src/agent/skills/topolumia-paper-reading");

@@ -285,9 +285,14 @@ function Workspace() {
   const isAgentPage = location.pathname === "/agents";
   const project = context.data?.project ?? context.data?.projects?.[0];
   useEffect(() => {
+    if (context.data && !context.data.project) {
+      window.localStorage.removeItem("research-workbench-project");
+      navigate("/projects", { replace: true });
+      return;
+    }
     if (project?.id && project.id !== projectId())
       window.localStorage.setItem("research-workbench-project", project.id);
-  }, [project?.id]);
+  }, [project?.id, context.data, navigate]);
   const logout = async () => {
     await api("/api/auth/logout", { method: "POST" }).catch(() => {});
     navigate("/login");

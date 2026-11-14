@@ -7,8 +7,8 @@ import { EventEmitter } from "node:events";
 import type { IncomingMessage } from "node:http";
 import { sqlProjection } from "../../lib/sqlite-query.js";
 import type { ResearchActor, AuthenticatedResearchActor } from "../../domain/research/types.js";
-import type { ResearchStateView } from "../research/research-state.js";
 import type { ProjectWorkspace, ProjectWorkspaceChoice } from "../../domain/projects/workspace.js";
+import { sqliteTransaction } from "../../lib/sqlite-transaction.js";
 type UserRow = { id: string; username: string; display_name: string; email: string | null; status: string; server_role: string; created_at: string; updated_at: string; password_hash: string };
 type ProjectRow = { id: string; name: string; root: string; status: string; created_at: string; updated_at: string; state_version?: string | null; workspace_json?: string | null; workspace?: ProjectWorkspace; membership_role?: string | null };
 type MembershipRow = { project_id: string; user_id: string; role: string; status: string; created_at: string; updated_at: string };
@@ -22,6 +22,7 @@ type ActiveActor = CollaborationActor & AuthenticatedResearchActor;
 type StoreOptions = { filePath?: string; defaultProject?: { id: string; name: string; root: string }; defaultAdminPassword?: string; allowDevIdentity?: boolean; projectRootFactory?: ((projectId: string) => string) | null };
 type UserInput = { username?: string; displayName?: string; email?: string | null; password?: string; serverRole?: string };
 type AgentCredential = { userId: string; projectId: string; researchSessionId: string; runtimeInstanceId: string; permissions: string[]; expiresAt: number };
+type AgentCredentialRow = AgentCredential & { token_hash: string; permissions_json: string; expires_at: number; user_id: string; project_id: string; research_session_id: string; runtime_instance_id: string };
 
 export const ROLES = Object.freeze(["p-admin", "researcher", "guest"]);
 
@@ -247,13 +248,17 @@ export class CollaborationStore extends EventEmitter {
         expires_at TEXT NOT NULL,
         revoked_at TEXT
       );
-      CREATE TABLE IF NOT EXISTS project_snapshots (
-        project_id TEXT PRIMARY KEY REFERENCES projects(id),
-        version INTEGER NOT NULL DEFAULT 0,
-        state_json TEXT NOT NULL,
-        state_hash TEXT,
-        updated_at TEXT NOT NULL
+      CREATE TABLE IF NOT EXISTS agent_credentials (
+        token_hash TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        research_session_id TEXT NOT NULL,
+        runtime_instance_id TEXT NOT NULL,
+        permissions_json TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS agent_credentials_runtime ON agent_credentials(runtime_instance_id);
       CREATE TABLE IF NOT EXISTS audit_events (
         id TEXT PRIMARY KEY,
         project_id TEXT,
@@ -265,7 +270,29 @@ export class CollaborationStore extends EventEmitter {
       );
     `);
     this.ensureBootstrap();
+    this.restoreAgentCredentials();
     return this;
+  }
+
+  restoreAgentCredentials() {
+    this.ensureReady();
+    const now = Date.now();
+    this.db.prepare("DELETE FROM agent_credentials WHERE expires_at <= ?").run(now);
+    this.agentCredentials.clear();
+    for (const row of this.query<AgentCredentialRow>("SELECT * FROM agent_credentials WHERE expires_at > ?").all(now)) {
+      try {
+        const permissions = JSON.parse(row.permissions_json);
+        if (!Array.isArray(permissions) || permissions.some(permission => typeof permission !== "string")) continue;
+        this.agentCredentials.set(row.token_hash, {
+          userId: row.user_id,
+          projectId: row.project_id,
+          researchSessionId: row.research_session_id,
+          runtimeInstanceId: row.runtime_instance_id,
+          permissions,
+          expiresAt: Number(row.expires_at),
+        });
+      } catch { /* Ignore malformed expired/legacy credentials. */ }
+    }
   }
 
   ensureReady() {
@@ -368,6 +395,11 @@ export class CollaborationStore extends EventEmitter {
     const row = this.query<ProjectRow>("SELECT p.*,w.body AS workspace_json FROM projects p LEFT JOIN project_workspaces w ON w.project_id=p.id WHERE p.id = ?").get(String(projectId));
     return row ? { ...row, workspace: row.workspace_json ? JSON.parse(row.workspace_json) : { kind: "local", directory: row.root, revision: 0 } } : null;
   }
+  projectView(projectId: string) { return publicProject(this.projectById(projectId)); }
+  projectAtRoot(root: string) {
+    const identity = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+    return this.query<ProjectRow>("SELECT * FROM projects").all().find(project => identity(project.root) === identity(root));
+  }
 
   listProjects(actor: CollaborationActor | null) {
     this.ensureReady();
@@ -412,7 +444,7 @@ export class CollaborationStore extends EventEmitter {
     return result;
   }
 
-  createProject({ id, name, workspace = { kind: "managed" } }: { id?: string; name?: string; workspace?: ProjectWorkspaceChoice }, actor: CollaborationActor | null) {
+  createProject({ id, name, workspace = { kind: "managed" } }: { id?: string; name?: string; workspace?: ProjectWorkspaceChoice & { storageVersion?: 1 } }, actor: CollaborationActor | null) {
     this.ensureReady();
     if (!actor?.isServerAdmin || !actor.user) throw new AppError("FORBIDDEN", "只有 s-admin 可以创建项目。", { status: 403 });
     const projectId = String(id ?? `project_${randomUUID().replaceAll("-", "")}`).trim();
@@ -435,6 +467,30 @@ export class CollaborationStore extends EventEmitter {
     this.audit(projectId, actor.user.id, actor.user.id, "project.created", { projectId });
     return publicProject(this.projectById(projectId));
   }
+  requireProjectDeletion(projectId: string, name: string, actor: CollaborationActor | null) {
+    if (!actor?.isServerAdmin || !actor.user || actor.isAgent || actor.collectorGrant)
+      throw new AppError("FORBIDDEN", "只有服务器管理员可以删除项目。", { status: 403 });
+    const project = this.requireProject(actor, projectId);
+    if (name !== project.name)
+      throw new AppError("PROJECT_NAME_MISMATCH", "项目名称不一致，请输入完整项目名称确认删除。", { status: 422 });
+    return project;
+  }
+
+  deleteProject(projectId: string, name: string, actor: CollaborationActor | null) {
+    const project = this.requireProjectDeletion(projectId, name, actor);
+    const timestamp = nowIso();
+    sqliteTransaction(this.db, () => {
+      this.db.prepare("UPDATE projects SET status='deleted',updated_at=? WHERE id=?").run(timestamp, projectId);
+      this.db.prepare("UPDATE memberships SET status='removed',updated_at=? WHERE project_id=?").run(timestamp, projectId);
+      this.db.prepare("UPDATE permission_overrides SET active=0,updated_at=? WHERE project_id=?").run(timestamp, projectId);
+      this.db.prepare("UPDATE invitations SET status='revoked' WHERE project_id=? AND status='pending'").run(projectId);
+      this.audit(projectId, actor!.user!.id, actor!.user!.id, "project.deleted", { name: project.name, dataRetained: true }, { notify: false });
+    });
+    for (const [hash, binding] of this.agentCredentials)
+      if (binding.projectId === projectId) this.agentCredentials.delete(hash);
+    this.db.prepare("DELETE FROM agent_credentials WHERE project_id=?").run(projectId);
+    this.emit("access-changed");
+  }
   updateProjectWorkspace(projectId: string, workspace: ProjectWorkspaceChoice, expectedRevision: number, actor: CollaborationActor | null) {
     this.ensureReady();
     if (!actor?.isServerAdmin || !actor.user) throw new AppError("FORBIDDEN", "只有服务器管理员可以关联项目工作目录。", { status: 403 });
@@ -443,7 +499,7 @@ export class CollaborationStore extends EventEmitter {
       const project = this.requireProject(actor, projectId);
       if (project.workspace.revision !== expectedRevision) throw new AppError("PROJECT_WORKSPACE_CONFLICT", "项目工作目录已更新，请重新读取后再保存。", { status: 409 });
       const root = workspace.kind === "local" ? workspace.directory : this.projectRootFactory ? this.projectRootFactory(projectId) : project.root;
-      const value = { ...workspace, ...(workspace.kind === "managed" ? { directory: root } : {}), revision: expectedRevision + 1 };
+      const value = { ...workspace, ...(workspace.kind === "managed" ? { directory: root } : {}), revision: expectedRevision + 1, storageVersion: 1 };
       this.db.prepare("UPDATE projects SET root=?,updated_at=? WHERE id=?").run(root, nowIso(), projectId);
       this.db.prepare("INSERT INTO project_workspaces VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET body=excluded.body").run(projectId, JSON.stringify(value));
       this.db.exec("COMMIT");
@@ -500,8 +556,25 @@ export class CollaborationStore extends EventEmitter {
   actorFromRequest(request: IncomingMessage, projectId: string): ActiveActor | null {
     const sessionToken = request.headers["x-rw-session"] || (request.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith("rw_session="))?.slice("rw_session=".length);
     if (String(sessionToken ?? "").startsWith("rw_agent_")) {
-      const binding = this.agentCredentials.get(hashToken(sessionToken));
-      if (!binding || binding.expiresAt <= Date.now()) return null;
+      const tokenHash = hashToken(sessionToken);
+      let binding = this.agentCredentials.get(tokenHash);
+      if (!binding) {
+        const row = this.query<AgentCredentialRow>("SELECT * FROM agent_credentials WHERE token_hash=? AND expires_at>? ").get(tokenHash, Date.now());
+        if (row) {
+          try {
+            const permissions = JSON.parse(row.permissions_json);
+            if (Array.isArray(permissions) && permissions.every(permission => typeof permission === "string")) {
+              binding = { userId: row.user_id, projectId: row.project_id, researchSessionId: row.research_session_id, runtimeInstanceId: row.runtime_instance_id, permissions, expiresAt: Number(row.expires_at) };
+              this.agentCredentials.set(tokenHash, binding);
+            }
+          } catch { /* Invalid rows remain unauthorized. */ }
+        }
+      }
+      if (!binding || binding.expiresAt <= Date.now()) {
+        this.agentCredentials.delete(tokenHash);
+        this.db.prepare("DELETE FROM agent_credentials WHERE token_hash=?").run(tokenHash);
+        return null;
+      }
       if (binding.projectId !== projectId) throw new AppError("AGENT_PROJECT_SCOPE_MISMATCH", "Agent 凭据不能访问其他项目。", { status: 403 });
       const owner = this.actorForUser(binding.userId, projectId);
       if (!owner || (!owner.isServerAdmin && !owner.membership)) return null;
@@ -525,13 +598,18 @@ export class CollaborationStore extends EventEmitter {
   issueAgentCredential(actor: CollaborationActor | null, projectId: string, runtimeInstanceId: string, { researchSessionId = runtimeInstanceId, readOnly = false } = {}) {
     this.requirePermission(actor, "agent.createSession", { projectId });
     const token = `rw_agent_${randomBytes(32).toString("hex")}`;
-    this.agentCredentials.set(hashToken(token), { userId: actor.user.id, projectId, researchSessionId, runtimeInstanceId,
-      permissions: ["project.view", "research.view", "experiment.view", ...(!readOnly ? ["research.proposeChange"] : [])], expiresAt: Date.now() + 8 * 60 * 60 * 1000 });
+    const permissions = ["project.view", "research.view", "experiment.view", ...(!readOnly ? ["research.proposeChange"] : [])];
+    const expiresAt = Date.now() + 8 * 60 * 60 * 1000;
+    const tokenHash = hashToken(token);
+    this.agentCredentials.set(tokenHash, { userId: actor.user.id, projectId, researchSessionId, runtimeInstanceId, permissions, expiresAt });
+    this.db.prepare("INSERT INTO agent_credentials(token_hash,project_id,user_id,research_session_id,runtime_instance_id,permissions_json,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)")
+      .run(tokenHash, projectId, actor.user.id, researchSessionId, runtimeInstanceId, JSON.stringify(permissions), expiresAt, nowIso());
     return token;
   }
 
   revokeAgentCredential(sessionId: string) {
     for (const [hash, binding] of this.agentCredentials) if (binding.runtimeInstanceId === sessionId) this.agentCredentials.delete(hash);
+    if (this._db) this.db.prepare("DELETE FROM agent_credentials WHERE runtime_instance_id=?").run(sessionId);
   }
 
   requireActor(request: IncomingMessage, projectId: string) {
@@ -702,25 +780,22 @@ export class CollaborationStore extends EventEmitter {
     this.emit("access-changed");
   }
 
-  loadState(projectId: string): ResearchStateView | null {
-    const row = this.query<{ state_json: string }>("SELECT state_json FROM project_snapshots WHERE project_id = ?").get(projectId);
-    return parseJson<ResearchStateView | null>(row?.state_json, null);
+  markProjectStorage(projectId: string) {
+    const project = this.projectById(projectId);
+    if (!project) throw new AppError("PROJECT_NOT_FOUND", "项目不存在。", { status: 404 });
+    this.db.prepare("INSERT INTO project_workspaces VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET body=excluded.body")
+      .run(projectId, JSON.stringify({ ...project.workspace, storageVersion: 1 }));
   }
 
-  saveState(projectId: string, stateView: ResearchStateView) {
-    const payload = json(stateView);
-    const version = Number(this.query<{ version: number }>("SELECT version FROM project_snapshots WHERE project_id = ?").get(projectId)?.version ?? 0) + 1;
-    const timestamp = nowIso();
-    this.db.prepare("INSERT INTO project_snapshots (project_id, version, state_json, state_hash, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET version = excluded.version, state_json = excluded.state_json, state_hash = excluded.state_hash, updated_at = excluded.updated_at")
-      .run(projectId, version, payload, hashToken(payload), timestamp);
-    this.db.prepare("UPDATE projects SET state_version = ?, updated_at = ? WHERE id = ?").run(stateView?.topology?.stateVersion ?? stateView?.snapshot?.stateVersion ?? null, timestamp, projectId);
-    return { version, updatedAt: timestamp };
+  noteProjectState(projectId: string, stateVersion: string | null) {
+    this.db.prepare("UPDATE projects SET state_version=?,updated_at=? WHERE id=? AND status!='deleted'")
+      .run(stateVersion, nowIso(), projectId);
   }
 
-  audit(projectId: string | null, actorUserId: string | null | undefined, principalId: string | null | undefined, type: string, payload: unknown) {
+  audit(projectId: string | null, actorUserId: string | null | undefined, principalId: string | null | undefined, type: string, payload: unknown, { notify = true } = {}) {
     this.db.prepare("INSERT INTO audit_events (id, project_id, actor_user_id, principal_id, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(`audit_${randomUUID().replaceAll("-", "")}`, projectId, actorUserId ?? null, principalId ?? null, type, json(payload), nowIso());
-    this.emit("access-changed");
+    if (notify) this.emit("access-changed");
   }
 
   auditEvents(projectId: string, actor: CollaborationActor | null) {

@@ -37,6 +37,7 @@ export function ProjectWorkspaceFields({
   defaultDirectory,
   defaultHost,
   onReadinessChange,
+  onExistingProject,
 }: {
   value: WorkspaceDraft;
   onChange: (value: WorkspaceDraft) => void;
@@ -46,6 +47,7 @@ export function ProjectWorkspaceFields({
   defaultDirectory?: string;
   defaultHost?: string;
   onReadinessChange?: (ready: boolean) => void;
+  onExistingProject?: (project: { id: string; name: string } | null) => void;
 }) {
   const validationId = useId();
   const [browser, setBrowser] = useState(false),
@@ -58,6 +60,7 @@ export function ProjectWorkspaceFields({
     status: "checking" | "valid" | "error";
     message?: string;
     directory?: string;
+    projectName?: string;
   }>();
   const request = useRef<AbortController | null>(null),
     generation = useRef(0);
@@ -96,6 +99,7 @@ export function ProjectWorkspaceFields({
     request.current?.abort();
     generation.current++;
     setValidation(undefined);
+    onExistingProject?.(null);
     setConnectionError("");
     setBrowser(false);
     onChange(next);
@@ -113,26 +117,34 @@ export function ProjectWorkspaceFields({
     const controller = new AbortController();
     request.current = controller;
     const serial = ++generation.current;
-    setValidation({ key, status: "checking" });
+    const validationKey = JSON.stringify([
+      workspaceChoice(next),
+      next.kind === "ssh" ? selected?.revision : undefined,
+      next.kind === "ssh" ? selected?.status : undefined,
+    ]);
+    setValidation({ key: validationKey, status: "checking" });
     try {
-      const result = await api<{ workspace: ProjectWorkspace }>(
-        "/api/project-workspaces/validate",
-        {
-          method: "POST",
-          body: JSON.stringify(choice),
-          signal: controller.signal,
-        },
-      );
-      if (serial === generation.current)
+      const result = await api<{
+        workspace: ProjectWorkspace;
+        project?: { id: string; name: string } | null;
+      }>("/api/project-workspaces/validate", {
+        method: "POST",
+        body: JSON.stringify(choice),
+        signal: controller.signal,
+      });
+      if (serial === generation.current) {
         setValidation({
-          key,
+          key: validationKey,
           status: "valid",
           directory: result.workspace.directory,
+          projectName: result.project?.name,
         });
+        onExistingProject?.(result.project ?? null);
+      }
     } catch (cause) {
       if (!controller.signal.aborted && serial === generation.current)
         setValidation({
-          key,
+          key: validationKey,
           status: "error",
           message: (cause as Error).message,
         });
@@ -175,6 +187,13 @@ export function ProjectWorkspaceFields({
   const ready = value.kind === "local" || selected?.status === "connected";
   const canSubmit =
     value.kind === "managed" || (ready && Boolean(directory.trim()));
+  const localRoot =
+    value.kind === "local" ? directory.trim() : defaultDirectory;
+  const dataDirectory = localRoot
+    ? localRoot.replace(/[\\/]+$/, "") +
+      (localRoot.includes("\\") ? "\\" : "/") +
+      ".topolumia"
+    : "";
   useEffect(() => {
     onReadinessChange?.(canSubmit);
   }, [canSubmit, onReadinessChange]);
@@ -393,8 +412,12 @@ export function ProjectWorkspaceFields({
                     : "正在检查目录…"
                   : validState.status === "valid"
                     ? en
-                      ? "Directory is accessible"
-                      : "目录可访问"
+                      ? validState.projectName
+                        ? "Project found: " + validState.projectName
+                        : "Directory is accessible"
+                      : validState.projectName
+                        ? "发现项目：" + validState.projectName
+                        : "目录可访问"
                     : validState.message}
                 {validState.status === "valid" &&
                   validState.directory &&
@@ -416,6 +439,16 @@ export function ProjectWorkspaceFields({
           </>
         )}
       </div>
+      {dataDirectory && (
+        <dl className={styles.destination}>
+          <div>
+            <dt>{en ? "Project data" : "项目数据"}</dt>
+            <dd>
+              <code>{dataDirectory}</code>
+            </dd>
+          </div>
+        </dl>
+      )}
       {browser && (value.kind === "local" || value.kind === "ssh") && (
         <DirectoryBrowser
           key={value.kind + value.connectionId}
@@ -432,14 +465,7 @@ export function ProjectWorkspaceFields({
                 : { sshDirectory: path }),
             };
             change(next);
-            setValidation({
-              key: JSON.stringify([
-                workspaceChoice(next),
-                next.kind === "ssh" ? selected?.revision : undefined,
-                next.kind === "ssh" ? selected?.status : undefined,
-              ]),
-              status: "valid",
-            });
+            void check(next);
           }}
         />
       )}

@@ -25,7 +25,7 @@ After your native tools have written `out/framework.png`, call:
 
 Upload a table crop in the same way. Then create or extend a candidate using actual returned IDs. This is a synthetic shape example for adding material to an existing node; replace every title, value, ID and source locator with verified data:
 
-`relativePath` starts at the transfer directory: pass `out/framework.png`, not `.topolumia-transfer/session/out/framework.png`. A PDF source is `kind:"file"`; for multiple source pages use `locator:{page:"3, 7"}`, not a `document` kind or `pages` key.
+`relativePath` starts at the transfer directory: pass `out/framework.png`, not `.topolumia/transfers/session/out/framework.png`. A PDF source is `kind:"file"`; for multiple source pages use `locator:{page:"3, 7"}`, not a `document` kind or `pages` key.
 
 ```json
 {

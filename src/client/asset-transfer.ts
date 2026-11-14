@@ -18,8 +18,8 @@ export async function transferPath(root: string | undefined,relativePath: string
   const invalidPart=(p: string)=>!p||p==="."||p===".."||/[. ]$/.test(p)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p);
   const invalidCharacters=[...relativePath].some(character => character === ":" || character.charCodeAt(0) < 32);
   if(parts[0]!==prefix||parts.length<2||invalidCharacters||parts.some(invalidPart)){
-    const wrongRoot=parts.length>3&&parts[0]===".topolumia-transfer"&&parts[1]===path.basename(root)&&parts[2]===prefix&&!invalidCharacters&&!parts.slice(2).some(invalidPart);
-    throw error("TRANSFER_PATH_FORBIDDEN",`relativePath is relative to the session transfer directory, not the project directory. Start with ${prefix}/; omit .topolumia-transfer/<session>/.`,{field:"relativePath",expectedPrefix:prefix+"/",...(wrongRoot?{suggestedRelativePath:parts.slice(2).join("/")}:{})});
+    const wrongRoot=parts.length>4&&parts[0]===".topolumia"&&parts[1]==="transfers"&&parts[2]===path.basename(root)&&parts[3]===prefix&&!invalidCharacters&&!parts.slice(3).some(invalidPart);
+    throw error("TRANSFER_PATH_FORBIDDEN",`relativePath is relative to the session transfer directory, not the project directory. Start with ${prefix}/; omit .topolumia/transfers/<session>/.`,{field:"relativePath",expectedPrefix:prefix+"/",...(wrongRoot?{suggestedRelativePath:parts.slice(3).join("/")}:{})});
   }
   const rootInfo=await lstat(root);if(rootInfo.isSymbolicLink()||!rootInfo.isDirectory())throw error("TRANSFER_PATH_FORBIDDEN","Invalid transfer root.");const realRoot=await realpath(root);let current=realRoot;
   for(const [index,part]of parts.entries()){current=path.join(current,part);const info=await lstat(current).catch(e=>e.code==="ENOENT"?null:Promise.reject(e));if(info?.isSymbolicLink())throw error("TRANSFER_PATH_FORBIDDEN","Links are not allowed in transfer paths.");if(!info&&direction==="download"&&index<parts.length-1)await mkdir(current);if(info&&index<parts.length-1&&!info.isDirectory())throw error("TRANSFER_PATH_FORBIDDEN","Parent is not a directory.");}

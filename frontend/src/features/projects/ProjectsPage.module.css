@@ -1,0 +1,121 @@
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+  font-size: 14px;
+}
+.table th,
+.table td {
+  padding: 10px 16px;
+  text-align: start;
+}
+.table th {
+  font-weight: 600;
+}
+.table td {
+  border-top: 1px solid var(--color-line);
+  overflow-wrap: anywhere;
+}
+.table tbody tr:hover,
+.current {
+  background: var(--color-mint-soft);
+}
+.openProject {
+  display: block;
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.openProject:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.openProject:focus-visible {
+  outline: 2px solid var(--color-mint);
+  outline-offset: 3px;
+}
+.actions {
+  width: 100px;
+  white-space: nowrap;
+}
+.deleteButton {
+  min-height: 44px;
+  color: var(--color-alert);
+}
+.deleteForm {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  font-size: 14px;
+}
+.deleteForm p {
+  margin: 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.deleteForm label {
+  margin-top: 8px;
+  font-weight: 600;
+}
+.projectName {
+  overflow-wrap: anywhere;
+}
+.deleteForm input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-ink);
+  font-size: 14px;
+}
+.deleteForm input:focus {
+  border-color: var(--color-mint);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+.deleteForm footer {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.deleteForm footer button {
+  min-height: 44px;
+}
+.confirmDelete {
+  color: var(--color-panel);
+  background: var(--color-alert);
+  border-color: var(--color-alert);
+}
+.notice {
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+@media (max-width: 760px) {
+  .metadata {
+    display: none;
+  }
+  .table th,
+  .table td {
+    padding: 8px;
+  }
+  .actions {
+    width: 80px;
+  }
+}

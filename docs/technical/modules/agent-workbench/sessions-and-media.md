@@ -10,7 +10,7 @@
 
 [sessionCheckpoint](../../../../src/services/agents/session-checkpoint.ts) 定义保存快照；[AgentSessionPersistence](../../../../src/services/agents/agent-session-persistence.ts) 调度周期检查点和结束落盘。持续 delta 不能无限推迟保存；失败通过 persistence 状态暴露并允许重试，不能让一次错误永久破坏保存队列。
 
-Trace 的 maxEventsPerSession 只控制诊断快照数量，完整会话正文独立保留。启动任务按会话登记，MCP 绑定、driver 创建和启动的异步边界均检查关闭状态与运行实例；关闭/停机先阻止新任务，清理并等待尚未完成的启动，随后停止驱动、等待正在捕获的图像、标记未结束回合，再保存并关闭数据库。晚到的 driver 不得把已关闭的会话恢复为 ready。
+Trace 的 maxEventsPerSession 只控制诊断快照数量，完整会话正文独立保留。启动任务按会话登记，MCP 绑定、driver 创建和启动的异步边界均检查关闭状态与运行实例；关闭/停机先阻止新任务，清理并等待尚未完成的启动，随后停止驱动、等待正在捕获的图像、标记未结束回合，再保存并关闭数据库。晚到的 driver 不得把已关闭的会话恢复为 ready。Agent 的 MCP token 只保存哈希和最小绑定信息，默认有效 8 小时；正常关闭会话或项目会立即撤销，后端异常重启会从账号库恢复未过期绑定，使仍存活的原生 Agent 进程不会因内存清空而收到 AUTH_REQUIRED。会话恢复仍会签发新的运行实例 token。
 
 原生会话检查点保存 nativeDriver。继续、同步及关闭后的临时快照读取都校验该驱动身份；已有 OpenCode 历史缺少此字段时归 V1，不能因 CLI 升级而改用 V2。版本不符时保留本地历史并给出错误。
 
