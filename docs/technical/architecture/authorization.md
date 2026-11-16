@@ -6,6 +6,8 @@
 
 [HTTP authorization](../../../src/http/authorization.ts) 解析用户、项目和会话，检查访问边界；[CollaborationStore](../../../src/services/platform/collaboration-store.ts) 管成员、角色、覆盖权限和凭据。领域服务对具体动作再次校验，不能因为路由允许访问项目就默认可以提交所有变化。
 
+浏览器登录会话默认有效 8 小时；用户在有效期内持续访问且剩余时间进入刷新窗口时，服务端更新同一 HttpOnly cookie 和账号库的过期时间。过期会话不能由普通业务请求复活，需重新登录；Agent 的项目 token 使用独立的会话生命周期。
+
 MCP 的访问控制、每次调用授权与审计，不能代替 HTTP 和领域服务检查。即使绕过 MCP 直接调用 CLI/HTTP，也必须获得相同结果。
 
 ## 科研审批

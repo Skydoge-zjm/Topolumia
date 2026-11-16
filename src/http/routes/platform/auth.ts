@@ -1,6 +1,10 @@
 import type { PlatformRouteContext } from "../../route-context.js";
 import { readJsonObject, sendJson, requiredString, headerValue } from "../../../lib/http.js";
 
+export function sessionCookie(token: string, ttlMs: number) {
+  return `rw_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(Math.max(0, ttlMs) / 1_000)}`;
+}
+
 export async function handlePlatformAuthRoutes(context: PlatformRouteContext) {
   const {
     request,
@@ -26,10 +30,7 @@ export async function handlePlatformAuthRoutes(context: PlatformRouteContext) {
     const login = collaboration.login(requiredString(body.username), requiredString(body.password), {
       ttlMs: config.collaboration.sessionTtlMs,
     });
-    response.setHeader(
-      "set-cookie",
-      `rw_session=${login.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(config.collaboration.sessionTtlMs / 1_000)}`,
-    );
+    response.setHeader("set-cookie", sessionCookie(login.token, config.collaboration.sessionTtlMs));
     sendJson(response, 201, {
       user,
       expiresAt: login.expiresAt,
@@ -50,10 +51,7 @@ export async function handlePlatformAuthRoutes(context: PlatformRouteContext) {
     const login = collaboration.login(requiredString(body.username), requiredString(body.password), {
       ttlMs: config.collaboration.sessionTtlMs,
     });
-    response.setHeader(
-      "set-cookie",
-      `rw_session=${login.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(config.collaboration.sessionTtlMs / 1_000)}`,
-    );
+    response.setHeader("set-cookie", sessionCookie(login.token, config.collaboration.sessionTtlMs));
     sendJson(response, 200, { user: login.user, expiresAt: login.expiresAt });
     return true;
   }

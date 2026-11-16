@@ -23,6 +23,7 @@ type StoreOptions = { filePath?: string; defaultProject?: { id: string; name: st
 type UserInput = { username?: string; displayName?: string; email?: string | null; password?: string; serverRole?: string };
 type AgentCredential = { userId: string; projectId: string; researchSessionId: string; runtimeInstanceId: string; permissions: string[]; expiresAt: number };
 type AgentCredentialRow = AgentCredential & { token_hash: string; permissions_json: string; expires_at: number; user_id: string; project_id: string; research_session_id: string; runtime_instance_id: string };
+export type RefreshedAuthSession = { token: string; expiresAt: string };
 
 export const ROLES = Object.freeze(["p-admin", "researcher", "guest"]);
 
@@ -593,6 +594,24 @@ export class CollaborationStore extends EventEmitter {
       if (admin) return this.actorForUser(admin.id, projectId);
     }
     return null;
+  }
+
+  refreshAuthSession(request: IncomingMessage, ttlMs = 8 * 60 * 60 * 1_000): RefreshedAuthSession | null {
+    const raw = request.headers["x-rw-session"] || (request.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith("rw_session="))?.slice("rw_session=".length);
+    const token = String(raw ?? "");
+    if (!token || token.startsWith("rw_agent_")) return null;
+    const tokenHash = hashToken(token);
+    const row = this.query<{ expires_at: string }>("SELECT expires_at FROM auth_sessions WHERE token_hash=? AND revoked_at IS NULL").get(tokenHash);
+    if (!row) return null;
+    const now = Date.now();
+    const expiresAtMs = Date.parse(row.expires_at);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) return null;
+    const duration = Math.max(5 * 60_000, Number(ttlMs) || 0);
+    const refreshWindow = Math.min(60 * 60_000, Math.floor(duration / 2));
+    if (expiresAtMs - now > refreshWindow) return null;
+    const expiresAt = new Date(now + duration).toISOString();
+    this.db.prepare("UPDATE auth_sessions SET expires_at=? WHERE token_hash=? AND revoked_at IS NULL").run(expiresAt, tokenHash);
+    return { token, expiresAt };
   }
 
   issueAgentCredential(actor: CollaborationActor | null, projectId: string, runtimeInstanceId: string, { researchSessionId = runtimeInstanceId, readOnly = false } = {}) {

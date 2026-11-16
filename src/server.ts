@@ -6,7 +6,7 @@ import { createProjectRuntimeRegistry } from "./application/project-runtime.js";
 import { sendStatic } from "./http/static.js";
 
 import { requiredProjectPermission } from "./http/authorization.js";
-import { handlePlatformAuthRoutes } from "./http/routes/platform/auth.js";
+import { handlePlatformAuthRoutes, sessionCookie } from "./http/routes/platform/auth.js";
 import { handlePlatformCollaborationRoutes } from "./http/routes/platform/collaboration.js";
 import { handleAgentsConfigurationRoutes } from "./http/routes/agents/configuration.js";
 import { handleEnvironmentsRoutes } from "./http/routes/environments.js";
@@ -237,6 +237,9 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
       }
       if (requestActor.user)
         response.setHeader("x-rw-project-id", requestedProjectId);
+      const refreshedSession = collaboration.refreshAuthSession(request, config.collaboration.sessionTtlMs);
+      if (refreshedSession)
+        response.setHeader("set-cookie", sessionCookie(refreshedSession.token, config.collaboration.sessionTtlMs));
       return await actorContext.run(requestActor, async () => {
         const platformContext: PlatformRouteContext = { request, response, pathname, requestedProjectId, requestActor, collaboration, projectWorkspaces, config, deleteProject };
         if (await handlePlatformAuthRoutes(platformContext) || await handlePlatformCollaborationRoutes(platformContext) || await handlePlatformSchemasRoutes(platformContext)) return;
