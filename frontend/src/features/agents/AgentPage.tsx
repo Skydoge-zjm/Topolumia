@@ -717,6 +717,7 @@ export function AgentPage() {
             setModel={setModel}
             setEffort={setEffort}
             onSend={send}
+            commands={session?.capabilities?.commands ?? []}
             onStop={cancel}
             onRemove={(id) =>
               void run(async () => {

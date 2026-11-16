@@ -58,4 +58,12 @@ read_experiment events 按水位与类型读取原始富记录；大记录目录
 
 单次控制请求、CLI 调用和传输可以限时；Agent 整个研究回合不加应用总时限。
 
+## Web 命令边界
+
+工作台输入框中的 `/命令` 由会话网关按 Adapter 命令目录解析，不把整行无条件交给模型。命令与普通消息共用项目权限、回合记录、原生审批、会话队列、幂等请求、SSE 和历史；命令状态通过统一 `command.started`、`command.completed`、`command.failed` 事件保存。命令 payload 保存命令名、用户参数、执行方式、原生关联 ID 和必要的查询结果，不把凭据或原生完整配置写入历史。
+
+当前支持 `/compact`。Codex 使用 App Server 的 `thread/compact/start`，并映射 `/review`、`/rename`、`/goal`；Claude Code 在已恢复的 `--print --input-format stream-json` 会话中发送 `/compact`；OpenCode 2 使用 V2 client 的 `session.compact`，并映射 `/undo`、`/redo`、`/fork` 及原生发现的项目命令。命令不能跳过正在运行的回合，请求入队后仍要等待原生执行结束。Skill 和项目命令可以调用普通工具，其科研写入继续受科研候选与审批约束。
+
+供应商 TUI 的完整命令清单不是 Web 合同。主题、快捷键、登录、权限、删除、远程控制和终端进程等命令隐藏或改由 Topolumia 自有界面处理。OpenCode 2 的自定义命令必须显示来源并单独审查 Shell 模板；OpenCode 1 不新增命令发现或执行能力。命令映射和取舍见[Agent 命令决策](../decisions/004-agent-commands.md)。
+
 验证：[protocol.test.ts](../../../tests/research/interface/protocol.test.ts)、[上下文评估脚本](../../../scripts/diagnostics/evaluate-research-context.ts)。评估使用隔离的正式科研对象，检查检索命中、梗概预算、目录不泄漏完整正文，以及内容块和来源的精确读取；报告使用字符数，不能当作 token 或真实模型质量。真实任务质量还需检查原生 Trace 和最终候选内容。

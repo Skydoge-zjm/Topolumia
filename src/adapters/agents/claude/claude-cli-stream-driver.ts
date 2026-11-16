@@ -10,6 +10,7 @@ import { JsonlProcess } from "../shared/jsonl-process.js";
 import { ClaudePermissionHost } from "./claude-permission-host.js";
 import { claudeSettingsFile } from "../shared/native-config.js";
 import { promptImages } from "../shared/prompt-images.js";
+import { commandArguments, compactAgentCommand, commandText, normalizeAgentCommandName, type AgentCommand, type AgentCommandInput, type AgentCommandResult } from "../../../domain/agents/agent-commands.js";
 
 export class ClaudeCliStreamDriver extends AgentDriver {
   child: JsonlProcess | null; trace: ClaudeTrace | null;
@@ -18,6 +19,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
   previousUsage: ReturnType<typeof claudeTokenCounts> | undefined; previousCost: number | undefined;
   sessionAllows: Set<string>; sessionDirectories: Set<string>; sessionPermissionMode: string | null;
   developerInstructions?: string | null; researchMcp?: ResearchMcpBinding | null; permissionHost?: ClaudePermissionHost;
+  availableCommands = new Map<string, AgentCommand>();
   constructor(profile: AgentProfile, options: AgentDriverOptions = {}) {
     super(profile, options);
     this.child = null;
@@ -53,6 +55,7 @@ export class ClaudeCliStreamDriver extends AgentDriver {
       approval: { interactive: !["dontAsk", "bypassPermissions"].includes(this.profile.permissionMode ?? ""), policy: this.profile.permissionMode ?? "default" },
     };
     this.authMethods = [];
+    this.availableCommands.set(compactAgentCommand.name, { ...structuredClone(compactAgentCommand), execution: "prompt" });
     return {
       nativeSessionId: this.nativeSessionId!,
       capabilities: this.capabilities,
@@ -144,6 +147,21 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     }
   }
 
+  async listCommands(): Promise<AgentCommand[]> {
+    return [...this.availableCommands.values()].map(command => structuredClone(command));
+  }
+
+  async executeCommand(input: AgentCommandInput): Promise<AgentCommandResult> {
+    const name = normalizeAgentCommandName(input.name);
+    const command = this.availableCommands.get(name);
+    if (!command)
+      throw new AppError("AGENT_COMMAND_UNSUPPORTED", "当前 Claude Code 会话不支持该命令。", { status: 422 });
+    const args = commandArguments(input.arguments);
+    const result = await this.prompt({ turnId: input.id ?? crypto.randomUUID(), content: [{ type: "text", text: commandText({ name, arguments: args }) }], model: input.model, reasoningEffort: input.reasoningEffort });
+    if (result.stopReason === "error") throw new AppError("CLAUDE_COMMAND_FAILED", "Claude Code 命令执行失败。", { status: 502 });
+    return { ...result, stopReason: result.stopReason === "cancelled" || result.stopReason === "incomplete" ? result.stopReason : "end_turn" };
+  }
+
   cancel() {
     if (!this.child || !this.turnWait) return;
     this.cancelRequested = true;
@@ -186,6 +204,16 @@ export class ClaudeCliStreamDriver extends AgentDriver {
         this.sessionStarted = true;
         this.agentInfo = { ...this.agentInfo, version: message.claude_code_version ?? message.version ?? null };
         this.emit("provider.event", { kind: "init", sessionId: this.nativeSessionId, capabilities: message.capabilities ?? [] });
+        const slashCommands = (message as unknown as { slash_commands?: unknown[] }).slash_commands;
+        if (Array.isArray(slashCommands)) {
+          const blocked = new Set(["clear", "exit", "quit", "login", "logout", "permissions", "config", "theme", "terminal-setup", "cd", "add-dir", "model", "effort", "fast", "sandbox", "mcp", "ide", "status", "usage"]);
+          for (const value of slashCommands) {
+            const name = normalizeAgentCommandName(value);
+            if (!name || blocked.has(name) || this.availableCommands.has(name)) continue;
+            this.availableCommands.set(name, { name, label: `/${name}`, description: "Claude Code 会话命令或 Skill。", source: "skill", execution: "prompt", risk: "session" });
+          }
+          this.emit("commands.updated", { commands: [...this.availableCommands.values()].map(command => structuredClone(command)) });
+        }
       } else if (message.subtype === "api_retry") {
         this.emit("turn.retrying", { message: message.error?.message ?? "Claude Code 正在重试。", attempt: message.attempt, maxRetries: message.max_retries, error: message.error });
       } else this.emit("provider.event", { kind: message.subtype ?? "system", message });

@@ -65,6 +65,13 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
     const message = assistant(id); content(id, message, "reasoning", "Checking fixture context.");
     content(id, message, "text", "I will check."); tool(id, message); content(id, message, "text", "OpenCode 2 verified."); finish(id, message);
   };
+  const finishCompaction = (id: string, error?: string) => {
+    const message = [...sessions.get(id).messages].reverse().find(value => value.type === "compaction");
+    Object.assign(message, error ? { status: "failed", error: { message: error } } : { status: "completed", summary: "Compacted fixture context." });
+    send(error ? "session.compaction.failed" : "session.compaction.ended", { sessionID: id, reason: "manual", inputID: message.id,
+      ...(error ? { error: { message: error } } : { text: message.summary }) });
+  };
+  const endExecution = (id: string) => { sessions.get(id).busy = false; send("session.execution.succeeded", { sessionID: id }); };
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url!, "http://fixture");
@@ -81,6 +88,7 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
         response.on("close", () => streams.delete(response)); return;
       }
       if (url.pathname === "/api/model") return json({ location: { directory }, data: [model, { ...model, id: "image", type: "image" }, { ...model, id: "disabled", enabled: false }] });
+      if (url.pathname === "/api/command") return json({ location: { directory }, data: [{ name: "check", description: "Fixture project command" }] });
       if (url.pathname === "/api/model/default") return json({ location: { directory }, data: model });
       if (url.pathname === "/api/provider") return json({ location: { directory }, data: [{ id: "fixture", name: "Fixture provider", settings: { apiKey: "fixture-secret" } }] });
       const mcpMatch = url.pathname.match(/^\/api\/experimental\/mcp\/([^/]+)(\/connect)?$/);
@@ -105,6 +113,23 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
       if (!tail && request.method === "PATCH") { Object.assign(session.info, body); return empty(); }
       if (tail === "/model") { session.model = body.model; return empty(); }
       if (/^\/inbox\/[^/]+$/.test(tail) && request.method === "DELETE") return empty();
+      if (tail === "/compact") {
+        const compaction = { id: body.id, type: "compaction", reason: "manual", status: "running", summary: "", time: { created: Date.now() } };
+        session.messages.push(compaction); session.busy = true;
+        send("session.inbox.delivered", { sessionID: id, inboxID: body.id });
+        send("session.execution.started", { sessionID: id });
+        send("session.compaction.started", { sessionID: id, reason: "manual", inputID: body.id });
+        const admit = () => { json({ data: { id: body.id, sessionID: id, type: "compaction", payload: {}, delivery: body.delivery, time: compaction.time } });
+          if (options.autoRespond) setTimeout(() => { finishCompaction(id); endExecution(id); }, 30); };
+        if (defer) release = admit; else admit(); return;
+      }
+      if (tail === "/command") {
+        const messageID = `msg_command_${++eventID}`;
+        session.messages.push({ id: messageID, type: "user", text: `/${body.name} ${body.text}`, time: { created: Date.now() } }); session.busy = true;
+        send("session.inbox.delivered", { sessionID: id, inboxID: messageID }); send("session.execution.started", { sessionID: id }); empty();
+        if (options.autoRespond) setTimeout(() => respond(id, body.text), 30);
+        return;
+      }
       if (tail === "/prompt") {
         if (failPrompt) return json({ _tag: "ConflictError", message: "fixture prompt failed" }, failPrompt);
         if (session.messages.some((value: any) => value.id === body.id)) return json({ data: { id: body.id } });
@@ -139,7 +164,7 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
   server.listen(options.port ?? 0, "127.0.0.1"); await once(server, "listening");
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const client = OpenCode.make({ baseUrl: url, ...(options.password ? { headers: { authorization: `Basic ${Buffer.from(`opencode:${options.password}`).toString("base64")}` } } : {}) });
-  return { url, client, calls, sessions, streams, log, model, send, assistant, content, tool, finish, ask,
+  return { url, client, calls, sessions, streams, log, model, send, assistant, content, tool, finish, ask, finishCompaction, endExecution,
     disconnect: () => { for (const stream of streams) stream.end(); streams.clear(); },
     deferPrompt: () => { defer = true; }, releasePrompt: () => release(),
     failPrompt: (status: number) => { failPrompt = status; }, failInterrupt: (status: number) => { failInterrupt = status; },

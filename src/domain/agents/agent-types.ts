@@ -1,6 +1,7 @@
 import type { ConversationEvent } from "./agent-conversation.js";
 import type { AgentApproval, AgentApprovalSelection } from "./agent-approval.js";
 import type { StoredAgentImageAttachment as AgentAttachment, AgentImageAttachment } from "./agent-attachments.js";
+import type { AgentCommand, AgentCommandInput, AgentCommandResult } from "./agent-commands.js";
 
 export type AgentProvider = "codex" | "claude" | "opencode" | "fixture" | (string & {});
 export interface AgentModel { id: string; label: string; reasoningEfforts?: string[] }
@@ -43,19 +44,23 @@ export interface AgentCapabilities extends Record<string, unknown> {
   session?: { resume?: boolean; close?: boolean; sync?: boolean };
   sessionCapabilities?: { close?: boolean }; promptCapabilities?: { embeddedContext?: boolean };
   approval?: { interactive?: boolean; policy?: string; command?: boolean; fileChange?: boolean; permissions?: boolean };
+  commands?: AgentCommand[];
 }
 export interface AgentStartResult {
   nativeSessionId: string; capabilities: AgentCapabilities; model?: string | null;
   agentInfo?: { name?: string; title?: string; version?: string | null; transport?: string } | null;
   authMethods?: unknown[];
+  commands?: AgentCommand[];
 }
 export interface AgentPromptPart { type: string; text?: string; resource?: { uri?: string; text?: string; mimeType?: string }; path?: string; mimeType?: string; name?: string }
 export interface AgentPromptInput { turnId: string; content: AgentPromptPart[]; model?: string | null; reasoningEffort?: string | null }
-export interface AgentTurnResult { stopReason: string; nativeTurnId?: string | null; nativeSessionId?: string | null; usage?: unknown; cost?: number }
+export interface AgentTurnResult { stopReason: string; nativeTurnId?: string | null; nativeSessionId?: string | null; usage?: unknown; cost?: number; result?: unknown }
 export interface AgentAdapterContract {
   profile: AgentProfile; closed?: boolean;
   start(input?: AgentStartInput): Promise<AgentStartResult>;
   prompt(input: AgentPromptInput): Promise<AgentTurnResult>;
+  listCommands?(): Promise<AgentCommand[]>;
+  executeCommand?(input: AgentCommandInput): Promise<AgentCommandResult>;
   cancel(): void;
   resolvePermission(requestId: string, optionId: string | null, cancelled?: boolean, selection?: { permissionKeys?: string[] }): Promise<unknown>;
   readSnapshot?(input?: { nativeSessionId?: string | null }): Promise<unknown>;
@@ -78,9 +83,10 @@ export interface AgentPayload extends Record<string, unknown> {
 }
 export type AgentEvent = Omit<ConversationEvent, "payload"> & { payload: AgentPayload };
 export interface AssistantMessage extends AgentPayload { messageId: string; text: string; completed: boolean }
-export interface TurnMessage { text: string; attachments?: AgentAttachment[]; clientMessageId?: string; submissionHash?: string; model?: string | null; reasoningEffort?: string | null }
+export interface TurnMessage { text: string; attachments?: AgentAttachment[]; clientMessageId?: string; submissionHash?: string; model?: string | null; reasoningEffort?: string | null; kind?: "message" | "command"; command?: AgentCommandInput }
 export interface AgentTurn {
   schemaVersion?: string; id: string; sessionId: string; status: string; input: AgentPromptPart[];
+  kind?: "message" | "command"; command?: AgentCommandInput;
   attachments?: AgentAttachment[]; clientMessageId?: string; submissionHash?: string; model?: string | null; reasoningEffort?: string | null;
   assistantText: string; assistantMessages: AssistantMessage[]; stopReason?: string | null;
   startedAt: string; completedAt?: string | null; nativeTurnId?: string | null; nativeMessageId?: string | null;

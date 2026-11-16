@@ -8,6 +8,69 @@ import { CodexAppServerDriver, CodexAppServerReader } from "../../../../src/adap
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const codexFixture = path.join(root, "fixtures", "native", "codex-app-server.js");
 
+async function commandDriver(t, env = {}) {
+  const events = [];
+  const driver = new CodexAppServerDriver({ id: "commands", label: "Codex", provider: "codex", command: process.execPath, args: [codexFixture] },
+    { env, requestTimeoutMs: 2_000, onEvent: event => events.push(event) });
+  t.after(() => driver.close()); await driver.start({ cwd: root });
+  return { driver, events };
+}
+
+test("Codex manual compaction remains active until native completion and cancels with its native turn ID", async t => {
+  const { driver, events } = await commandDriver(t, { CODEX_FIXTURE_COMMAND_HOLD: "1" });
+  let settled = false;
+  const pending = driver.executeCommand({ name: "compact", id: "compact-local" }).finally(() => { settled = true; });
+  const linked = await waitFor(events, event => event.type === "turn.native-linked");
+  assert.equal(linked.turnId, "compact-local"); assert.equal(settled, false);
+  await assert.rejects(driver.prompt({ turnId: "overlap", content: [] }), { code: "AGENT_TURN_ALREADY_RUNNING" });
+  driver.cancel(); assert.equal((await pending).stopReason, "cancelled");
+  assert.equal(driver.closed, false);
+});
+
+test("Codex command notifications arriving before their RPC response still complete once", async t => {
+  const { driver, events } = await commandDriver(t, { CODEX_FIXTURE_COMMAND_EARLY: "1" });
+  for (const name of ["compact", "review"]) {
+    const result = await driver.executeCommand({ name, id: `${name}-early` });
+    assert.equal(result.stopReason, "end_turn"); assert.ok(result.nativeTurnId);
+  }
+  assert.equal(events.filter(event => event.type === "assistant.message.completed").length, 1);
+});
+
+test("Codex asynchronous compaction failures reject the command", async t => {
+  const { driver } = await commandDriver(t, { CODEX_FIXTURE_COMMAND_FAIL: "1" });
+  await assert.rejects(driver.executeCommand({ name: "compact", id: "compact-failure" }), /Native command failed/);
+  assert.equal(driver.turnWait, null);
+});
+
+test("Codex reviews provide native targets and preserve their result in the command turn", async t => {
+  const { driver, events } = await commandDriver(t);
+  await driver.executeCommand({ name: "review", id: "default-review" });
+  await driver.executeCommand({ name: "review", arguments: "Inspect permission handling", id: "custom-review" });
+  assert.deepEqual(events.filter(event => event.type === "assistant.message.completed").map(event => [event.turnId, JSON.parse(event.payload.text)]), [
+    ["default-review", { type: "uncommittedChanges" }], ["custom-review", { type: "custom", instructions: "Inspect permission handling" }],
+  ]);
+});
+
+test("Codex review commands support native tool approvals", async t => {
+  const { driver, events } = await commandDriver(t, { CODEX_FIXTURE_COMMAND_APPROVAL: "1" });
+  const pending = driver.executeCommand({ name: "review", id: "review-approval" });
+  const approval = await waitFor(events, event => event.type === "approval.requested");
+  assert.equal(approval.turnId, "review-approval");
+  await driver.resolvePermission(approval.payload.requestId, "allow_once");
+  assert.equal((await pending).stopReason, "end_turn");
+});
+
+test("Codex goals send objective and user origin, and queries return a visible objective", async t => {
+  const { driver, events } = await commandDriver(t);
+  const set = await driver.executeCommand({ name: "goal", arguments: "Finish the review", id: "goal-set" });
+  assert.deepEqual(set.result, { goal: { objective: "Finish the review", status: "active" } });
+  const get = await driver.executeCommand({ name: "goal", id: "goal-get" });
+  assert.deepEqual(get.result, set.result);
+  assert.ok(events.some(event => event.turnId === "goal-get" && event.payload.text === "Finish the review"));
+  const clear = await driver.executeCommand({ name: "goal", arguments: "clear", id: "goal-clear" });
+  assert.deepEqual(clear.result, { goal: null });
+});
+
 async function waitFor(events, predicate, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

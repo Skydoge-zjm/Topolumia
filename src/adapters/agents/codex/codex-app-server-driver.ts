@@ -1,4 +1,5 @@
 import type { AgentProfile, AgentDriverOptions, AgentStartInput, AgentPromptInput, AgentTurnResult } from "../../../domain/agents/agent-types.js";
+import { randomUUID } from "node:crypto";
 import { codexMessageSchema, type CodexMessage, type CodexItem, type CodexParams, type CodexTurn } from "../shared/native-protocol.js";
 import type { ProcessCloseDetail } from "../shared/jsonl-process.js";
 import { AppError } from "../../../lib/errors.js";
@@ -9,6 +10,7 @@ import { JsonlProcess } from "../shared/jsonl-process.js";
 import { codexApproval } from "./codex-approvals.js";
 import { codexConfigurationArgs } from "../../../services/agents/configuration/native-format.js";
 import { mergeNativeConfig } from "../shared/native-config.js";
+import { codexAgentCommands, normalizeAgentCommandName, commandArguments, type AgentCommand, type AgentCommandInput, type AgentCommandResult } from "../../../domain/agents/agent-commands.js";
 
 const CODEX_CLIENT_VERSION = "0.1.0";
 
@@ -50,6 +52,7 @@ export class CodexAppServerDriver extends AgentDriver {
   itemDetails: Map<string, CodexItem>; itemTypes: Map<string, string | undefined>;
   turnWait: { turnId: string; resolve: (result: AgentTurnResult) => void; reject: (error: unknown) => void; cancelTimer?: ReturnType<typeof setTimeout>; interruptSent?: boolean } | null;
   cancelRequested: boolean; nativeTurns: Map<string, string>; pendingTurnEvents: CodexMessage[]; nativeTurnId: string | null = null;
+  private notificationTurn = false;
   constructor(profile: AgentProfile, options: AgentDriverOptions = {}) {
     super(profile, options);
     this.pendingApprovals = new Map();
@@ -131,6 +134,18 @@ export class CodexAppServerDriver extends AgentDriver {
   }
 
   async prompt({ turnId, content, model, reasoningEffort }: AgentPromptInput): Promise<AgentTurnResult> {
+    return this.#runTurn(turnId, () => this.process.request<{ turn?: CodexTurn }>("turn/start", {
+      threadId: this.nativeSessionId,
+      input: [
+        ...(this.contextText(content) ? [{ type: "text", text: this.contextText(content) }] : []),
+        ...(content ?? []).filter(part => part.type === "image").map(part => ({ type: "localImage", path: part.path })),
+      ],
+      ...(model ? { model } : {}),
+      ...((reasoningEffort ?? this.profile.reasoningEffort) ? { effort: reasoningEffort ?? this.profile.reasoningEffort } : {}),
+    }, 60_000));
+  }
+
+  async #runTurn(turnId: string, start: () => Promise<{ turn?: CodexTurn }>, notificationTurn = false): Promise<AgentTurnResult> {
     if (!this.process || this.process.closed || !this.nativeSessionId) {
       throw errorFromMessage("CODEX_SESSION_NOT_STARTED", "Codex app-server session 尚未启动。", {}, 409);
     }
@@ -139,27 +154,15 @@ export class CodexAppServerDriver extends AgentDriver {
     this.cancelRequested = false;
     this.nativeTurnId = null;
     this.pendingTurnEvents = [];
+    this.notificationTurn = notificationTurn;
     const completion = new Promise<AgentTurnResult>((resolve, reject) => {
       this.turnWait = { turnId, resolve, reject };
     });
     void completion.catch(() => {});
     try {
-      const started = await this.process.request<{ turn?: CodexTurn }>("turn/start", {
-        threadId: this.nativeSessionId,
-        input: [
-          ...(this.contextText(content) ? [{ type: "text", text: this.contextText(content) }] : []),
-          ...(content ?? []).filter(part => part.type === "image").map(part => ({ type: "localImage", path: part.path })),
-        ],
-        ...(model ? { model } : {}),
-        ...((reasoningEffort ?? this.profile.reasoningEffort) ? { effort: reasoningEffort ?? this.profile.reasoningEffort } : {}),
-      }, 60_000);
-      this.nativeTurnId = started?.turn?.id ?? null;
-      if (!this.nativeTurnId) throw errorFromMessage("CODEX_TURN_ID_MISSING", "Codex 没有返回原生回合 ID。");
-      this.nativeTurns.set(this.nativeTurnId, turnId);
-      this.emit("turn.native-linked", { nativeTurnId: this.nativeTurnId }, turnId);
-      const pending = this.pendingTurnEvents;
-      this.pendingTurnEvents = [];
-      for (const event of pending) this.#onMessage(event);
+      const started = await start();
+      if (started.turn?.id && this.turnWait) this.#linkTurn(started.turn.id);
+      if (this.turnWait && !this.nativeTurnId && !notificationTurn) throw errorFromMessage("CODEX_TURN_ID_MISSING", "Codex 没有返回原生回合 ID。");
       if (this.cancelRequested && this.turnWait) this.cancel();
       return await completion;
     } catch (error) {
@@ -169,6 +172,53 @@ export class CodexAppServerDriver extends AgentDriver {
     } finally {
       if (this.activeTurnId === turnId) this.activeTurnId = null;
     }
+  }
+
+  #linkTurn(nativeTurnId: string) {
+    if (!this.turnWait) return;
+    this.nativeTurnId = nativeTurnId;
+    this.nativeTurns.set(nativeTurnId, this.turnWait.turnId);
+    this.emit("turn.native-linked", { nativeTurnId }, this.turnWait.turnId);
+    const pending = this.pendingTurnEvents;
+    this.pendingTurnEvents = [];
+    for (const event of pending) this.#onMessage(event);
+    if (this.cancelRequested && this.turnWait) this.cancel();
+  }
+
+  async listCommands(): Promise<AgentCommand[]> {
+    return structuredClone(codexAgentCommands);
+  }
+
+  async executeCommand(input: AgentCommandInput): Promise<AgentCommandResult> {
+    const name = normalizeAgentCommandName(input.name);
+    if (!codexAgentCommands.some(command => command.name === name))
+      throw new AppError("AGENT_COMMAND_UNSUPPORTED", "当前 Codex 会话不支持该命令。", { status: 422 });
+    if (!this.process || this.process.closed || !this.nativeSessionId)
+      throw errorFromMessage("CODEX_SESSION_NOT_STARTED", "Codex app-server session 尚未启动。", {}, 409);
+    if (this.turnWait)
+      throw errorFromMessage("AGENT_COMMAND_BUSY", "Codex 当前已有运行中的回合。", {}, 409);
+    const args = commandArguments(input.arguments);
+    const turnId = input.id ?? randomUUID();
+    const result = await this.#runTurn(turnId, async () => {
+      if (name === "compact") return this.process.request("thread/compact/start", { threadId: this.nativeSessionId }, 60_000);
+      if (name === "review") return this.process.request("review/start", { threadId: this.nativeSessionId,
+        target: args ? { type: "custom", instructions: args } : { type: "uncommittedChanges" } }, 60_000);
+      let result: unknown;
+      if (name === "rename") {
+        if (!args) throw new AppError("AGENT_COMMAND_INVALID", "/rename 需要提供名称。", { status: 422 });
+        await this.process.request("thread/name/set", { threadId: this.nativeSessionId, name: args }, 60_000);
+      } else if (args === "clear") result = await this.process.request("thread/goal/clear", { threadId: this.nativeSessionId, origin: "user" }, 60_000);
+      else if (args) result = await this.process.request("thread/goal/set", { threadId: this.nativeSessionId, objective: args, origin: "user" }, 60_000);
+      else {
+        result = await this.process.request<{ goal?: { objective?: string } | null }>("thread/goal/get", { threadId: this.nativeSessionId }, 60_000);
+        const goal = (result as { goal?: { objective?: string } | null }).goal;
+        this.emit("assistant.message.completed", { messageId: `goal:${turnId}`, text: goal?.objective ?? "当前会话未设置目标。" }, turnId);
+      }
+      this.#settleTurn({ stopReason: this.cancelRequested ? "cancelled" : "end_turn", nativeSessionId: this.nativeSessionId, ...(result !== undefined ? { result } : {}) });
+      return {};
+    }, name === "compact");
+    if (result.stopReason === "error") throw errorFromMessage("CODEX_COMMAND_FAILED", "Codex 命令执行失败。");
+    return { ...result, stopReason: result.stopReason === "cancelled" || result.stopReason === "incomplete" ? result.stopReason : "end_turn", nativeSessionId: this.nativeSessionId };
   }
 
   cancel() {
@@ -237,6 +287,7 @@ export class CodexAppServerDriver extends AgentDriver {
       return;
     }
     const nativeTurnId = params.turnId ?? params.turn?.id;
+    if (method === "turn/started" && this.notificationTurn && this.turnWait && !this.nativeTurnId && nativeTurnId) this.#linkTurn(nativeTurnId);
     if (nativeTurnId && !this.nativeTurns.has(nativeTurnId)) {
       if (this.turnWait && !this.nativeTurnId) this.pendingTurnEvents.push(message);
       return;

@@ -14,12 +14,14 @@ import { OpenCodeV2Permissions, openCodeV2Permissions } from "./opencode-permiss
 import { OpenCodeV2EventStream, type OpenCodeV2Event } from "./opencode-event-stream.js";
 import { OpenCodeV2Trace } from "./opencode-trace.js";
 import { readOpenCodeV2Messages, openCodeV2Parents, sameOpenCodeV2Directory } from "./opencode-history.js";
+import { commandArguments, normalizeAgentCommandName, openCodeAgentCommands, type AgentCommand, type AgentCommandInput, type AgentCommandResult } from "../../../../domain/agents/agent-commands.js";
 
 interface Options extends AgentDriverOptions { serverFactory?: () => OpenCodeV2Server }
 interface Turn {
   id: string; messageID: string; accepted: boolean; cancelled: boolean; terminal?: "succeeded" | "failed" | "interrupted";
   resolve: (result: AgentTurnResult) => void; reject: (error: Error) => void; abort: AbortController;
   cancelTimer?: ReturnType<typeof setTimeout>; abortSent?: boolean;
+  kind?: "compact" | "command"; nativeLinked?: boolean; baseline?: Set<string>; compactionCompleted?: boolean; failure?: Error;
 }
 
 export class OpenCodeV2AgentAdapter extends AgentAdapter {
@@ -36,6 +38,7 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
   private reconcileTask?: Promise<void>;
   private reconcileAgain = false;
   private closeTask?: Promise<void>;
+  private availableCommands = new Set<string>();
   nativeSessionId: string | null = null;
   closed = false;
 
@@ -87,13 +90,10 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
     if (!this.client || !this.nativeSessionId || this.closed) throw new AppError("OPENCODE_NOT_READY", "OpenCode 2 会话未连接。", { status: 409 });
     if (this.turn) throw new AppError("AGENT_TURN_ACTIVE", "当前会话已有运行中的任务。", { status: 409 });
     const model = openCodeV2ModelRef(this.catalog!, input.model || this.catalog!.model!, input.reasoningEffort || this.profile.reasoningEffort);
-    const messageID = `msg_${Date.now().toString(16).padStart(12, "0")}${randomBytes(8).toString("hex")}`;
-    let resolve!: Turn["resolve"], reject!: Turn["reject"];
-    const result = new Promise<AgentTurnResult>((accept, fail) => { resolve = accept; reject = fail; });
-    void result.catch(() => {});
-    const turn: Turn = { id: input.turnId, messageID, accepted: false, cancelled: false, resolve, reject, abort: new AbortController() };
-    this.turn = turn; this.userTurns.set(messageID, input.turnId);
-    this.emit({ type: "turn.native-linked", turnId: input.turnId, payload: { nativeMessageId: messageID } });
+    const { turn, result } = this.createTurn(input.turnId);
+    this.turn = turn;
+    this.linkInput(turn, turn.messageID);
+    const messageID = turn.messageID;
     let submitted = false;
     try {
       const images = await promptImages(input.content);
@@ -114,6 +114,89 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
     return result;
   }
 
+  private createTurn(id: string, kind?: Turn["kind"]) {
+    const messageID = `msg_${Date.now().toString(16).padStart(12, "0")}${randomBytes(8).toString("hex")}`;
+    let resolve!: Turn["resolve"], reject!: Turn["reject"];
+    const result = new Promise<AgentTurnResult>((accept, fail) => { resolve = accept; reject = fail; });
+    void result.catch(() => {});
+    const turn: Turn = { id, kind, messageID, nativeLinked: kind !== "command", accepted: false, cancelled: false, resolve, reject, abort: new AbortController() };
+    return { turn, result };
+  }
+
+  private linkInput(turn: Turn, messageID: string): void {
+    turn.messageID = messageID; turn.nativeLinked = true;
+    this.userTurns.set(messageID, turn.id);
+    this.parents.set("current", messageID);
+    this.emit({ type: "turn.native-linked", turnId: turn.id, payload: { nativeMessageId: messageID } });
+  }
+
+  async listCommands(): Promise<AgentCommand[]> {
+    const commands = structuredClone(openCodeAgentCommands);
+    if (!this.client) return commands;
+    try {
+      const discovered = await this.client.command.list({ location: { directory: this.cwd } });
+      for (const command of discovered.data ?? []) if (command.name && !commands.some(item => item.name === command.name))
+        commands.push({ name: command.name, label: `/${command.name}`, description: command.description ?? "OpenCode 自定义命令。", source: "custom", execution: "native", risk: "workspace" });
+    } catch { /* Command discovery is optional for runtimes without project commands. */ }
+    this.availableCommands = new Set(commands.map(command => command.name));
+    return commands;
+  }
+
+  async executeCommand(input: AgentCommandInput): Promise<AgentCommandResult> {
+    const name = normalizeAgentCommandName(input.name);
+    if (!openCodeAgentCommands.some(command => command.name === name) && !this.availableCommands.has(name))
+      throw new AppError("AGENT_COMMAND_UNSUPPORTED", "当前 OpenCode 2 会话不支持该命令。", { status: 422 });
+    if (!this.client || !this.nativeSessionId || this.closed)
+      throw new AppError("OPENCODE_NOT_READY", "OpenCode 2 会话未连接。", { status: 409 });
+    if (this.turn) throw new AppError("AGENT_COMMAND_BUSY", "OpenCode 2 当前已有运行中的回合。", { status: 409 });
+    const args = commandArguments(input.arguments);
+    if (name === "compact" || !openCodeAgentCommands.some(command => command.name === name)) {
+      const { turn, result } = this.createTurn(input.id ?? `command_${Date.now()}`, name === "compact" ? "compact" : "command");
+      this.turn = turn;
+      if (turn.nativeLinked) this.linkInput(turn, turn.messageID);
+      let submitted = false;
+      try {
+        if (turn.kind === "command") turn.baseline = new Set((await readOpenCodeV2Messages(this.client, this.nativeSessionId)).map(message => message.id));
+        if (this.turn !== turn) return { stopReason: "cancelled" };
+        if (turn.cancelled) { this.settle({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
+        submitted = true;
+        if (name === "compact") {
+          const admitted = await this.client.session.compact({ sessionID: this.nativeSessionId, id: turn.messageID, delivery: "queue" }, { signal: turn.abort.signal });
+          if (admitted.id !== turn.messageID) throw new Error("原生压缩标识不匹配。");
+        } else await this.client.session.command({ sessionID: this.nativeSessionId, name, text: args, delivery: "queue" }, { signal: turn.abort.signal });
+        if (this.turn === turn) { turn.accepted = true; if (turn.cancelled) this.cancel(); }
+        await this.reconcile();
+      } catch (error) {
+        if (this.turn === turn) { this.settle(undefined, openCodeV2Error(error)); if (submitted) void this.close(); }
+      }
+      const completed = await result;
+      return { ...completed, nativeSessionId: this.nativeSessionId,
+        stopReason: completed.stopReason === "cancelled" || completed.stopReason === "incomplete" ? completed.stopReason : "end_turn" };
+    } else if (name === "undo" || name === "redo") {
+      if (name === "redo") await this.client.session.revert.clear({ sessionID: this.nativeSessionId });
+      else {
+        const messages = await readOpenCodeV2Messages(this.client, this.nativeSessionId);
+        const lastUser = [...messages].reverse().find(message => message.type === "user");
+        if (!lastUser) throw new AppError("AGENT_COMMAND_INVALID", "当前会话没有可撤销的消息。", { status: 422 });
+        await this.client.session.revert.stage({ sessionID: this.nativeSessionId, messageID: lastUser.id, files: true });
+      }
+    } else if (name === "fork") {
+      const forked = await this.client.session.fork({ sessionID: this.nativeSessionId });
+      await this.stream?.close();
+      this.nativeSessionId = forked.id;
+      this.userTurns.clear();
+      this.parents.clear();
+      this.indexHistory(await readOpenCodeV2Messages(this.client, this.nativeSessionId));
+      this.permissions = new OpenCodeV2Permissions(this.client, this.nativeSessionId, event => this.emit(event));
+      this.stream = new OpenCodeV2EventStream(this.client, this.nativeSessionId, event => this.handle(event),
+        async () => { await this.reconcile(); await this.permissions?.sync(this.turn?.id ?? null); },
+        error => this.retire(error), () => this.emit({ type: "connection.status", payload: { status: "reconnecting" } }));
+      await this.stream.start();
+      return { stopReason: "end_turn", nativeSessionId: forked.id };
+    }
+    return { stopReason: "end_turn", nativeSessionId: this.nativeSessionId };
+  }
+
   private handle(event: OpenCodeV2Event): void {
     if (this.closed) return;
     if (event.type === "permission.asked") { this.permissions?.asked(event.data, this.turn?.id ?? null); return; }
@@ -123,15 +206,24 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
       this.emit({ type: "agent.question.unsupported", turnId: this.turn?.id, payload: { questions: event.data.form.fields } });
       return;
     }
-    if (event.type === "session.inbox.delivered" && this.userTurns.has(event.data.inboxID)) this.parents.set("current", event.data.inboxID);
+    if (event.type === "session.inbox.delivered" || event.type === "session.inbox.enqueued") {
+      const turn = this.turn;
+      if (turn?.kind === "command" && !turn.nativeLinked && !turn.baseline?.has(event.data.inboxID)) this.linkInput(turn, event.data.inboxID);
+      if (turn?.kind === "command" && turn.messageID === event.data.inboxID) { turn.accepted = true; if (turn.cancelled) this.cancel(); }
+      if (this.userTurns.has(event.data.inboxID)) this.parents.set("current", event.data.inboxID);
+    }
     const messageID = "assistantMessageID" in event.data && typeof event.data.assistantMessageID === "string" ? event.data.assistantMessageID
       : "messageID" in event.data && typeof event.data.messageID === "string" ? event.data.messageID : undefined;
-    const parent = messageID ? this.parents.get(messageID) ?? this.parents.get("current") ?? this.turn?.messageID : this.turn?.messageID;
+    const parent = messageID ? this.parents.get(messageID) ?? this.turn?.messageID ?? this.parents.get("current") : this.turn?.messageID;
     if (messageID && parent) this.parents.set(messageID, parent);
     const turnId = parent ? this.userTurns.get(parent) ?? null : null;
     if (turnId) this.trace.event(event, turnId, parent);
     const turn = this.turn;
     if (!turn) return;
+    if (turn.kind === "compact" && event.type === "session.compaction.ended" && event.data.reason === "manual") turn.compactionCompleted = true;
+    if (turn.kind === "compact" && event.type === "session.compaction.failed" && (!event.data.inputID || event.data.inputID === turn.messageID)) turn.failure = openCodeV2Error(event.data.error);
+    if (turn.kind === "compact" && ["session.compaction.ended", "session.compaction.failed"].includes(event.type) && turn.accepted)
+      void this.reconcile().catch(error => this.retire(error));
     if (event.type === "session.execution.failed") { this.settle(undefined, openCodeV2Error(event.data.error)); return; }
     if (event.type === "session.execution.succeeded" || event.type === "session.execution.interrupted") {
       turn.terminal = event.type === "session.execution.succeeded" ? "succeeded" : "interrupted";
@@ -159,13 +251,29 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
     if (!turn || !this.client || !this.nativeSessionId) return;
     const [messages, active] = await Promise.all([readOpenCodeV2Messages(this.client, this.nativeSessionId), this.client.session.active()]);
     if (this.turn !== turn) return;
+    const idle = !active[this.nativeSessionId];
+    if (turn.kind === "compact") {
+      const compaction = messages.find(message => message.id === turn.messageID && message.type === "compaction");
+      if (compaction?.type === "compaction") {
+        if (compaction.status === "completed") turn.compactionCompleted = true;
+        if (compaction.status === "failed") turn.failure = openCodeV2Error(compaction.error);
+      }
+      if (turn.accepted && idle && (turn.compactionCompleted || turn.failure || turn.terminal)) {
+        this.settle({ stopReason: turn.cancelled || turn.terminal === "interrupted" ? "cancelled" : "end_turn" }, turn.cancelled ? undefined : turn.failure);
+      }
+      return;
+    }
+    if (turn.kind === "command" && !turn.nativeLinked) {
+      const admitted = messages.find(message => message.type === "user" && !turn.baseline?.has(message.id));
+      if (admitted) this.linkInput(turn, admitted.id);
+      else if (turn.accepted && idle) { this.settle({ stopReason: turn.cancelled ? "cancelled" : "end_turn" }); return; }
+    }
     const parents = this.indexHistory(messages);
     const current = messages.filter(message => parents.get(message.id) === turn.messageID);
     for (const message of current) if (message.type === "assistant" && message.time.completed) this.trace.message(message, turn.id, turn.messageID);
     const error = current.find((message): message is SessionMessageAssistant => message.type === "assistant" && Boolean(message.error));
     if (error?.error && !turn.cancelled) { this.settle(undefined, openCodeV2Error(error.error)); return; }
     const completed = current.some(message => message.type === "assistant" && message.time.completed && message.finish !== "tool-calls");
-    const idle = !active[this.nativeSessionId];
     if (turn.accepted && current.some(message => message.id === turn.messageID) && idle && (completed || turn.cancelled || turn.terminal)) {
       const session = await this.client.session.get({ sessionID: this.nativeSessionId });
       if (this.turn !== turn) return;

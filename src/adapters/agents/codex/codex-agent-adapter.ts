@@ -1,6 +1,7 @@
 import type { AgentProfile, AgentDriverOptions, AgentStartInput, AgentPromptInput } from "../../../domain/agents/agent-types.js";
 import { AgentAdapter } from "../shared/agent-adapter.js";
 import { CodexAppServerDriver, CodexAppServerReader } from "./codex-app-server-driver.js";
+import type { AgentCommand, AgentCommandInput, AgentCommandResult } from "../../../domain/agents/agent-commands.js";
 
 export class CodexAgentAdapter extends AgentAdapter {
   driver: CodexAppServerDriver;
@@ -24,6 +25,9 @@ export class CodexAgentAdapter extends AgentAdapter {
   async prompt(input: AgentPromptInput) {
     return this.driver.prompt(input);
   }
+
+  async listCommands(): Promise<AgentCommand[]> { return this.driver.listCommands(); }
+  async executeCommand(input: AgentCommandInput): Promise<AgentCommandResult> { return this.driver.executeCommand(input); }
 
   cancel() {
     return this.driver.cancel();

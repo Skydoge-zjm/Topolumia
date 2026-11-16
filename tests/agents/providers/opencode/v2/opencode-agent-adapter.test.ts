@@ -16,6 +16,66 @@ async function fixture(t, autoRespond = true) {
   return { ...f, adapter, events };
 }
 
+async function until(predicate) {
+  const deadline = Date.now() + 2_000;
+  while (!predicate()) { if (Date.now() > deadline) throw new Error("Timed out waiting for fixture input"); await delay(5); }
+}
+
+test("V2 compaction admission and summary completion do not finish the command before execution is idle", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, false);
+  let completed = false;
+  const pending = f.adapter.executeCommand({ name: "compact", id: "compact" }).finally(() => { completed = true; });
+  await until(() => f.calls.some(call => call.path.endsWith("/compact")));
+  await delay(20);
+  assert.equal(completed, false);
+  const sessionID = f.adapter.nativeSessionId;
+  const linked = f.events.find(event => event.type === "turn.native-linked" && event.turnId === "compact");
+  assert.equal(linked.payload.nativeMessageId, f.calls.find(call => call.path.endsWith("/compact")).body.id);
+  await assert.rejects(f.adapter.prompt({ turnId: "overlap", content: [] }), { code: "AGENT_TURN_ACTIVE" });
+  f.finishCompaction(sessionID); await delay(20);
+  assert.equal(completed, false);
+  f.endExecution(sessionID);
+  assert.equal((await pending).stopReason, "end_turn");
+});
+
+test("V2 compaction reports asynchronous failure instead of an admission success", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, false);
+  const pending = f.adapter.executeCommand({ name: "compact", id: "compact-failure" });
+  await until(() => f.calls.some(call => call.path.endsWith("/compact")));
+  f.finishCompaction(f.adapter.nativeSessionId, "Compaction failed"); f.endExecution(f.adapter.nativeSessionId);
+  await assert.rejects(pending, /Compaction failed/);
+});
+
+test("V2 compaction completion before the admission response is recovered from native history", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, false); f.deferPrompt();
+  const pending = f.adapter.executeCommand({ name: "compact", id: "compact-early" });
+  await until(() => f.calls.some(call => call.path.endsWith("/compact")));
+  f.finishCompaction(f.adapter.nativeSessionId); f.endExecution(f.adapter.nativeSessionId);
+  f.releasePrompt();
+  assert.equal((await pending).stopReason, "end_turn");
+});
+
+test("V2 compaction cancellation removes its input before interrupting execution", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, false);
+  const pending = f.adapter.executeCommand({ name: "compact", id: "compact-cancel" });
+  await until(() => f.calls.some(call => call.path.endsWith("/compact"))); await delay(20);
+  f.adapter.cancel(); assert.equal((await pending).stopReason, "cancelled");
+  const inputID = f.calls.find(call => call.path.endsWith("/compact")).body.id;
+  const cancelled = f.calls.findIndex(call => call.method === "DELETE" && call.path.endsWith(`/inbox/${inputID}`));
+  assert.ok(cancelled >= 0 && cancelled < f.calls.findIndex(call => call.path.endsWith("/interrupt")));
+});
+
+test("V2 project commands bind native replies to their own local turn", { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  await f.adapter.prompt({ turnId: "previous", content: [{ type: "text", text: "Earlier task" }] });
+  await f.adapter.listCommands();
+  await f.adapter.executeCommand({ name: "check", arguments: "Check project", id: "project-command" });
+  const command = f.calls.find(call => call.path.endsWith("/command") && call.method === "POST");
+  assert.deepEqual(command.body, { name: "check", text: "Check project", delivery: "queue" });
+  assert.equal(f.events.filter(event => event.type === "assistant.message.completed" && event.turnId === "project-command").length, 2);
+  assert.equal(f.events.filter(event => event.type === "assistant.message.completed" && event.turnId === "previous").length, 2);
+});
+
 test("V2 sends model, instructions, MCP and image input through the official client across turns", { timeout: 10_000 }, async t => {
   const f = await fixture(t);
   for (let n = 1; n <= 2; n++) {

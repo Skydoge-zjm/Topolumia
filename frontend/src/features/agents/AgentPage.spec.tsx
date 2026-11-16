@@ -102,7 +102,7 @@ beforeEach(() => {
           );
           return Response.json(rows[0]);
         }
-        if (path.endsWith("/turns") && holdTurn)
+        if ((path.endsWith("/turns") || path.endsWith("/commands")) && holdTurn)
           await new Promise<void>((resolve) => {
             releaseTurn = resolve;
           });
@@ -543,6 +543,82 @@ describe("Agent workspace interactions", () => {
     expect(document.querySelectorAll(".conversation-body")).toHaveLength(1);
     expect(document.querySelectorAll(".composer")).toHaveLength(1);
     expect(document.querySelectorAll(".message-body")).toHaveLength(1);
+  });
+
+  it("offers supported slash commands and submits them through the command route", async () => {
+    rows[0].capabilities = {
+      commands: [{
+        name: "compact",
+        label: "/compact",
+        description: "压缩当前 Agent 会话上下文。",
+        source: "builtin",
+        execution: "native",
+        risk: "session",
+      }],
+    };
+    const user = await open();
+    const input = screen.getByRole("textbox", { name: "研究消息" });
+    fireEvent.change(input, { target: { value: "/com" } });
+    expect(screen.getByRole("option")).toHaveTextContent("/compact");
+    fireEvent.change(input, { target: { value: "/compact" } });
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    await waitFor(() => expect(requests.some(request => request.path.endsWith("/commands"))).toBe(true));
+    expect(requests.find(request => request.path.endsWith("/commands"))?.body.name).toBe("compact");
+  });
+
+  it("blocks unknown commands submitted with Enter", async () => {
+    await open();
+    const input = screen.getByRole("textbox", { name: "研究消息" });
+    fireEvent.change(input, { target: { value: "/unknown" } });
+    expect(screen.getByRole("button", { name: "发送消息" })).toBeDisabled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(requests).toHaveLength(0);
+    expect(input).toHaveValue("/unknown");
+  });
+
+  it("preserves the next draft while a command submission is pending", async () => {
+    rows[0].capabilities = { commands: [{ name: "compact", label: "/compact", description: "Compact", source: "builtin", execution: "native", risk: "session" }] };
+    const user = await open();
+    const input = screen.getByRole("textbox", { name: "研究消息" });
+    holdTurn = true;
+    fireEvent.change(input, { target: { value: "/compact focus" } });
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    await waitFor(() => expect(releaseTurn).toBeTypeOf("function"));
+    expect(screen.getByText("正在发送…")).toBeVisible();
+    fireEvent.change(input, { target: { value: "Keep this next draft" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(requests).toHaveLength(1);
+    releaseTurn!();
+    await waitFor(() => expect(screen.queryByText("正在发送…")).toBeNull());
+    expect(input).toHaveValue("Keep this next draft");
+    expect(Object.values(localStorage).some(value => String(value).includes("Keep this next draft"))).toBe(true);
+    expect(requests[0]).toMatchObject({ path: "/api/agent-sessions/one/commands", body: { name: "compact", arguments: "focus" } });
+  });
+
+  it("retries uncertain commands with the original ID and retains newer text", async () => {
+    rows[0].capabilities = { commands: [{ name: "compact", label: "/compact", description: "Compact", source: "builtin", execution: "native", risk: "session" }] };
+    const user = await open();
+    const input = screen.getByRole("textbox", { name: "研究消息" });
+    actionError = "Command response lost";
+    fireEvent.change(input, { target: { value: "/compact focus" } });
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    await screen.findByText("Command response lost");
+    const original = requests[0].body;
+    fireEvent.change(input, { target: { value: "New question" } });
+    actionError = "";
+    await user.click(screen.getByRole("button", { name: "重试原消息" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toEqual({ path: "/api/agent-sessions/one/commands", body: original });
+    expect(input).toHaveValue("New question");
+  });
+
+  it("resumes detached conversations before sending commands", async () => {
+    rows[0].status = "detached";
+    rows[0].capabilities = { commands: [{ name: "compact", label: "/compact", description: "Compact", source: "builtin", execution: "native", risk: "session" }] };
+    const user = await open();
+    fireEvent.change(screen.getByRole("textbox", { name: "研究消息" }), { target: { value: "/compact" } });
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+    await waitFor(() => expect(requests.map(request => request.path)).toEqual(["/api/agent-sessions/one/resume", "/api/agent-sessions/one/commands"]));
   });
 
   it("allows typing during submission and preserves the next draft when the response arrives", async () => {

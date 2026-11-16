@@ -16,6 +16,7 @@ const transitions = new Set([
   "session.metadata.updated",
   "session.queue.updated",
   "session.research.updated",
+  "session.commands.updated",
   "driver.process.closed",
   "turn.started",
   "turn.cancelling",
@@ -51,12 +52,14 @@ export function applyAgentEvent(
     "turn.cancelled",
     "turn.failed",
     "session.closed",
+    "command.completed",
+    "command.failed",
   ].includes(event.type);
   let status = current.status;
   let approvals = current.pendingApprovals ?? [];
   if (event.type === "session.status" && typeof payload.status === "string")
     status = payload.status;
-  if (event.type === "turn.started") status = "running";
+  if (event.type === "turn.started" || event.type === "command.started") status = "running";
   if (
     event.type === "approval.requested" &&
     ["running", "awaiting_permission"].includes(current.status) &&
@@ -121,7 +124,7 @@ export function applyAgentEvent(
           : current.permissionGrants,
     activeTurnId: terminal
       ? null
-      : event.type === "turn.started"
+      : event.type === "turn.started" || event.type === "command.started"
         ? event.turnId
         : current.activeTurnId,
     cancellingTurnId:
@@ -143,6 +146,10 @@ export function applyAgentEvent(
       typeof payload.runtimeInstanceId === "string"
         ? payload.runtimeInstanceId
         : current.runtimeInstanceId,
+    capabilities:
+      event.type === "session.commands.updated" && Array.isArray(payload.commands)
+        ? { ...(current.capabilities ?? {}), commands: payload.commands as NonNullable<AgentSession["capabilities"]>["commands"] }
+        : current.capabilities,
     usage:
       event.type === "usage.updated"
         ? (payload as AgentUsageSnapshot)
@@ -198,6 +205,7 @@ export function mergeAgentSnapshot(
       "updatedAt",
       "historyStatus",
       "historyError",
+      "capabilities",
     ] as const)
       Object.assign(merged, { [key]: cached[key] });
     merged.lastCursor = cached.lastCursor;

@@ -1,5 +1,6 @@
 export type Locale = "zh" | "en";
 export type { AgentImageAttachment } from "@domain/agents/agent-attachments";
+export type { AgentCommand } from "@domain/agents/agent-commands";
 
 export interface ApiErrorShape {
   code?: string;
@@ -29,6 +30,8 @@ export interface AgentTurn {
   startedAt: string;
   completedAt?: string | null;
   clientMessageId?: string;
+  kind?: "message" | "command";
+  command?: import("@domain/agents/agent-commands").AgentCommandInput;
 }
 
 export interface QueuedAgentMessage {
@@ -38,6 +41,8 @@ export interface QueuedAgentMessage {
   model?: string | null;
   reasoningEffort?: string | null;
   createdAt: string;
+  kind?: "message" | "command";
+  command?: { name: string; arguments?: string; id?: string };
 }
 
 export interface AgentSession {
@@ -97,6 +102,7 @@ export interface AgentSession {
     session?: { sync?: boolean; resume?: boolean; close?: boolean };
     cancel?: boolean;
     approval?: { interactive?: boolean; policy?: string };
+    commands?: import("@domain/agents/agent-commands").AgentCommand[];
   };
   usage?: import("@domain/agents/agent-usage").AgentUsageSnapshot | null;
 }

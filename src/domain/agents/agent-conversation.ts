@@ -35,6 +35,7 @@ const retainedTypes = new Set([
   "user.message", "assistant.message.delta", "assistant.message.snapshot", "assistant.message.completed",
   "reasoning.summary.delta", "reasoning.summary.snapshot", "reasoning.summary.completed", "tool.started", "tool.updated", "tool.completed", "tool.failed",
   "plan.updated", "approval.requested", "approval.resolved", "session.status", "session.closed",
+  "command.started", "command.completed", "command.failed", "session.commands.updated",
   "turn.started", "turn.completed", "turn.cancelled", "turn.failed", "turn.retrying",
   "agent.activity", "agent.delegated", "files.changed", "agent.question.unsupported", "content.removed",
 ]);
