@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { createOpenCodeV2Fixture } from "../../../../../fixtures/native/opencode/v2/server.js";
 import { OpenCodeV2AgentAdapter } from "../../../../../src/adapters/agents/opencode/v2/opencode-agent-adapter.js";
+import { AgentSessionGateway } from "../../../../../src/services/agents/agent-session-gateway.js";
 
-async function fixture(t, autoRespond = true) {
+async function fixture(t, autoRespond = true, configure = _fixture => {}, profile = {}) {
   const f = await createOpenCodeV2Fixture({ autoRespond });
+  configure(f);
   const events = [];
-  const adapter = new OpenCodeV2AgentAdapter({ id: "v2", provider: "opencode", label: "OpenCode 2", command: "fixture" }, {
+  const adapter = new OpenCodeV2AgentAdapter({ id: "v2", provider: "opencode", label: "OpenCode 2", command: "fixture", ...profile }, {
     serverFactory: () => ({ start: async () => f.client, close: async () => {}, version: "2.2.7" }) as never,
     onEvent: event => events.push(event),
   });
@@ -20,6 +22,119 @@ async function until(predicate) {
   const deadline = Date.now() + 2_000;
   while (!predicate()) { if (Date.now() > deadline) throw new Error("Timed out waiting for fixture input"); await delay(5); }
 }
+
+test("V2 undo and redo traverse the native revert cursor one user turn at a time", { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 3; i++) await f.adapter.prompt({ turnId: `turn-${i}`, content: [{ type: "text", text: `Task ${i}` }] });
+  const native = f.sessions.get(f.adapter.nativeSessionId);
+  const users = native.messages.filter(message => message.type === "user");
+  for (const index of [2, 1, 0]) {
+    await f.adapter.executeCommand({ name: "undo" });
+    assert.equal(native.info.revert.messageID, users[index].id);
+  }
+  await assert.rejects(f.adapter.executeCommand({ name: "undo" }), { code: "AGENT_COMMAND_INVALID" });
+  for (const index of [1, 2]) {
+    await f.adapter.executeCommand({ name: "redo" });
+    assert.equal(native.info.revert.messageID, users[index].id);
+  }
+  await f.adapter.executeCommand({ name: "redo" }); assert.equal(native.info.revert, undefined);
+  await assert.rejects(f.adapter.executeCommand({ name: "redo" }), { code: "AGENT_COMMAND_INVALID" });
+  const stages = f.calls.filter(call => call.path.endsWith("/revert/stage"));
+  assert.deepEqual(stages.map(call => call.body.messageID), [users[2].id, users[1].id, users[0].id, users[1].id, users[2].id]);
+  assert.ok(stages.every(call => call.body.files === true));
+  assert.equal(native.messages.filter(message => message.type === "user").length, 3);
+});
+
+test("V2 does not revert files when the native cursor cannot be found in history", async t => {
+  const f = await fixture(t);
+  f.sessions.get(f.adapter.nativeSessionId).info.revert = { messageID: "missing-message" };
+  for (const name of ["undo", "redo"]) await assert.rejects(f.adapter.executeCommand({ name }), { code: "AGENT_COMMAND_INVALID", status: 409 });
+  assert.ok(!f.calls.some(call => call.path.includes("/revert")));
+});
+
+test("V2 project commands apply the selected model and effort before native admission", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, true, native => {
+    const list = native.client.model.list.bind(native.client.model);
+    native.client.model.list = async input => { const result = await list(input); return { ...result, data: [...result.data, { ...native.model, id: "alternate", name: "Alternate" }] }; };
+  }, { reasoningEffort: "low" });
+  await f.adapter.listCommands();
+  await f.adapter.executeCommand({ name: "check", arguments: "Check project", id: "selected-model", model: "fixture/alternate", reasoningEffort: "high" });
+  const model = f.calls.find(call => call.path.endsWith("/model") && call.method === "POST");
+  const command = f.calls.find(call => call.path.endsWith("/command") && call.method === "POST");
+  assert.deepEqual(model.body.model, { providerID: "fixture", id: "alternate", variant: "high" });
+  assert.ok(f.calls.indexOf(model) < f.calls.indexOf(command));
+  assert.deepEqual(f.sessions.get(f.adapter.nativeSessionId).model, model.body.model);
+});
+
+test("V2 command model validation rejects invalid settings without admitting work", async t => {
+  const f = await fixture(t); await f.adapter.listCommands();
+  await assert.rejects(f.adapter.executeCommand({ name: "check", model: "missing" }), { code: "OPENCODE_MODEL_UNAVAILABLE" });
+  await assert.rejects(f.adapter.executeCommand({ name: "check", reasoningEffort: "ultra" }), { code: "OPENCODE_VARIANT_UNAVAILABLE" });
+  assert.ok(!f.calls.some(call => call.method === "POST" && ["/model", "/command", "/compact"].some(suffix => call.path.endsWith(suffix))));
+  assert.equal(f.adapter.closed, false);
+  assert.equal((await f.adapter.executeCommand({ name: "check", arguments: "Valid retry" })).stopReason, "end_turn");
+});
+
+test("V2 fork switches native identity and event delivery together", { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  await f.adapter.prompt({ turnId: "before-fork", content: [{ type: "text", text: "Original task" }] });
+  const original = f.adapter.nativeSessionId;
+  const fork = await f.adapter.executeCommand({ name: "fork" });
+  assert.notEqual(fork.nativeSessionId, original);
+  assert.equal(f.adapter.nativeSessionId, fork.nativeSessionId);
+  assert.equal(f.sessions.get(fork.nativeSessionId).info.parentID, original);
+  await f.adapter.prompt({ turnId: "after-fork", content: [{ type: "text", text: "Continue" }] });
+  const replies = f.events.filter(event => event.type === "assistant.message.completed" && event.turnId === "after-fork");
+  assert.equal(replies.length, 2); assert.ok(replies.every(event => event.payload.nativeSessionId === fork.nativeSessionId));
+});
+
+test("V2 fork history failure retains the gateway identity and requires a recoverable runtime restart", { timeout: 10_000 }, async t => {
+  const f = await createOpenCodeV2Fixture({ autoRespond: true });
+  const adapters = [];
+  const gateway = new AgentSessionGateway({ profileRegistry: { descriptors: async () => [], createAdapter: async (_profile, options) => {
+    const adapter = new OpenCodeV2AgentAdapter({ id: "v2", provider: "opencode", driver: "opencode-server-v2", label: "V2", command: "fixture" }, {
+      ...options, serverFactory: () => ({ start: async () => f.client, close: async () => {}, version: "2.2.7" }) as never,
+    });
+    adapters.push(adapter); return adapter;
+  } } });
+  t.after(async () => { await gateway.closeAll(); await f.close(); });
+  const session = await gateway.create({ profileId: "v2", cwd: process.cwd() });
+  f.failForkHistory(500);
+  const command = gateway.executeCommand(session.id, { name: "fork", id: "failed-fork" });
+  await until(() => gateway.snapshot(session.id).turns.find(turn => turn.id === command.id)?.completedAt);
+  const failed = gateway.snapshot(session.id);
+  assert.equal(failed.status, "failed"); assert.equal(failed.nativeSessionId, session.nativeSessionId);
+  assert.equal(adapters[0].nativeSessionId, session.nativeSessionId); assert.equal(adapters[0].closed, true);
+  assert.throws(() => gateway.startTurn(session.id, { text: "Must resume" }), { code: "AGENT_SESSION_NOT_READY" });
+  const resumed = await gateway.resume(session.id, { cwd: process.cwd() });
+  assert.equal(resumed.nativeSessionId, session.nativeSessionId);
+  gateway.startTurn(session.id, { text: "Recovered task" });
+  await until(() => gateway.snapshot(session.id).status === "ready");
+  assert.match(gateway.snapshot(session.id).turns.at(-1).assistantText, /OpenCode 2 verified/);
+});
+
+test("V2 fork stream failure does not publish a partially prepared native identity", { timeout: 10_000 }, async t => {
+  const f = await fixture(t); const original = f.adapter.nativeSessionId;
+  f.client.event.subscribe = async function* () { throw new Error("Fork event stream unavailable"); };
+  await assert.rejects(f.adapter.executeCommand({ name: "fork" }), /Fork event stream unavailable/);
+  assert.equal(f.adapter.closed, true); assert.equal(f.adapter.nativeSessionId, original);
+  await until(() => f.streams.size === 0);
+});
+
+test("V2 closing during fork preparation prevents a late session switch", { timeout: 10_000 }, async t => {
+  const f = await fixture(t); const original = f.adapter.nativeSessionId;
+  let release;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const fork = f.client.session.fork.bind(f.client.session);
+  f.client.session.fork = async input => { const created = await fork(input); await gate; return created; };
+  t.after(() => release());
+  const pending = f.adapter.executeCommand({ name: "fork" });
+  await until(() => f.calls.some(call => call.path.endsWith("/fork")));
+  await f.adapter.close(); release();
+  await assert.rejects(pending, { code: "OPENCODE_V2_CLOSED" });
+  assert.equal(f.adapter.nativeSessionId, original);
+  assert.equal(f.calls.filter(call => call.path === "/api/event").length, 1);
+});
 
 test("V2 compaction admission and summary completion do not finish the command before execution is idle", { timeout: 10_000 }, async t => {
   const f = await fixture(t, false);

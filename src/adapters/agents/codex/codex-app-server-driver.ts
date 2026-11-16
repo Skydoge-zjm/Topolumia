@@ -142,11 +142,11 @@ export class CodexAppServerDriver extends AgentDriver {
       ],
       ...(model ? { model } : {}),
       ...((reasoningEffort ?? this.profile.reasoningEffort) ? { effort: reasoningEffort ?? this.profile.reasoningEffort } : {}),
-    }, 60_000));
+    }, Math.min(60_000, this.requestTimeoutMs)));
   }
 
   async #runTurn(turnId: string, start: () => Promise<{ turn?: CodexTurn }>, notificationTurn = false): Promise<AgentTurnResult> {
-    if (!this.process || this.process.closed || !this.nativeSessionId) {
+    if (this.closed || !this.process || this.process.closed || !this.nativeSessionId) {
       throw errorFromMessage("CODEX_SESSION_NOT_STARTED", "Codex app-server session 尚未启动。", {}, 409);
     }
     if (this.turnWait) throw errorFromMessage("AGENT_TURN_ALREADY_RUNNING", "Codex 当前已有运行中的 turn。", {}, 409);
@@ -159,13 +159,23 @@ export class CodexAppServerDriver extends AgentDriver {
       this.turnWait = { turnId, resolve, reject };
     });
     void completion.catch(() => {});
+    let startCompleted = false;
     try {
       const started = await start();
+      startCompleted = true;
       if (started.turn?.id && this.turnWait) this.#linkTurn(started.turn.id);
       if (this.turnWait && !this.nativeTurnId && !notificationTurn) throw errorFromMessage("CODEX_TURN_ID_MISSING", "Codex 没有返回原生回合 ID。");
       if (this.cancelRequested && this.turnWait) this.cancel();
       return await completion;
     } catch (error) {
+      if (!startCompleted && !this.turnWait) return await completion;
+      const rejected = error instanceof AppError && error.code === "AGENT_REMOTE_ERROR";
+      const uncertain = !startCompleted && (!rejected || this.nativeTurnId !== null)
+        || error instanceof AppError && error.code === "CODEX_TURN_ID_MISSING";
+      if (uncertain && !this.process.closed) {
+        this.closed = true;
+        await this.process.kill();
+      }
       if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return await completion; }
       this.#settleTurn(null, error);
       throw error;
@@ -198,19 +208,20 @@ export class CodexAppServerDriver extends AgentDriver {
     if (this.turnWait)
       throw errorFromMessage("AGENT_COMMAND_BUSY", "Codex 当前已有运行中的回合。", {}, 409);
     const args = commandArguments(input.arguments);
+    if (name === "rename" && !args) throw new AppError("AGENT_COMMAND_INVALID", "/rename 需要提供名称。", { status: 422 });
     const turnId = input.id ?? randomUUID();
+    const timeout = Math.min(60_000, this.requestTimeoutMs);
     const result = await this.#runTurn(turnId, async () => {
-      if (name === "compact") return this.process.request("thread/compact/start", { threadId: this.nativeSessionId }, 60_000);
+      if (name === "compact") return this.process.request("thread/compact/start", { threadId: this.nativeSessionId }, timeout);
       if (name === "review") return this.process.request("review/start", { threadId: this.nativeSessionId,
-        target: args ? { type: "custom", instructions: args } : { type: "uncommittedChanges" } }, 60_000);
+        target: args ? { type: "custom", instructions: args } : { type: "uncommittedChanges" } }, timeout);
       let result: unknown;
       if (name === "rename") {
-        if (!args) throw new AppError("AGENT_COMMAND_INVALID", "/rename 需要提供名称。", { status: 422 });
-        await this.process.request("thread/name/set", { threadId: this.nativeSessionId, name: args }, 60_000);
-      } else if (args === "clear") result = await this.process.request("thread/goal/clear", { threadId: this.nativeSessionId, origin: "user" }, 60_000);
-      else if (args) result = await this.process.request("thread/goal/set", { threadId: this.nativeSessionId, objective: args, origin: "user" }, 60_000);
+        await this.process.request("thread/name/set", { threadId: this.nativeSessionId, name: args }, timeout);
+      } else if (args === "clear") result = await this.process.request("thread/goal/clear", { threadId: this.nativeSessionId, origin: "user" }, timeout);
+      else if (args) result = await this.process.request("thread/goal/set", { threadId: this.nativeSessionId, objective: args, origin: "user" }, timeout);
       else {
-        result = await this.process.request<{ goal?: { objective?: string } | null }>("thread/goal/get", { threadId: this.nativeSessionId }, 60_000);
+        result = await this.process.request<{ goal?: { objective?: string } | null }>("thread/goal/get", { threadId: this.nativeSessionId }, timeout);
         const goal = (result as { goal?: { objective?: string } | null }).goal;
         this.emit("assistant.message.completed", { messageId: `goal:${turnId}`, text: goal?.objective ?? "当前会话未设置目标。" }, turnId);
       }

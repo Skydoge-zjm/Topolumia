@@ -86,10 +86,14 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
     if (!session?.id || !session.location || !sameOpenCodeV2Directory(session.location.directory, this.cwd)) throw new AppError("OPENCODE_SESSION_DIRECTORY_MISMATCH", "OpenCode 2 原生会话不属于当前项目目录。", { status: 409 });
   }
 
+  private selectedModel(input: Pick<AgentPromptInput, "model" | "reasoningEffort">) {
+    return openCodeV2ModelRef(this.catalog!, input.model || this.catalog!.model!, input.reasoningEffort || this.profile.reasoningEffort);
+  }
+
   async prompt(input: AgentPromptInput): Promise<AgentTurnResult> {
     if (!this.client || !this.nativeSessionId || this.closed) throw new AppError("OPENCODE_NOT_READY", "OpenCode 2 会话未连接。", { status: 409 });
     if (this.turn) throw new AppError("AGENT_TURN_ACTIVE", "当前会话已有运行中的任务。", { status: 409 });
-    const model = openCodeV2ModelRef(this.catalog!, input.model || this.catalog!.model!, input.reasoningEffort || this.profile.reasoningEffort);
+    const model = this.selectedModel(input);
     const { turn, result } = this.createTurn(input.turnId);
     this.turn = turn;
     this.linkInput(turn, turn.messageID);
@@ -151,12 +155,16 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
     if (this.turn) throw new AppError("AGENT_COMMAND_BUSY", "OpenCode 2 当前已有运行中的回合。", { status: 409 });
     const args = commandArguments(input.arguments);
     if (name === "compact" || !openCodeAgentCommands.some(command => command.name === name)) {
+      const model = this.selectedModel(input);
       const { turn, result } = this.createTurn(input.id ?? `command_${Date.now()}`, name === "compact" ? "compact" : "command");
       this.turn = turn;
       if (turn.nativeLinked) this.linkInput(turn, turn.messageID);
       let submitted = false;
       try {
         if (turn.kind === "command") turn.baseline = new Set((await readOpenCodeV2Messages(this.client, this.nativeSessionId)).map(message => message.id));
+        if (this.turn !== turn) return { stopReason: "cancelled" };
+        if (turn.cancelled) { this.settle({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
+        await this.client.session.switchModel({ sessionID: this.nativeSessionId, model }, { signal: turn.abort.signal });
         if (this.turn !== turn) return { stopReason: "cancelled" };
         if (turn.cancelled) { this.settle({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
         submitted = true;
@@ -173,28 +181,60 @@ export class OpenCodeV2AgentAdapter extends AgentAdapter {
       return { ...completed, nativeSessionId: this.nativeSessionId,
         stopReason: completed.stopReason === "cancelled" || completed.stopReason === "incomplete" ? completed.stopReason : "end_turn" };
     } else if (name === "undo" || name === "redo") {
-      if (name === "redo") await this.client.session.revert.clear({ sessionID: this.nativeSessionId });
-      else {
-        const messages = await readOpenCodeV2Messages(this.client, this.nativeSessionId);
-        const lastUser = [...messages].reverse().find(message => message.type === "user");
-        if (!lastUser) throw new AppError("AGENT_COMMAND_INVALID", "当前会话没有可撤销的消息。", { status: 422 });
-        await this.client.session.revert.stage({ sessionID: this.nativeSessionId, messageID: lastUser.id, files: true });
-      }
+      const [session, messages] = await Promise.all([
+        this.client.session.get({ sessionID: this.nativeSessionId }), readOpenCodeV2Messages(this.client, this.nativeSessionId),
+      ]);
+      const boundary = session.revert?.messageID;
+      const cursor = boundary ? messages.findIndex(message => message.id === boundary) : messages.length;
+      if (cursor < 0) throw new AppError("AGENT_COMMAND_INVALID", "无法定位当前撤销位置，请同步会话后重试。", { status: 409 });
+      if (name === "redo" && !boundary) throw new AppError("AGENT_COMMAND_INVALID", "当前会话没有可恢复的消息。", { status: 422 });
+      const target = name === "undo" ? messages.slice(0, cursor).reverse().find(message => message.type === "user")
+        : messages.slice(cursor + 1).find(message => message.type === "user");
+      if (target) await this.client.session.revert.stage({ sessionID: this.nativeSessionId, messageID: target.id, files: true });
+      else if (name === "redo") await this.client.session.revert.clear({ sessionID: this.nativeSessionId });
+      else throw new AppError("AGENT_COMMAND_INVALID", "当前会话没有可撤销的消息。", { status: 422 });
     } else if (name === "fork") {
-      const forked = await this.client.session.fork({ sessionID: this.nativeSessionId });
-      await this.stream?.close();
-      this.nativeSessionId = forked.id;
-      this.userTurns.clear();
-      this.parents.clear();
-      this.indexHistory(await readOpenCodeV2Messages(this.client, this.nativeSessionId));
-      this.permissions = new OpenCodeV2Permissions(this.client, this.nativeSessionId, event => this.emit(event));
-      this.stream = new OpenCodeV2EventStream(this.client, this.nativeSessionId, event => this.handle(event),
-        async () => { await this.reconcile(); await this.permissions?.sync(this.turn?.id ?? null); },
-        error => this.retire(error), () => this.emit({ type: "connection.status", payload: { status: "reconnecting" } }));
-      await this.stream.start();
-      return { stopReason: "end_turn", nativeSessionId: forked.id };
+      return this.forkSession();
     }
     return { stopReason: "end_turn", nativeSessionId: this.nativeSessionId };
+  }
+
+  private async forkSession(): Promise<AgentCommandResult> {
+    let nextStream: OpenCodeV2EventStream | undefined;
+    try {
+      const client = this.client!;
+      const forked = await client.session.fork({ sessionID: this.nativeSessionId! });
+      this.validateSession(forked);
+      const check = () => { if (this.closed) throw new AppError("OPENCODE_V2_CLOSED", "OpenCode 2 会话已关闭。", { status: 409 }); };
+      check();
+      const messages = await readOpenCodeV2Messages(client, forked.id);
+      check();
+      const permissions = new OpenCodeV2Permissions(client, forked.id, event => this.emit(event));
+      const current = () => !this.closed && this.nativeSessionId === forked.id;
+      let streamError: unknown;
+      nextStream = new OpenCodeV2EventStream(client, forked.id, event => { if (current()) this.handle(event); },
+        async () => { if (current()) { await this.reconcile(); await permissions.sync(this.turn?.id ?? null); } },
+        error => { streamError = error; if (current()) this.retire(error); },
+        () => { if (current()) this.emit({ type: "connection.status", payload: { status: "reconnecting" } }); });
+      await nextStream.start();
+      check();
+      if (streamError) throw streamError;
+      await this.stream?.close();
+      check();
+      if (streamError) throw streamError;
+      this.userTurns.clear();
+      this.parents.clear();
+      this.indexHistory(messages);
+      this.permissions = permissions;
+      this.stream = nextStream;
+      this.nativeSessionId = forked.id;
+      return { stopReason: "end_turn", nativeSessionId: forked.id };
+    } catch (error) {
+      await nextStream?.close().catch(() => {});
+      this.retire(error);
+      await this.close();
+      throw openCodeV2Error(error);
+    }
   }
 
   private handle(event: OpenCodeV2Event): void {

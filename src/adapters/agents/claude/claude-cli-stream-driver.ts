@@ -20,6 +20,8 @@ export class ClaudeCliStreamDriver extends AgentDriver {
   sessionAllows: Set<string>; sessionDirectories: Set<string>; sessionPermissionMode: string | null;
   developerInstructions?: string | null; researchMcp?: ResearchMcpBinding | null; permissionHost?: ClaudePermissionHost;
   availableCommands = new Map<string, AgentCommand>();
+  private promptTask?: Promise<AgentTurnResult>;
+  private closeTask?: Promise<void>;
   constructor(profile: AgentProfile, options: AgentDriverOptions = {}) {
     super(profile, options);
     this.child = null;
@@ -64,85 +66,95 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     };
   }
 
-  async prompt({ turnId, content, model, reasoningEffort }: AgentPromptInput): Promise<AgentTurnResult> {
+  async prompt(input: AgentPromptInput): Promise<AgentTurnResult> {
     if (this.closed) throw errorFromMessage("CLAUDE_SESSION_CLOSED", "Claude Code session 已关闭。", {}, 409);
-    if (this.turnWait) throw errorFromMessage("AGENT_TURN_ALREADY_RUNNING", "Claude 当前已有运行中的 turn。", {}, 409);
+    if (this.promptTask) throw errorFromMessage("AGENT_TURN_ALREADY_RUNNING", "Claude 当前已有运行中的 turn。", {}, 409);
+    const task = this.#prompt(input);
+    this.promptTask = task;
+    try { return await task; }
+    finally { if (this.promptTask === task) this.promptTask = undefined; }
+  }
+
+  async #prompt({ turnId, content, model, reasoningEffort }: AgentPromptInput): Promise<AgentTurnResult> {
     this.activeTurnId = turnId;
     this.cancelRequested = false;
     this.trace = new ClaudeTrace((type, payload) => this.emit(type, payload, turnId), turnId);
-    const args = [
-      ...(this.profile.launcherArgs ?? []),
-      "--print",
-      "--output-format", "stream-json",
-      "--input-format", "stream-json",
-      "--permission-prompt-tool=stdio",
-      "--verbose",
-      "--include-partial-messages",
-      ...((this.sessionPermissionMode ?? this.profile.permissionMode) ? ["--permission-mode", this.sessionPermissionMode ?? this.profile.permissionMode!] : this.profile.nativeConfig ? [] : ["--permission-mode", "default"]),
-      "--allowed-tools", [...new Set([...(this.profile.nativeConfig ? [] : this.profile.allowedTools ?? ["Read", "Grep", "Glob"]), ...(this.researchMcp ? ["mcp__topolumia__*"] : [])])].join(","),
-    ];
-    const settingsFile = await claudeSettingsFile(this.profile, this.sessionAllows);
-    if (settingsFile) args.push("--settings", settingsFile);
-    else if (this.sessionAllows.size) args.push("--settings", JSON.stringify({ permissions: { allow: [...this.sessionAllows] } }));
-    for (const directory of this.sessionDirectories) args.push("--add-dir", directory);
-    if (this.researchMcp) args.push("--mcp-config", JSON.stringify({ mcpServers: { [this.researchMcp.name]: { type: "stdio", command: this.researchMcp.command, args: this.researchMcp.args, env: this.researchMcp.env, cwd: this.researchMcp.cwd } } }));
-    const selectedModel = model ?? this.profile.model;
-    const selectedEffort = reasoningEffort ?? this.profile.reasoningEffort;
-    if (selectedModel) args.push("--model", selectedModel);
-    if (selectedEffort) args.push("--effort", selectedEffort);
-    if (this.developerInstructions) args.push("--append-system-prompt", this.developerInstructions);
-    if (this.sessionStarted) args.push("--resume", this.nativeSessionId!);
-    else args.push("--session-id", this.nativeSessionId!);
-    args.push(...(this.profile.extraArgs ?? []));
     const completion = new Promise<AgentTurnResult>((resolve, reject) => {
       this.turnWait = { turnId, resolve, reject };
     });
     void completion.catch(() => {});
-    // Each turn owns one short-lived Claude CLI process. Capture that process
-    // in the callbacks so a late close event from the previous turn cannot
-    // clear or settle the process that has already started for the next turn.
-    const processRef: JsonlProcess = new JsonlProcess({
-      command: this.profile.command,
-      args,
-      cwd: this.cwd,
-      env: this.environment,
-      label: this.profile.label,
-      requestTimeoutMs: this.requestTimeoutMs,
-      onMessage: (message) => this.#onMessage(message, processRef),
-      onClose: (detail) => this.#onClose(detail, processRef),
-    });
-    this.child = processRef;
-    const host = new ClaudePermissionHost(processRef, (type, payload) => {
-      this.emit(type, payload, turnId);
-    }, updates => {
-      for (const update of updates) {
-        if (update.type === "addRules") for (const rule of update.rules ?? []) if (typeof rule.toolName === "string") this.sessionAllows.add(`${rule.toolName}${rule.ruleContent ? `(${rule.ruleContent})` : ""}`);
-        if (update.type === "addDirectories") for (const directory of update.directories ?? []) if (typeof directory === "string") this.sessionDirectories.add(directory);
-        if (update.type === "setMode" && update.mode === "acceptEdits" && update.destination === "session") this.sessionPermissionMode = "acceptEdits";
-      }
-    });
-    this.permissionHost = host;
+    let processRef: JsonlProcess | undefined;
+    let host: ClaudePermissionHost | undefined;
     try {
+      const args = [
+        ...(this.profile.launcherArgs ?? []),
+        "--print",
+        "--output-format", "stream-json",
+        "--input-format", "stream-json",
+        "--permission-prompt-tool=stdio",
+        "--verbose",
+        "--include-partial-messages",
+        ...((this.sessionPermissionMode ?? this.profile.permissionMode) ? ["--permission-mode", this.sessionPermissionMode ?? this.profile.permissionMode!] : this.profile.nativeConfig ? [] : ["--permission-mode", "default"]),
+        "--allowed-tools", [...new Set([...(this.profile.nativeConfig ? [] : this.profile.allowedTools ?? ["Read", "Grep", "Glob"]), ...(this.researchMcp ? ["mcp__topolumia__*"] : [])])].join(","),
+      ];
+      const settingsFile = await claudeSettingsFile(this.profile, this.sessionAllows);
+      if (this.closed || this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return await completion; }
+      if (settingsFile) args.push("--settings", settingsFile);
+      else if (this.sessionAllows.size) args.push("--settings", JSON.stringify({ permissions: { allow: [...this.sessionAllows] } }));
+      for (const directory of this.sessionDirectories) args.push("--add-dir", directory);
+      if (this.researchMcp) args.push("--mcp-config", JSON.stringify({ mcpServers: { [this.researchMcp.name]: { type: "stdio", command: this.researchMcp.command, args: this.researchMcp.args, env: this.researchMcp.env, cwd: this.researchMcp.cwd } } }));
+      const selectedModel = model ?? this.profile.model;
+      const selectedEffort = reasoningEffort ?? this.profile.reasoningEffort;
+      if (selectedModel) args.push("--model", selectedModel);
+      if (selectedEffort) args.push("--effort", selectedEffort);
+      if (this.developerInstructions) args.push("--append-system-prompt", this.developerInstructions);
+      if (this.sessionStarted) args.push("--resume", this.nativeSessionId!);
+      else args.push("--session-id", this.nativeSessionId!);
+      args.push(...(this.profile.extraArgs ?? []));
+      // Each turn owns one short-lived Claude CLI process. Capture that process
+      // in the callbacks so a late close event from the previous turn cannot
+      // clear or settle the process that has already started for the next turn.
+      processRef = new JsonlProcess({
+        command: this.profile.command,
+        args,
+        cwd: this.cwd,
+        env: this.environment,
+        label: this.profile.label,
+        requestTimeoutMs: this.requestTimeoutMs,
+        onMessage: (message) => this.#onMessage(message, processRef!),
+        onClose: (detail) => this.#onClose(detail, processRef!),
+      });
+      this.child = processRef;
+      host = new ClaudePermissionHost(processRef, (type, payload) => {
+        this.emit(type, payload, turnId);
+      }, updates => {
+        for (const update of updates) {
+          if (update.type === "addRules") for (const rule of update.rules ?? []) if (typeof rule.toolName === "string") this.sessionAllows.add(`${rule.toolName}${rule.ruleContent ? `(${rule.ruleContent})` : ""}`);
+          if (update.type === "addDirectories") for (const directory of update.directories ?? []) if (typeof directory === "string") this.sessionDirectories.add(directory);
+          if (update.type === "setMode" && update.mode === "acceptEdits" && update.destination === "session") this.sessionPermissionMode = "acceptEdits";
+        }
+      });
+      this.permissionHost = host;
       await processRef.start();
-      if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
+      if (this.closed || this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return await completion; }
       const initialized = await host.initialize(Math.min(this.requestTimeoutMs, 60_000));
       this.agentInfo = { ...this.agentInfo, version: typeof initialized.claude_code_version === "string" ? initialized.claude_code_version : this.agentInfo.version };
-      if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
+      if (this.closed || this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return await completion; }
       const images = await promptImages(content);
-      if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
+      if (this.closed || this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return await completion; }
       processRef.send({ type: "user", session_id: this.nativeSessionId, message: { role: "user", content: [
         ...images.map(image => ({ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } })),
         ...(this.contextText(content) ? [{ type: "text", text: this.contextText(content) }] : []),
       ] }, parent_tool_use_id: null });
       return await completion;
     } catch (error) {
-      if (this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return { stopReason: "cancelled" }; }
+      if (this.closed || this.cancelRequested) { this.#settleTurn({ stopReason: "cancelled" }); return await completion; }
       this.#settleTurn(null, error);
       throw error;
     } finally {
-      host.finish(this.cancelRequested ? "cancelled" : "expired");
-      await processRef.kill();
-      host.close();
+      host?.finish(this.cancelRequested ? "cancelled" : "expired");
+      await processRef?.kill();
+      host?.close();
       if (this.activeTurnId === turnId) this.activeTurnId = null;
     }
   }
@@ -163,12 +175,14 @@ export class ClaudeCliStreamDriver extends AgentDriver {
   }
 
   cancel() {
-    if (!this.child || !this.turnWait) return;
+    if (!this.turnWait) return;
     this.cancelRequested = true;
+    if (!this.child || this.child.closed) return;
     void this.permissionHost?.request({ subtype: "interrupt", cancel_async_messages: true }, 5_000).catch(() => {});
     const processRef = this.child;
+    const wait = this.turnWait;
     const timer = setTimeout(() => {
-      if (this.child !== processRef || !this.turnWait) return;
+      if (this.child !== processRef || this.turnWait !== wait) return;
       this.trace?.finish("interrupted"); this.#settleTurn({ stopReason: "cancelled" }); void processRef.kill();
     }, 1500);
     timer.unref?.();
@@ -179,12 +193,17 @@ export class ClaudeCliStreamDriver extends AgentDriver {
     this.permissionHost?.resolve(requestId, optionId, cancelled);
   }
 
-  async close() {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
     this.closed = true;
+    this.cancelRequested = true;
     if (this.turnWait) this.trace?.finish("interrupted");
     if (this.turnWait) this.#settleTurn({ stopReason: "cancelled" });
-    await this.child?.kill();
+    this.closeTask = (async () => {
+      await this.child?.kill();
+      await this.promptTask?.catch(() => {});
+    })();
+    return this.closeTask;
   }
 
   #onMessage(value: unknown, processRef: JsonlProcess) {

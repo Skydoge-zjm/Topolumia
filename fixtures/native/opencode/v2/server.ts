@@ -11,7 +11,7 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
     variants: [{ id: "low" }, { id: "high" }], capabilities: { input: ["text", "image"], output: ["text"], tools: true }, limit: { context: 32000, output: 4096 } };
   const mcp = new Map<string, any>();
   let sequence = 0, eventID = 0, sessionID = 0;
-  let failPrompt = 0, failInterrupt = 0, defer = false, release = () => {};
+  let failPrompt = 0, failInterrupt = 0, failForkHistory = 0, defer = false, release = () => {};
   const send = (type: string, data: any, durable = true) => {
     const event = { id: `evt_${++eventID}`, created: Date.now(), type, data, location: { directory }, ...(durable ? { durable: { aggregateID: data.sessionID, seq: ++sequence, version: 1 } } : {}) };
     if (durable) log.push(event);
@@ -111,6 +111,19 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
       const id = match[1], tail = match[2];
       if (!tail && request.method === "GET") return json({ data: session.info });
       if (!tail && request.method === "PATCH") { Object.assign(session.info, body); return empty(); }
+      if (tail === "/fork") {
+        const forkID = `ses_fixture_${++sessionID}`;
+        const fork = structuredClone(session);
+        fork.info = { ...fork.info, id: forkID, parentID: id, time: { created: Date.now(), updated: Date.now() } };
+        sessions.set(forkID, fork);
+        return json({ data: fork.info });
+      }
+      if (tail === "/revert/stage") {
+        if (!session.messages.some((message: any) => message.id === body.messageID)) return json({ _tag: "MessageNotFoundError", message: "Revert target missing" }, 404);
+        session.info.revert = { messageID: body.messageID };
+        return json({ data: session.info.revert });
+      }
+      if (tail === "/revert" && request.method === "DELETE") { delete session.info.revert; return empty(); }
       if (tail === "/model") { session.model = body.model; return empty(); }
       if (/^\/inbox\/[^/]+$/.test(tail) && request.method === "DELETE") return empty();
       if (tail === "/compact") {
@@ -139,6 +152,7 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
         if (defer) release = admit; else admit(); return;
       }
       if (tail === "/message") {
+        if (session.info.parentID && failForkHistory) { const status = failForkHistory; failForkHistory = 0; return json({ message: "Fork history unavailable" }, status); }
         if (url.searchParams.has("cursor") && url.searchParams.has("order")) return json({ _tag: "InvalidCursorError", message: "Cursor cannot be combined with order" }, 400);
         const start = Number(url.searchParams.get("cursor") ?? 0), limit = Number(url.searchParams.get("limit") ?? 100);
         const data = session.messages.slice(start, start + limit);
@@ -168,6 +182,7 @@ export async function createOpenCodeV2Fixture(options: { directory?: string; aut
     disconnect: () => { for (const stream of streams) stream.end(); streams.clear(); },
     deferPrompt: () => { defer = true; }, releasePrompt: () => release(),
     failPrompt: (status: number) => { failPrompt = status; }, failInterrupt: (status: number) => { failInterrupt = status; },
+    failForkHistory: (status: number) => { failForkHistory = status; },
     close: async () => { for (const stream of streams) stream.end(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
 

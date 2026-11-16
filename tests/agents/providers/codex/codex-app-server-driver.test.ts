@@ -16,6 +16,41 @@ async function commandDriver(t, env = {}) {
   return { driver, events };
 }
 
+for (const name of ["compact", "review", "prompt"]) test(`Codex retires native execution after an unacknowledged ${name} start`, { timeout: 10_000 }, async t => {
+  const { driver } = await commandDriver(t, { CODEX_FIXTURE_START_DROP_ACK: "1" });
+  driver.requestTimeoutMs = 150;
+  const pending = name === "prompt" ? driver.prompt({ turnId: "ambiguous", content: [{ type: "text", text: "Check" }] })
+    : driver.executeCommand({ name, id: "ambiguous" });
+  await assert.rejects(pending, { code: "AGENT_REQUEST_TIMEOUT" });
+  assert.equal(driver.closed, true);
+  assert.equal(driver.process.closed, true);
+  assert.equal(driver.process.exited, true);
+  assert.equal(driver.turnWait, null);
+  await assert.rejects(driver.prompt({ turnId: "overlap", content: [] }), { code: "CODEX_SESSION_NOT_STARTED" });
+});
+
+test("Codex rejects a missing native turn ID by retiring the admitted runtime", async t => {
+  const { driver } = await commandDriver(t, { CODEX_FIXTURE_START_WITHOUT_ID: "1" });
+  await assert.rejects(driver.prompt({ turnId: "invalid-admission", content: [] }), { code: "CODEX_TURN_ID_MISSING" });
+  assert.equal(driver.closed, true); assert.equal(driver.process.exited, true);
+});
+
+test("Codex preserves an authoritative native completion when its startup acknowledgement is lost", async t => {
+  const { driver } = await commandDriver(t, { CODEX_FIXTURE_START_DROP_ACK: "1", CODEX_FIXTURE_COMMAND_EARLY: "1" });
+  driver.requestTimeoutMs = 150;
+  assert.equal((await driver.executeCommand({ name: "compact", id: "known-completion" })).stopReason, "end_turn");
+  assert.equal(driver.closed, false);
+  assert.equal((await driver.executeCommand({ name: "rename", arguments: "Still usable" })).stopReason, "end_turn");
+});
+
+test("Codex keeps explicit native rejections and local validation failures reusable", async t => {
+  const { driver } = await commandDriver(t, { CODEX_FIXTURE_START_REJECT: "1" });
+  await assert.rejects(driver.executeCommand({ name: "rename" }), { code: "AGENT_COMMAND_INVALID" });
+  await assert.rejects(driver.executeCommand({ name: "compact" }), { code: "AGENT_REMOTE_ERROR" });
+  assert.equal(driver.closed, false); assert.equal(driver.turnWait, null);
+  assert.equal((await driver.executeCommand({ name: "rename", arguments: "Recovered" })).stopReason, "end_turn");
+});
+
 test("Codex manual compaction remains active until native completion and cancels with its native turn ID", async t => {
   const { driver, events } = await commandDriver(t, { CODEX_FIXTURE_COMMAND_HOLD: "1" });
   let settled = false;

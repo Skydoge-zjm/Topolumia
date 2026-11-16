@@ -4,9 +4,63 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compactConversationEvents } from "../../../../src/domain/agents/agent-conversation.js";
 import { ClaudeCliStreamDriver } from "../../../../src/adapters/agents/claude/claude-cli-stream-driver.js";
+import { JsonlProcess } from "../../../../src/adapters/agents/shared/jsonl-process.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const claudeFixture = path.join(root, "fixtures", "native", "claude-cli.js");
+
+for (const action of ["cancel", "close"]) test(`Claude ${action} during command preparation prevents process launch`, async t => {
+  const events = [];
+  const driver = new ClaudeCliStreamDriver({ id: "preparing", label: "Claude", provider: "claude", command: process.execPath, launcherArgs: [claudeFixture] },
+    { onEvent: event => events.push(event), requestTimeoutMs: 2000 });
+  t.after(() => driver.close()); await driver.start({ cwd: root });
+  const pending = driver.executeCommand({ name: "compact", id: "early-control" });
+  if (action === "cancel") driver.cancel(); else await driver.close();
+  assert.equal((await pending).stopReason, "cancelled");
+  assert.equal(driver.child, null);
+  assert.equal(driver.turnWait, null);
+  assert.ok(!events.some(event => event.type.startsWith("assistant.message.")));
+  if (action === "cancel") assert.equal((await driver.prompt({ turnId: "after-cancel", content: [] })).stopReason, "end_turn");
+  else await assert.rejects(driver.prompt({ turnId: "after-close", content: [] }), { code: "CLAUDE_SESSION_CLOSED" });
+});
+
+test("Claude registers preparation as active and clears it after a settings failure", async t => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "topolumia-claude-prepare-"));
+  const blocked = path.join(temporary, "blocked"); await writeFile(blocked, "file");
+  const driver = new ClaudeCliStreamDriver({ id: "settings", label: "Claude", provider: "claude", command: process.execPath,
+    launcherArgs: [claudeFixture], nativeConfigFile: path.join(blocked, "settings.json") });
+  t.after(async () => { await driver.close(); await rm(temporary, { recursive: true, force: true }); });
+  await driver.start({ cwd: root }); driver.sessionAllows.add("Read");
+  const pending = driver.prompt({ turnId: "failed-prepare", content: [] });
+  await assert.rejects(driver.prompt({ turnId: "overlap", content: [] }), { code: "AGENT_TURN_ALREADY_RUNNING" });
+  await assert.rejects(pending);
+  assert.equal(driver.turnWait, null); assert.equal(driver.activeTurnId, null);
+  driver.profile.nativeConfigFile = undefined;
+  assert.equal((await driver.prompt({ turnId: "recovered", content: [] })).stopReason, "end_turn");
+});
+
+test("Claude close waits for an in-flight process start and prevents user input", { timeout: 10_000 }, async t => {
+  const original = JsonlProcess.prototype.start;
+  let release, started = false;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  JsonlProcess.prototype.start = async function () { started = true; await gate; return original.call(this); };
+  const events = [];
+  const driver = new ClaudeCliStreamDriver({ id: "launching", label: "Claude", provider: "claude", command: process.execPath, launcherArgs: [claudeFixture] }, { onEvent: event => events.push(event) });
+  t.after(async () => { release(); JsonlProcess.prototype.start = original; await driver.close(); });
+  await driver.start({ cwd: root });
+  const pending = driver.prompt({ turnId: "launching", content: [{ type: "text", text: "Must not be submitted" }] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(started, true);
+  let closed = false;
+  const closing = driver.close().then(() => { closed = true; });
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(closed, false);
+  release(); await closing;
+  assert.equal((await pending).stopReason, "cancelled");
+  assert.ok(!driver.child || driver.child.exited);
+  assert.ok(!events.some(event => event.type.startsWith("assistant.message.")));
+});
 
 async function permissionFixture(t, timeout = 5000) {
   const events = [];
