@@ -4,10 +4,7 @@ import { readJsonObject, sendJson, requiredString } from "../../../lib/http.js";
 import { buildResearchMcpBinding } from "../../../agent/research-mcp-binding.js";
 import { MCP_SESSION_HINT } from "../../../domain/research/research-mcp-contract.js";
 
-import {
-  agentResearchContext,
-  saveAgentMessage,
-} from "../../../services/agents/agent-workbench-service.js";
+import { agentResearchContext } from "../../../services/agents/agent-workbench-service.js";
 
 import { openSessionEventStream } from "../../streams.js";
 import { agentContextFromRequest } from "../../presenters.js";
@@ -321,20 +318,6 @@ export async function handleAgentsSessionsRoutes(context: RouteContext) {
         researchCommands,
       ),
     );
-    return true;
-  }
-  const sessionNotesMatch = pathname.match(
-    /^\/api\/agent-sessions\/([^/]+)\/notes$/,
-  );
-  if (sessionNotesMatch && request.method === "POST") {
-    const body = await readJsonObject(request);
-    const result = saveAgentMessage(
-      agentSessionGateway.snapshot(sessionNotesMatch[1]),
-      researchCommands,
-      commandActor,
-      body.eventIds,
-    );
-    sendJson(response, result.idempotent ? 200 : 201, result);
     return true;
   }
   if (sessionMatch && request.method === "PATCH") {

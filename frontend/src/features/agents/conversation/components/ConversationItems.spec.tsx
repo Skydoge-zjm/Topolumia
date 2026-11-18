@@ -162,7 +162,7 @@ it.each([true, false])(
         ...(phases ? { phase: "final_answer" } : {}),
       }),
     ];
-    const props = { en: false, onApproval: vi.fn(), onSave: vi.fn() };
+    const props = { en: false, onApproval: vi.fn() };
     const { container, rerender } = render(
       <ConversationItems {...props} items={normalizeConversation(rows)} />,
     );
@@ -180,14 +180,6 @@ it.each([true, false])(
         .querySelector(".message-actions"),
     ).toBeNull();
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(1);
-    expect(
-      screen.getAllByRole("button", { name: "整理为科研笔记" }),
-    ).toHaveLength(1);
-    expect(
-      screen
-        .getByRole("button", { name: "整理为科研笔记" })
-        .closest(".message"),
-    ).toHaveTextContent("最终研究结果。");
   },
 );
 

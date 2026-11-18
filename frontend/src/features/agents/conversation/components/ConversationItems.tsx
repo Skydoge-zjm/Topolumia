@@ -6,7 +6,7 @@ import {
 } from "@/features/agents/conversation/model/agentActivity";
 import { compactTraceEvents } from "@domain/agents/agent-trace";
 import { AgentEventIcon } from "../../icons/AgentEventIcon";
-import { Check, Copy, NotebookPen } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { Fragment, memo, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { copyText } from "@/shared/lib/copyText";
@@ -34,7 +34,6 @@ type Props = {
     selection: AgentApprovalSelection,
   ) => void | Promise<void>;
   groupActivities?: boolean;
-  onSave?: (item: ConversationItem) => Promise<void>;
   onSource?: (ref: string, version?: string) => void;
   afterItem?: (item: ConversationItem) => ReactNode;
   deferMessages?: boolean;
@@ -115,13 +114,10 @@ function Expander({
 function Message({
   item,
   en,
-  onSave,
   onSource,
   deferMessages,
-}: Pick<Props, "en" | "onSave" | "onSource" | "deferMessages"> & { item: ConversationItem }) {
-  const [feedback, setFeedback] = useState(""),
-    [saving, setSaving] = useState(false),
-    [saved, setSaved] = useState(false);
+}: Pick<Props, "en" | "onSource" | "deferMessages"> & { item: ConversationItem }) {
+  const [feedback, setFeedback] = useState("");
   const partial =
     item.completion && !["completed", "streaming"].includes(item.completion);
   const copy = async (value: string) => {
@@ -130,20 +126,6 @@ function Message({
       setFeedback(en ? "Copied" : "已复制");
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "复制失败");
-    }
-  };
-  const save = async () => {
-    if (!onSave || saving || saved) return;
-    setSaving(true);
-    setFeedback("");
-    try {
-      await onSave(item);
-      setSaved(true);
-      setFeedback(en ? "Submitted for research review" : "已提交研究变更审阅");
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "保存失败，请重试");
-    } finally {
-      setSaving(false);
     }
   };
   return (
@@ -160,14 +142,8 @@ function Message({
       data-motion-candidate={item.streaming ? "true" : undefined}
       data-state={item.streaming ? "running" : undefined}
     >
-      {item.role !== "user" && (item.phase || item.streaming || partial) && (
+      {item.role !== "user" && (item.streaming || partial) && (
         <header>
-          {item.phase === "commentary" && (
-            <span className="streaming">{en ? "Progress" : "进展"}</span>
-          )}
-          {item.phase === "final_answer" && (
-            <span className="streaming">{en ? "Answer" : "答复"}</span>
-          )}
           {item.streaming && (
             <>
               <span
@@ -206,30 +182,6 @@ function Message({
           >
             <Copy size={13} />
           </button>
-          {item.role === "assistant" &&
-            !item.streaming &&
-            onSave &&
-            item.sourceEventIds?.length && (
-              <button
-                type="button"
-                disabled={saving || saved}
-                onClick={() => void save()}
-                aria-label={en ? "Propose research note" : "整理为科研笔记"}
-              >
-                <NotebookPen size={13} />
-                {saving
-                  ? en
-                    ? "Saving…"
-                    : "提交中…"
-                  : saved
-                    ? en
-                      ? "Submitted"
-                      : "已提交"
-                    : en
-                      ? "Research note"
-                      : "科研笔记"}
-              </button>
-            )}
           {feedback && <span role="status">{feedback}</span>}
         </div>
       )}

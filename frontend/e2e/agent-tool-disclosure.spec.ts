@@ -69,10 +69,6 @@ test("tool summaries expose independent bounded command, input and output panes"
     await expect(
       page.locator(".message:not(.user) .message-actions"),
     ).toHaveCount(1);
-    await expect(
-      page.getByRole("button", { name: "整理为科研笔记", exact: true }),
-    ).toHaveCount(1);
-
     await page.locator(".activity-batch > summary").click();
     const calls = page.locator(".activity-batch-body > .tool-group");
     await expect(calls).toHaveCount(4);

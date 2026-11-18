@@ -34,7 +34,6 @@ export function AgentTranscript({
   onRetry,
   working,
   onSource,
-  onSaved,
   onReview,
   searchTarget,
 }: {
@@ -47,7 +46,6 @@ export function AgentTranscript({
   onRetry?: () => void;
   working: boolean;
   onSource: (ref: string, version?: string) => void;
-  onSaved: (id: string) => void;
   onReview: (id: string, decision: string, revision: unknown) => Promise<void>;
   searchTarget?: { eventId: string; sequence: number };
 }) {
@@ -167,18 +165,6 @@ export function AgentTranscript({
       }
     },
     [client, session?.id],
-  );
-  const save = useCallback(
-    async (item: ConversationItem) => {
-      const id = sessionRef.current?.id;
-      if (!id) return;
-      await api(`/api/agent-sessions/${encodeURIComponent(id)}/notes`, {
-        method: "POST",
-        body: JSON.stringify({ eventIds: item.sourceEventIds }),
-      });
-      onSaved(id);
-    },
-    [onSaved],
   );
   const messages = useMemo(() => {
     const flat = (rows: ConversationItem[]): ConversationItem[] =>
@@ -346,7 +332,6 @@ export function AgentTranscript({
               groupActivities={false}
               onApproval={approval}
               canApproveHighRisk={permissions.approveHighRisk}
-              onSave={save}
               onSource={onSource}
               afterItem={(item) => (
                 <TurnResearchChanges

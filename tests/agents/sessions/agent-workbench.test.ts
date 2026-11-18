@@ -5,10 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentSessionGateway } from "../../../src/services/agents/agent-session-gateway.js";
-import { agentResearchContext, saveAgentMessage } from "../../../src/services/agents/agent-workbench-service.js";
-import { ResearchCommandService } from "../../../src/services/research/research-command-service.js";
-import { ResearchState } from "../../../src/services/research/research-state.js";
-import { TopologyService } from "../../../src/services/topology/topology-service.js";
 import { startMvpServer } from "../../../src/server.js";
 
 async function fixture(t, historyFile = null) {
@@ -84,30 +80,6 @@ test("summary polling omits heavy payloads; search links to original message IDs
   assert.equal(found.matches[0].eventId, f.gateway.snapshot(s.id).conversationEvents.find(e => e.type === "assistant.message.completed").id);
 });
 
-test("session research context excludes other sessions; saving a message makes one reviewable full-text note", () => {
-  const topologyService = new TopologyService({ demo: true }), state = new ResearchState(topologyService.build());
-  const commands = new ResearchCommandService({ state, topologyService, projectId: "project", projectName: "Research" });
-  const actor = { isServerAdmin: true, user: { id: "owner" }, permissions: ["*"], projectId: "project" };
-  const text = "# Reproducible result\n\n" + "Measured evidence. ".repeat(200);
-  const session = { id: "visible-session", title: "Investigation", researchSessionId: "research-session", conversationEvents: [{ id: "answer", turnId: "turn", type: "assistant.message.completed", payload: { text } }] };
-  commands.store.put("receipts", "own", { id: "own", researchSessionId: "research-session", object: { kind: "node", id: "node:fixture" }, at: "2026-11-03" });
-  commands.store.put("receipts", "other", { id: "other", researchSessionId: "other-session", object: { kind: "node", id: "node:other" }, at: "2026-11-03" });
-  state.research.candidates = [];
-  assert.deepEqual(agentResearchContext(session, commands).reads.map(read => read.id), ["own"]);
-  const note = saveAgentMessage(session, commands, actor, ["answer"]);
-  assert.equal(note.status, "pending"); assert.equal(note.provenance.sessionId, "research-session");
-  const context = agentResearchContext(session, commands);
-  assert.equal(context.candidates[0].turnId, "turn");
-  assert.equal(context.candidates[0].summary.addedBlocks, 1);
-  assert.equal(context.candidates[0].operations, undefined);
-  assert.equal(note.operations.find(operation => operation.op === "addBlock").payload.body, text);
-  assert.equal(saveAgentMessage(session, commands, actor, ["answer"]).id, note.id);
-  assert.equal(commands.data().candidates.length, 1);
-  assert.ok(!commands.formalTopology().nodes.some(node => node.id === note.allocation["node:" + note.operations[0].clientRef]));
-  assert.throws(() => saveAgentMessage(session, commands, actor, ["missing"]), { code: "AGENT_NOTE_MESSAGE_UNAVAILABLE" });
-  assert.throws(() => saveAgentMessage(session, commands, { ...actor, isServerAdmin: false, permissions: ["research.view"] }, ["answer"]), { code: "FORBIDDEN" });
-});
-
 test("new workbench mutation routes keep session ownership checks", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-workbench-api-"));
   const app = await startMvpServer({ port: 0, collaborationFile: path.join(root, "db.sqlite"), userSettingsFile: path.join(root, "settings.json"), config: { sourceRefresh: { enabled: false } } });
@@ -120,7 +92,7 @@ test("new workbench mutation routes keep session ownership checks", async t => {
   const request = (suffix, method, body = {}) => fetch(`${app.url}/api/agent-sessions/${id}${suffix}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   assert.equal((await request("", "PATCH", { title: "Renamed" })).status, 200);
   app.agentSessionGateway.sessions.get(id).ownerUserId = "another-owner";
-  for (const [suffix, method, body] of [["", "PATCH", { pinned: true }], ["/queue/q1", "PATCH", { text: "Overwrite" }], ["/notes", "POST", { eventIds: ["answer"] }], ["/permissions/reset", "POST", {}]]) {
+  for (const [suffix, method, body] of [["", "PATCH", { pinned: true }], ["/queue/q1", "PATCH", { text: "Overwrite" }], ["/permissions/reset", "POST", {}]]) {
     assert.equal((await request(suffix, method, body)).status, 403);
   }
 });
