@@ -322,8 +322,17 @@
 .agent-workbench .composer-footer { min-height: 38px; padding: 0 9px 8px 8px; }
 .agent-workbench .composer-attach { width: 30px; height: 30px; border-radius: 8px; color: var(--color-muted); }
 .agent-workbench .composer-attach:hover { background: var(--color-mint-soft); color: var(--color-green2); }
-.composer-model-control { margin-left: 6px; padding: 1px 2px 1px 6px; border-radius: 8px; background: #f7fbf8; }
-.composer-model-control .select-menu-trigger { font-size: 12px; }
+.agent-workbench .composer-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.agent-workbench .composer-model-control { display: inline-flex; align-items: stretch; gap: 0; margin-left: 0; padding: 3px; border: 1px solid #d5e5dc; border-radius: 11px; background: #f7fbf8; box-shadow: inset 0 1px 0 rgb(255 255 255 / 80%); }
+.agent-workbench .composer-setting { display: inline-flex; align-items: center; min-height: 30px; padding: 0 8px; border-radius: 8px; }
+.agent-workbench .composer-setting-divider { width: 1px; margin: 4px 1px; background: #d8e7df; }
+.agent-workbench .composer-setting-menu { min-width: 0; }
+.agent-workbench .composer-setting-menu .select-menu-trigger { min-height: 28px; width: auto; min-width: 82px; padding: 0 2px 0 0; border: 0; border-radius: 6px; background: transparent; color: var(--color-ink); font-size: 12px; font-weight: 650; }
+.agent-workbench .composer-setting:last-child .composer-setting-menu .select-menu-trigger { min-width: 42px; color: var(--color-green2); font-weight: 600; }
+.agent-workbench .composer-setting-menu .select-menu-trigger:hover, .agent-workbench .composer-setting-menu.is-open .select-menu-trigger { border-color: transparent; background: #eaf5ef; box-shadow: none; }
+.agent-workbench .composer-setting-menu .select-menu-trigger svg { width: 13px; color: #7b9b8d; }
+.agent-workbench .composer-setting-menu .select-menu-popover { bottom: calc(100% + 9px); top: auto; right: -3px; min-width: 148px; }
+.agent-workbench .composer-setting:last-child .composer-setting-menu .select-menu-popover { min-width: 116px; }
 .agent-workbench .composer-hint { color: var(--color-muted); font-size: 12px; }
 .agent-workbench .composer-send { width: 32px; height: 32px; border-radius: 10px; background: var(--color-line); color: #fff; transition: background 140ms ease, transform 140ms ease; }
 .agent-workbench .composer-send:not(:disabled) { background: var(--color-mint); box-shadow: 0 4px 12px -6px rgb(23 141 112 / 60%); }
