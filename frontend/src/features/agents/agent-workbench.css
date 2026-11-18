@@ -186,24 +186,30 @@
 .agent-workbench .tool-content-scroll .tool-output { max-height: none; overflow: visible; padding: 0; }
 .agent-workbench .tool-content-scroll.tool-command { max-height: 100px; margin: 0 0 6px; border-left: 2px solid var(--color-mint); }
 .tool-output-view { min-width: 0; }
-.structured-tool-output { padding: 10px 2px; color: var(--color-ink-soft); font-family: inherit; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
-.structured-fields { margin: 0; }
-.structured-fields > div { display: grid; grid-template-columns: minmax(90px, .3fr) minmax(0, 1fr); gap: 6px 12px; padding: 6px 0; border-bottom: 1px solid var(--color-line-soft); }
+.structured-tool-output { min-width: 0; padding: 10px 2px; color: var(--color-ink-soft); font-family: inherit; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.structured-object, .structured-fields, .structured-fields dd, .structured-nested-value { min-width: 0; }
+.structured-fields { display: grid; gap: 0; margin: 0; }
+.structured-fields > div { display: grid; grid-template-columns: minmax(110px, .28fr) minmax(0, .72fr); gap: 8px 16px; align-items: start; padding: 9px 0; border-bottom: 1px solid var(--color-line-soft); }
 .structured-fields > div:last-child { border-bottom: 0; }
-.structured-fields dt { margin: 0; color: var(--color-muted); font-size: 12px; overflow-wrap: anywhere; }
-.structured-fields dd { min-width: 0; margin: 0; }
-.structured-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.structured-fields > div.structured-field-long, .structured-fields > div.structured-field-nested { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+.structured-fields dt { margin: 0; color: var(--color-muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.structured-fields dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.structured-text { display: block; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.structured-nested-value { min-width: 0; padding: 8px 10px; border-left: 2px solid rgb(23 141 112 / 28%); border-radius: 0 7px 7px 0; background: rgb(242 248 244 / 72%); }
+.structured-nested { min-width: 0; margin-top: 0; }
+.structured-nested > summary { min-width: 0; overflow-wrap: anywhere; }
 .structured-empty { color: var(--color-muted); }
-.structured-list { margin: 4px 0; padding-left: 20px; }
-.structured-list > li { padding: 4px 0; }
+.structured-list { margin: 6px 0; padding: 0; list-style: none; }
+.structured-list > li { min-width: 0; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--color-line-soft); border-radius: 7px; background: rgb(247 251 248 / 70%); }
+.structured-item-heading { margin-bottom: 5px; color: var(--color-muted); font-size: 12px; font-weight: 600; }
+.structured-item-value { min-width: 0; }
 .structured-more { display: inline-block; padding: 3px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--color-green2); font-family: inherit; font-size: 12px; cursor: pointer; }
 .structured-more:hover { background: var(--color-mint-soft); }
 .structured-text > .structured-more { display: block; margin-top: 3px; }
 .structured-table-scroll { max-width: 100%; overflow-x: auto; }
-.structured-table-scroll table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.structured-table-scroll th, .structured-table-scroll td { padding: 7px 9px; border: 1px solid var(--color-line); vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+.structured-table-scroll table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
+.structured-table-scroll th, .structured-table-scroll td { min-width: 0; padding: 7px 9px; border: 1px solid var(--color-line); vertical-align: top; text-align: left; overflow-wrap: anywhere; word-break: break-word; }
 .structured-table-scroll th { background: var(--color-mint-pale); color: var(--color-ink); font-weight: 600; }
-.structured-table-scroll td { min-width: 75px; }
 .research-result-item { margin: 9px 0; padding: 9px 11px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-panel); }
 .research-result-item > header, .research-source-result > header, .research-results > header { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .research-result-item > header strong, .research-source-result > header strong { color: var(--color-ink); font-size: 14px; font-weight: 600; }
