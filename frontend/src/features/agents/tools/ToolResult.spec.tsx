@@ -61,6 +61,28 @@ it("renders native JSON text envelopes as readable source content, with exact ra
   expect(writeText).toHaveBeenCalledWith(raw);
   await screen.findByRole("button", { name: "已复制" });
 });
+it("keeps terminal details compact", () => {
+  const { container } = render(
+    <ToolResult
+      event={event("2026-11-18 22:03:23 +08:00", {
+        title: "powershell",
+        item: {
+          command: "Get-Date",
+          cwd: "C:/project",
+          exitCode: 0,
+        },
+      })}
+      en={false}
+    />,
+  );
+  expect(screen.queryByText("命令")).toBeNull();
+  expect(screen.queryByText("目录")).toBeNull();
+  expect(screen.getByText("输出")).toBeVisible();
+  expect(screen.getByText("退出码 0")).toBeVisible();
+  expect(screen.getByRole("button", { name: "复制输出" })).toBeVisible();
+  expect(container.querySelectorAll(".output-toolbar")).toHaveLength(1);
+});
+
 it("supports direct structured MCP content and a singleton array without displaying protocol wrappers", () => {
   const { rerender } = render(
     <ToolResult

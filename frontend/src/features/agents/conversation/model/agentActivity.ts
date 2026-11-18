@@ -1,5 +1,5 @@
 import type { ConversationItem } from "./agentConversation";
-import { describeTool } from "../../tools/agentTool";
+import { describeTool, toolCallLabel } from "../../tools/agentTool";
 
 const activity = (item: ConversationItem) =>
   ["tool", "reasoning", "plan"].includes(item.kind);
@@ -70,6 +70,64 @@ export function groupActivityRuns(
   return result;
 }
 
+function toolRunKey(item: ConversationItem, en: boolean): string | undefined {
+  if (item.kind !== "tool") return undefined;
+  const description = describeTool(item, en);
+  return description.kind === "terminal"
+    ? description.key
+    : description.key + ":" + toolCallLabel(item, en, "completed");
+}
+
+function toolRunStatus(items: ConversationItem[]): string {
+  if (items.some((item) => item.status === "running")) return "running";
+  if (items.some((item) => ["failed", "error"].includes(item.status ?? "")))
+    return "failed";
+  if (items.some((item) => ["incomplete", "cancelled"].includes(item.status ?? "")))
+    return "incomplete";
+  return "completed";
+}
+
+export function groupToolRuns(items: ConversationItem[], en: boolean): ConversationItem[] {
+  const result: ConversationItem[] = [];
+  let run: ConversationItem[] = [];
+  let key: string | undefined;
+  const flush = () => {
+    if (!run.length) return;
+    if (run.length > 1) {
+      const first = run[0];
+      result.push({
+        kind: "tool-batch",
+        key: "tool-batch:" + first.key,
+        turnKey: first.turnKey,
+        agentId: first.agentId,
+        parentToolUseId: first.parentToolUseId,
+        title: describeTool(first, en).kind === "terminal"
+          ? en ? "Terminal commands" : "终端命令"
+          : toolCallLabel(first, en, "completed"),
+        callCount: run.reduce((total, item) => total + (item.callCount ?? 1), 0),
+        status: toolRunStatus(run),
+        children: run,
+      });
+    } else {
+      result.push(run[0]);
+    }
+    run = [];
+    key = undefined;
+  };
+  for (const item of items) {
+    const nextKey = toolRunKey(item, en);
+    if (!nextKey) {
+      flush();
+      result.push(item);
+      continue;
+    }
+    if (key && key !== nextKey) flush();
+    key = nextKey;
+    run.push(item);
+  }
+  flush();
+  return result;
+}
 export function activitySummary(items: ConversationItem[], en: boolean) {
   const tools = new Map<string, { label: string; count: number }>();
   let reasoning = 0,

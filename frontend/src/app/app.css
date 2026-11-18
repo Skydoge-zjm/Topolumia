@@ -238,7 +238,7 @@
 .activity-summary-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-state { flex: none; white-space: nowrap; }
 .activity-summary-secondary { flex: none; white-space: nowrap; }
-.activity-state.has-failures { color: #a14032; }
+
 .activity-batch-body { min-width: 0; margin: 4px 0 8px 4px; padding-left: 10px; border-left: 1px solid var(--color-line); }
 .activity-batch > summary:focus-visible { outline: 2px solid var(--color-mint); outline-offset: 2px; border-radius: 3px; }
 @media (pointer: coarse) { .activity-batch > summary { min-height: 36px; } }

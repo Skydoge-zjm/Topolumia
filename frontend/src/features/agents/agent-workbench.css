@@ -112,6 +112,8 @@
 .agent-source-preview header strong { font-size: 14px; }
 .agent-workbench .message-body .code-block { margin: 10px 0; overflow: hidden; border: 1px solid var(--color-line); border-radius: 6px; background: #f5faf7; }
 .code-toolbar, .output-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 9px; border-bottom: 1px solid var(--color-line-soft); color: var(--color-ink-soft); font: 12px/1.4 "Segoe UI", sans-serif; }
+.output-toolbar-meta { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.tool-exit-code { color: var(--color-muted); }
 .code-toolbar button, .output-toolbar button { padding: 2px 5px; border: 0; border-radius: 3px; background: transparent; color: var(--color-green2); font-size: 12px; }
 .agent-workbench .message-body .code-block pre { margin: 0; border: 0; border-radius: 0; white-space: pre; }
 .agent-workbench .message-body .code-block code { background: transparent; color: var(--color-ink); }
@@ -183,7 +185,6 @@
 .agent-workbench .tool-content-scroll:focus-visible { outline: 2px solid var(--color-mint); outline-offset: 1px; }
 .agent-workbench .tool-content-scroll .tool-output { max-height: none; overflow: visible; padding: 0; }
 .agent-workbench .tool-content-scroll.tool-command { max-height: 100px; margin: 0 0 6px; border-left: 2px solid var(--color-mint); }
-.agent-workbench .tool-facts { max-height: 60px; overflow: auto; }
 .tool-output-view { min-width: 0; }
 .structured-tool-output { padding: 10px 2px; color: var(--color-ink-soft); font-family: inherit; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .structured-fields { margin: 0; }
@@ -222,8 +223,6 @@
 .tool-group .research-result-metadata[open] > summary::after, .tool-group .structured-nested[open] > summary::after { transform: rotate(90deg); }
 .tool-output-feedback { margin: 4px 0; color: var(--color-green2); font-size: 12px; }
 .tool-command { margin: 0 0 6px; padding: 7px 9px; border-left: 2px solid var(--color-mint); background: var(--color-mint-pale); white-space: pre-wrap; overflow-wrap: anywhere; }
-.tool-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 10px; margin: 6px 0; font-size: 12px; }
-.tool-facts dt { color: var(--color-ink-soft); }.tool-facts dd { margin: 0; overflow-wrap: anywhere; }
 .tool-output { max-height: 340px; overflow: auto; margin: 0; padding: 8px 2px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .raw-tool-details > summary { font-size: 12px; color: var(--color-ink-soft); }
 .file-diff { margin: 8px 0; font-size: 12px; }.file-diff pre { overflow: auto; white-space: pre; }.file-diff pre span { display: block; }.diff-added { background: #e6f4e9; color: #235e35; }.diff-removed { background: #fae9e5; color: #913e32; }
@@ -260,6 +259,7 @@
 
 /* Transcript column */
 .agent-workbench .conversation-scroll { padding: 20px clamp(16px, 4vw, 56px) 28px clamp(16px, 5vw, 56px); background: #fcfefd; }
+.agent-workbench .conversation-scroll { overflow-x: hidden; }
 .agent-workbench .conversation-content { width: min(100%, var(--reading)); margin: 0 auto; }
 .transcript-controls { justify-content: flex-end; min-height: 26px; padding: 0 0 2px; background: transparent; }
 .transcript-controls .icon-button { width: 26px; height: 24px; border-radius: 6px; color: var(--color-muted); }
@@ -301,15 +301,23 @@
 
 /* Activity strip: tool calls read as a quiet run log beside the prose. */
 .agent-workbench .tool-group { width: 100%; margin: 2px 0 8px; border: 0; border-left: 2px solid var(--color-line); border-radius: 0 8px 8px 0; background: rgb(246 250 247 / 70%); box-shadow: none; }
+.agent-workbench .tool-group { min-width: 0; max-width: 100%; }
 .agent-workbench .tool-group > summary { min-height: 32px; padding: 5px 10px; color: var(--color-muted); font-size: 12px; }
 .agent-workbench .tool-group > summary:hover { color: var(--color-ink); background: rgb(23 141 112 / 4%); }
 .agent-workbench .tool-group[open] { border-left-color: var(--color-mint); background: #f8fbf9; }
 .agent-workbench .tool-group[open] > summary { color: var(--color-ink-soft); }
 .agent-workbench .tool-group .tool-call-title { font-family: inherit; }
+.agent-workbench .tool-group > .tool-body { min-width: 0; max-width: 100%; }
+.agent-workbench .tool-final-result, .agent-workbench .tool-detail, .agent-workbench .tool-result-view { min-width: 0; max-width: 100%; }
+.agent-workbench .tool-content-scroll { max-width: 100%; }
+.agent-workbench .tool-status-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.agent-workbench .tool-status-icon.is-success { color: var(--color-mint); }
+.agent-workbench .tool-status-icon.is-failed { color: #b3261e; }
 .agent-workbench .tool-group .streaming { color: var(--color-mint); }
 .agent-workbench .tool-content-scroll { border-color: var(--color-line-soft); background: #fff; }
 .agent-workbench .tool-command { border-left-color: var(--color-mint); background: var(--color-mint-pale); }
 .agent-workbench .activity-batch { width: 100%; margin: 0 0 4px; }
+.agent-workbench .activity-batch, .agent-workbench .activity-batch-body { min-width: 0; max-width: 100%; }
 .agent-workbench .activity-batch > summary { min-height: 26px; padding: 1px 0; color: var(--color-muted); font-size: 12px; }
 .agent-workbench .activity-batch > summary:hover { color: var(--color-ink-soft); }
 .agent-workbench .activity-batch-body { margin: 2px 0 8px 5px; padding-left: 11px; border-left: 1px solid var(--color-line); }

@@ -41,6 +41,7 @@ const icons = {
   "file-edit": FilePenLine,
   agent: Bot,
   tool: Wrench,
+  "tool-batch": Wrench,
   image: Images,
   "image-gallery": Images,
   plan: ListTodo,
