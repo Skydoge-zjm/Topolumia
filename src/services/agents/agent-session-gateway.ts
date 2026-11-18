@@ -25,6 +25,7 @@ import { candidateTurnLinks } from "./agent-candidate-turns.js";
 import { isImageView } from "../../domain/agents/agent-images.js";
 import { AgentSessionPersistence } from "./agent-session-persistence.js";
 import { MAX_AGENT_IMAGES, publicAgentAttachment, imagePromptParts } from "../../domain/agents/agent-attachments.js";
+import { commandArguments, commandText, findAgentCommand, normalizeAgentCommandName, parseAgentCommand, type AgentCommandInput } from "../../domain/agents/agent-commands.js";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -225,8 +226,9 @@ export class AgentSessionGateway {
       });
       check();
       session.nativeSessionId = started.nativeSessionId;
+      const commands = started.commands ?? await adapter.listCommands?.() ?? [];
       session.model = started.model ?? session.model ?? adapter.profile.model ?? null;
-      session.capabilities = clone({...started.capabilities, ...(researchMcp?.skillDelivery ? {researchSkill:researchMcp.skillDelivery} : {})});
+      session.capabilities = clone({...started.capabilities, commands, ...(researchMcp?.skillDelivery ? {researchSkill:researchMcp.skillDelivery} : {})});
       session.agentInfo = clone(started.agentInfo ?? null);
       session.authMethods = clone(started.authMethods ?? []);
       session.status = "ready";
@@ -288,7 +290,19 @@ export class AgentSessionGateway {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new AppError("AGENT_TURN_INPUT_INVALID", "消息内容无效。", { status: 422 });
     const text = typeof input.text === "string" ? input.text.trim() : "";
     if ((!text && !message.attachments?.length) || text.length > 10_000 || Object.keys(input).some(key => key !== "text")) throw new AppError("AGENT_TURN_INPUT_INVALID", "请输入文字或添加图片。", { status: 422 });
-    message.text = text; message.editedAt = new Date().toISOString();
+    const parsed = parseAgentCommand(text);
+    if (parsed) {
+      if (message.attachments?.length) throw new AppError("AGENT_COMMAND_INVALID", "Agent 命令不能附带图片。", { status: 422 });
+      const command = this.#command(session, parsed);
+      message.kind = "command";
+      message.command = command;
+      message.text = commandText(command);
+    } else {
+      message.kind = "message";
+      delete message.command;
+      message.text = text;
+    }
+    message.editedAt = new Date().toISOString();
     this.#queueChanged(session);
     return clone(message);
   }
@@ -374,7 +388,9 @@ export class AgentSessionGateway {
         turn.status = "failed";
         turn.stopReason = "server_restart";
         turn.completedAt ??= session.updatedAt;
-        this.#publish(session, "turn.failed", { sessionStatus: "detached", error: { code: "AGENT_SERVER_RESTART", message: "服务重启中断了上一轮会话。" } }, turn.id);
+        const error = { code: "AGENT_SERVER_RESTART", message: "服务重启中断了上一轮会话。" };
+        if (turn.command) this.#publish(session, "command.failed", { ...this.#commandPayload(session, turn), sessionStatus: "detached", error }, turn.id);
+        this.#publish(session, "turn.failed", { sessionStatus: "detached", error }, turn.id);
       }
     }
     this.sessions.set(session.id, session);
@@ -387,6 +403,11 @@ export class AgentSessionGateway {
     if (!Array.isArray(attachments) || attachments.length > MAX_AGENT_IMAGES || attachments.some(image => !image.id || !image.path || !image.mediaType))
       throw new AppError("AGENT_ATTACHMENTS_INVALID", "图片附件信息无效。", { status: 422 });
     if (session.archived) throw new AppError("AGENT_SESSION_ARCHIVED", "请先恢复归档的会话。", { status: 409 });
+    const parsed = parseAgentCommand(typeof input.text === "string" ? input.text : "");
+    if (parsed) {
+      if (attachments.length) throw new AppError("AGENT_COMMAND_INVALID", "Agent 命令不能附带图片。", { status: 422 });
+      return this.executeCommand(sessionId, { ...parsed, id: input.clientMessageId, model: input.model, reasoningEffort: input.reasoningEffort });
+    }
     if (input.clientMessageId !== undefined) {
       if (typeof input.clientMessageId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(input.clientMessageId)) throw new AppError("AGENT_MESSAGE_ID_INVALID", "消息标识无效。", { status: 422 });
       const previous = [...session.turns, ...session.queuedMessages].find(item => item.clientMessageId === input.clientMessageId);
@@ -415,6 +436,61 @@ export class AgentSessionGateway {
     }
     session.queuePaused = false;
     return this.#beginTurn(session, message);
+  }
+
+  listCommands(sessionId: string) {
+    const session = this.#require(sessionId);
+    return clone(session.capabilities?.commands ?? []);
+  }
+
+  executeCommand(sessionId: string, input: Partial<AgentCommandInput> = {}) {
+    const session = this.#require(sessionId);
+    if (session.archived) throw new AppError("AGENT_SESSION_ARCHIVED", "请先恢复归档的会话。", { status: 409 });
+    const command = this.#command(session, input);
+    const text = commandText(command);
+    const submissionHash = versionHash({ kind: "command", text });
+    const clientMessageId = typeof input.id === "string" ? input.id : undefined;
+    if (input.id !== undefined && (typeof input.id !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(input.id)))
+      throw new AppError("AGENT_MESSAGE_ID_INVALID", "命令标识无效。", { status: 422 });
+    const existing = clientMessageId && [...session.turns, ...session.queuedMessages].find(message => message.clientMessageId === clientMessageId);
+    if (existing) {
+      if (existing.submissionHash !== submissionHash)
+        throw new AppError("AGENT_MESSAGE_ID_CONFLICT", "消息标识已用于其他内容。", { status: 409 });
+      return { ...clone(existing), duplicate: true };
+    }
+    if (this.shuttingDown || session.closing || !["ready", "running", "awaiting_permission"].includes(session.status))
+      throw new AppError("AGENT_SESSION_NOT_READY", "当前 Agent 会话不能接收命令。", { status: 409, detail: { status: session.status } });
+    const message: TurnMessage = { text, kind: "command", command, clientMessageId, submissionHash,
+      model: input.model ?? session.model, reasoningEffort: input.reasoningEffort ?? session.reasoningEffort };
+    const busy = ["running", "awaiting_permission"].includes(session.status);
+    if (busy || session.queuedMessages.length) {
+      if (session.queuedMessages.length >= 50) throw new AppError("AGENT_QUEUE_FULL", "待发送消息已达到 50 条，请先处理或移除部分消息。", { status: 409 });
+      const queued = { ...message, id: compactId("queued_command"), createdAt: new Date().toISOString() };
+      session.queuedMessages.push(queued);
+      if (!busy) session.queuePaused = false;
+      this.#queueChanged(session);
+      this.#drainQueue(session);
+      return { ...clone(queued), sessionId, status: "queued" };
+    }
+    session.queuePaused = false;
+    return this.#beginTurn(session, message);
+  }
+
+  #command(session: AgentRuntimeSession, input: Partial<AgentCommandInput>) {
+    if (typeof input.name !== "string" || !normalizeAgentCommandName(input.name))
+      throw new AppError("AGENT_COMMAND_INVALID", "命令名称无效。", { status: 422 });
+    const command = findAgentCommand(session.capabilities.commands ?? [], input.name);
+    if (!command) throw new AppError("AGENT_COMMAND_UNSUPPORTED", "当前 Agent 会话不支持该命令。", { status: 422 });
+    const args = commandArguments(input.arguments);
+    if (commandText({ name: command.name, arguments: args }).length > 10_000)
+      throw new AppError("AGENT_COMMAND_INVALID", "命令最多 10000 个字符。", { status: 422 });
+    return { name: command.name, arguments: args };
+  }
+
+  #commandPayload(session: AgentRuntimeSession, turn: AgentTurn): AgentPayload {
+    return { commandId: turn.id, name: turn.command!.name, arguments: turn.command!.arguments ?? "",
+      execution: findAgentCommand(session.capabilities.commands ?? [], turn.command!.name)?.execution ?? "native",
+      nativeSessionId: session.nativeSessionId, nativeTurnId: turn.nativeTurnId ?? null };
   }
 
   removeQueuedMessage(sessionId: string, messageId: string) {
@@ -453,7 +529,7 @@ export class AgentSessionGateway {
     });
   }
 
-  #beginTurn(session: AgentRuntimeSession, { text, attachments = [], model, reasoningEffort, clientMessageId, submissionHash }: TurnMessage) {
+  #beginTurn(session: AgentRuntimeSession, { text, attachments = [], model, reasoningEffort, clientMessageId, submissionHash, kind, command }: TurnMessage) {
     const sessionId = session.id;
     const turn: AgentTurn = {
       schemaVersion: "agent-turn.v1",
@@ -461,6 +537,7 @@ export class AgentSessionGateway {
       sessionId,
       clientMessageId,
       submissionHash,
+      ...(command ? { kind: "command" as const, command: clone(command) } : {}),
       status: "running",
       input: [{ type: "text", text }, ...imagePromptParts(attachments)],
       ...(attachments.length ? { attachments: clone(attachments) } : {}),
@@ -481,16 +558,25 @@ export class AgentSessionGateway {
     this.#schedulePersist(session);
     this.#publish(session, "turn.started", { turnId: turn.id }, turn.id);
     this.#publish(session, "user.message", { text, ...(attachments.length ? { attachments: attachments.map(publicAgentAttachment) } : {}) }, turn.id);
+    if (kind === "command") this.#publish(session, "command.started", this.#commandPayload(session, turn), turn.id);
 
     const promptContent: AgentPromptPart[] = [{ type: "text", text }, ...imagePromptParts(attachments)];
-    if (session.turns.length === 1 && session.context?.topologyStateVersion) {
+    if (!command && !session.turns.some(item => item !== turn && item.kind !== "command") && session.context?.topologyStateVersion) {
       if (session.capabilities?.promptCapabilities?.embeddedContext) promptContent.unshift(contextPrompt(session.context));
       else promptContent[0].text = `[Research selection]\n${JSON.stringify(workingContext(session.context))}\n\n[User message]\n${text}`;
     }
+    const adapter = session.adapter!;
+    const runtimeInstanceId = session.runtimeInstanceId;
+    const current = () => session.runtimeInstanceId === runtimeInstanceId && !turn.completedAt;
     Promise.resolve()
-      .then(() => session.adapter!.prompt({ turnId: turn.id, content: promptContent, model, reasoningEffort }))
-      .then(async (result) => { await Promise.allSettled([...(session.imageCaptures ?? [])]); this.#completeTurn(session, turn, result); })
-      .catch((error) => this.#failTurn(session, turn, error));
+      .then(() => {
+        if (!current()) return;
+        if (!command) return adapter.prompt({ turnId: turn.id, content: promptContent, model, reasoningEffort });
+        if (!adapter.executeCommand) throw new AppError("AGENT_COMMAND_UNSUPPORTED", "当前 Adapter 不支持命令执行。", { status: 422 });
+        return adapter.executeCommand({ ...command, id: turn.id, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}) });
+      })
+      .then(async (result) => { await Promise.allSettled([...(session.imageCaptures ?? [])]); if (current() && result) this.#completeTurn(session, turn, result); })
+      .catch((error) => { if (current()) this.#failTurn(session, turn, agentError(error)); });
     return clone(turn);
   }
 
@@ -812,7 +898,9 @@ export class AgentSessionGateway {
       turn.status = "failed"; turn.stopReason = "server_shutdown"; turn.completedAt = new Date().toISOString();
       session.activeTurnId = null; session.status = "detached";
       this.#expireApprovals(session, "expired", turn.id);
-      this.#publish(session, "turn.failed", { sessionStatus: "detached", error: { code: "AGENT_SERVER_SHUTDOWN", message: "服务已停止，可恢复会话继续。" } }, turn.id);
+      const error = { code: "AGENT_SERVER_SHUTDOWN", message: "服务已停止，可恢复会话继续。" };
+      if (turn.command) this.#publish(session, "command.failed", { ...this.#commandPayload(session, turn), sessionStatus: "detached", error }, turn.id);
+      this.#publish(session, "turn.failed", { sessionStatus: "detached", error }, turn.id);
     }
     await this.persistence.close([...this.sessions.values()]);
     for (const session of this.sessions.values()) this.onSessionClosed?.(session.runtimeInstanceId ?? session.id);
@@ -840,6 +928,13 @@ export class AgentSessionGateway {
     if (!session) return;
     if (event.type === "native.trace" || event.type === "provider.event") return;
     const turnId = event.turnId === undefined ? session.activeTurnId : event.turnId;
+    if (event.type === "commands.updated" && Array.isArray(event.payload.commands)) {
+      session.capabilities = { ...session.capabilities, commands: clone(event.payload.commands) };
+      session.updatedAt = new Date().toISOString();
+      this.#publish(session, "session.commands.updated", { commands: clone(event.payload.commands) });
+      this.#schedulePersist(session);
+      return;
+    }
     const turn = session.turns.find((item) => item.id === turnId);
     const payload = redactAgentSecrets(clone(event.payload ?? {})) as AgentPayload;
     if (event.type === "tool.completed" && isImageView(event) && this.captureImage && !payload.imageCaptured) {
@@ -939,6 +1034,8 @@ export class AgentSessionGateway {
     turn.stopReason = result?.stopReason ?? "end_turn";
     turn.status = turn.stopReason === "cancelled" ? "cancelled" : turn.stopReason === "incomplete" ? "incomplete" : "completed";
     turn.completedAt = new Date().toISOString();
+    if (result.nativeSessionId) session.nativeSessionId = result.nativeSessionId;
+    if (result.nativeTurnId) turn.nativeTurnId = result.nativeTurnId;
     const assistantMessages = turn.assistantMessages ?? [];
     if (assistantMessages.length) {
       for (const message of assistantMessages) {
@@ -958,6 +1055,8 @@ export class AgentSessionGateway {
     session.status = session.closing ? "closed" : session.adapter?.closed ? "failed" : "ready";
     session.updatedAt = turn.completedAt;
     this.#expireApprovals(session, turn.stopReason === "cancelled" ? "cancelled" : "expired", turn.id);
+    if (turn.command) this.#publish(session, "command.completed", { ...this.#commandPayload(session, turn), stopReason: turn.stopReason, sessionStatus: session.status,
+      ...(result.result !== undefined ? { result: result.result } : {}) }, turn.id);
     this.#publish(session, turn.status === "cancelled" ? "turn.cancelled" : "turn.completed", {
       turnId: turn.id,
       stopReason: turn.stopReason,
@@ -979,6 +1078,8 @@ export class AgentSessionGateway {
     session.queuePaused = true;
     this.#queueChanged(session);
     session.updatedAt = turn.completedAt;
+    if (turn.command) this.#publish(session, "command.failed", { ...this.#commandPayload(session, turn),
+      error: { code: error.code ?? "AGENT_COMMAND_FAILED", message: error.message }, sessionStatus: session.status }, turn.id);
     this.#publish(session, "turn.failed", {
       turnId: turn.id,
       error: { code: error.code ?? "AGENT_TURN_FAILED", message: error.message },

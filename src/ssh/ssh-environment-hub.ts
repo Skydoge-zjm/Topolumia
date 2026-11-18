@@ -536,6 +536,12 @@ export class SshEnvironmentHub {
     await runtime.toolEnvironment.configure(toolId, input);
     return this.inventory(runtime, owner, id);
   }
+  async closeProject(runtime: EnvironmentRuntime) {
+    // Requests for this project have drained before deletion begins.
+    const views = [...this.views].filter(([, view]) => view.runtime === runtime);
+    await Promise.allSettled(views.map(([, view]) => view.catalog.close()));
+    for (const [key] of views) this.views.delete(key);
+  }
   async close() {
     this.unsubscribe();
     await Promise.allSettled([...this.pendingViews.values()]);

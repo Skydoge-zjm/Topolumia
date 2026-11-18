@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef } from "react";
 import { ArrowUp, ImagePlus, X } from "lucide-react";
 import type { AgentSession, AgentImageAttachment } from "@/shared/types/api";
+import type { AgentCommand } from "@/shared/types/api";
+import type { AgentCommandInput } from "@domain/agents/agent-commands";
 import { attachmentImageUrl } from "../../tools/agentAttachments";
 import { SelectMenu } from "../../../../shared/ui/SelectMenu";
 import { AgentMessageQueue } from "./AgentMessageQueue";
@@ -13,6 +15,7 @@ export type AgentSubmission = {
   clientMessageId: string;
   attachmentIds?: string[];
   attachments?: AgentImageAttachment[];
+  command?: AgentCommandInput;
 };
 export function AgentComposer({
   session,
@@ -41,6 +44,7 @@ export function AgentComposer({
   onRemoveImage,
   uploading,
   imageError,
+  commands = [],
 }: {
   session?: AgentSession;
   loading?: boolean;
@@ -68,6 +72,7 @@ export function AgentComposer({
   onRemoveImage: (id: string) => void;
   uploading: boolean;
   imageError?: string;
+  commands?: AgentCommand[];
 }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -88,13 +93,20 @@ export function AgentComposer({
     ["ready", "detached", "running", "awaiting_permission"].includes(
       session.status,
     );
+  const commandMatch = draft.trim().match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+  const command = !images.length && commandMatch
+    ? commands.find(item => item.name === commandMatch[1].toLocaleLowerCase() || item.aliases?.includes(commandMatch[1].toLocaleLowerCase()))
+    : undefined;
+  const commandSuggestions = draft.trimStart().startsWith("/") && !images.length
+    ? commands.filter(item => !draft.trim().slice(1).includes(" ") ? item.name.startsWith(draft.trim().slice(1).toLocaleLowerCase()) : item.name === command?.name)
+    : [];
+  const hasUnknownCommand = draft.trimStart().startsWith("/") && !images.length && !command;
   return (
     <form
       className="composer"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!submitting && !uploading && (draft.trim() || images.length))
-          onSend();
+        if (sendable && !hasUnknownCommand && !submitting && !uploading && (draft.trim() || images.length)) onSend();
       }}
     >
       <AgentMessageQueue
@@ -149,6 +161,15 @@ export function AgentComposer({
         {imageError && (
           <div className="composer-image-feedback" role="alert">
             {imageError}
+          </div>
+        )}
+        {commandSuggestions.length > 0 && (
+          <div className="composer-command-menu" role="listbox" aria-label={en ? "Agent commands" : "Agent 命令"}>
+            {commandSuggestions.map(item => (
+              <button type="button" role="option" key={item.name} onClick={() => setDraft(`/${item.name} `)}>
+                <strong>/{item.name}</strong><span>{en ? item.description : item.description}</span>
+              </button>
+            ))}
           </div>
         )}
         <textarea
@@ -254,6 +275,7 @@ export function AgentComposer({
                 ? stopping
                 : !sendable ||
                   (!draft.trim() && !images.length) ||
+                  hasUnknownCommand ||
                   submitting ||
                   uploading
             }

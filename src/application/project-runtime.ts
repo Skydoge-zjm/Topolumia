@@ -41,6 +41,8 @@ import { ResearchHistoryStore } from "../services/research/history/history-store
 import { ResearchHistoryTracker } from "../services/research/history/history-tracker.js";
 import { sqliteTransaction } from "../lib/sqlite-transaction.js";
 import { AgentAttachmentStore } from "../services/agents/agent-attachment-service.js";
+import { ProjectDataStore, projectDataPaths } from "../services/platform/project-data-store.js";
+import { initializeProjectData, preserveProjectData, readProjectManifest } from "../services/platform/project-data-directory.js";
 
 export type ApplicationOptions = {
   config?: DeepPartial<AppConfig>; port?: number; host?: string; testMode?: boolean;
@@ -57,6 +59,9 @@ export type ProjectRuntime = {
   state: ResearchState; curatorTriggerCoordinator: TopologyCuratorTriggerCoordinator;
   agentSessionGateway: AgentSessionGateway; agentMedia: AgentAttachmentStore;
   activeCriticalOperations: number; nativeConfigs: NativeAgentConfigStore;
+  activeRequests: number;
+  projectData: ProjectDataStore;
+  retired: boolean;
   history: ResearchHistoryStore; mlflowRecords: MlflowRecordImporter; notebook: NotebookStore;
   groups: ResearchCommandService["groups"]; records: ResearchRecords; researchNodes: ResearchNodeService;
   agentConfiguration: AgentConfigurationService; toolEnvironment: ToolEnvironmentService;
@@ -71,6 +76,7 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
   const topologyLayoutService = new TopologyLayoutService();
   const runtimes = new Map<string, ProjectRuntime>();
   const runtimePromises = new Map<string, Promise<ProjectRuntime>>();
+  const removingProjects = new Set<string>();
   const actorContext = new AsyncLocalStorage<CollaborationActor | null>();
   function configForProject(project: RuntimeProject) {
     const projectConfig = structuredClone(config);
@@ -83,23 +89,9 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     };
     if (project.id !== config.project.id || path.resolve(project.root) !== path.resolve(config.project.root))
       projectConfig.filesystem.roots = [project.root];
-    const runtimeRoot = path.resolve(
-      path.dirname(options.userSettingsFile ?? config.userSettings.file),
-      "projects",
-      project.id,
-    );
-    projectConfig.userSettings.file = path.join(runtimeRoot, "settings.json");
-    if (
-      config.collaboration.allowDevIdentity &&
-      project.id === config.project.id
-    )
-      projectConfig.userSettings.file =
-        options.userSettingsFile ?? config.userSettings.file;
-    projectConfig.agentSessions.historyFile = path.join(
-      runtimeRoot,
-      "agent-sessions",
-      "history.sqlite",
-    );
+    const paths = projectDataPaths(project.root), runtimeRoot = paths.directory;
+    projectConfig.userSettings.file = paths.settings;
+    projectConfig.agentSessions.historyFile = paths.history;
     projectConfig.agentSessions.managedWrappersRoot =
       config.agentSessions.managedWrappersRoot;
     projectConfig.curator.runtimeRoot = path.join(runtimeRoot, "curator");
@@ -111,8 +103,21 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     ];
     return projectConfig;
   }
-  function attachPersistence(state: ResearchState, projectId: string, history: ResearchHistoryTracker) {
+  function attachPersistence(state: ResearchState, projectData: ProjectDataStore, history: ResearchHistoryTracker) {
     let mutationDepth = 0;
+    let registryUpdatePending = false;
+    const updateRegistry = () => {
+      if (registryUpdatePending) return;
+      registryUpdatePending = true;
+      queueMicrotask(() => {
+        registryUpdatePending = false;
+        if (projectData.closed) return;
+        try {
+          const saved = projectData.loadState();
+          if (saved) collaboration.noteProjectState(projectData.projectId, saved.topology?.stateVersion ?? saved.snapshot?.stateVersion ?? null);
+        } catch { /* The account-side list is a cache, never the scientific authority. */ }
+      });
+    };
     const scientificMutators = new Set(["commitResearch"]);
     const mutators = [
       "setSnapshot",
@@ -143,10 +148,11 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
           const before = { topology: state.topology, research: state.research, agentEvents: state.agentEvents.slice(), _eventKeys: new Set(state._eventKeys) };
           mutationDepth++;
           try {
-            return sqliteTransaction(collaboration.db, () => {
+            return sqliteTransaction(projectData.db, () => {
               const result = invoke(...args);
               history.capture(method, { ...state.view(), ...before }, state.view(), args, actorContext.getStore());
-              collaboration.saveState(projectId, state.view());
+              projectData.saveState(state.view());
+              updateRegistry();
               return result;
             });
           } catch (error) {
@@ -156,7 +162,8 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
         }
         const result = invoke(...args);
         try {
-          collaboration.saveState(projectId, state.view());
+          projectData.saveState(state.view());
+          updateRegistry();
         } catch {
           /* the in-memory request still completes; next recovery reports the error */
         }
@@ -165,10 +172,31 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     }
     return state;
   }
+  async function prepareProjectStorage(project: RuntimeProject) {
+    if (!project.workspace.storageVersion) {
+      try {
+      await mkdir(project.root, { recursive: true });
+      const previousRoot = path.join(path.dirname(options.userSettingsFile ?? config.userSettings.file), "projects", project.id);
+      const previousSettings = config.collaboration.allowDevIdentity && project.id === config.project.id
+        ? options.userSettingsFile ?? config.userSettings.file : path.join(previousRoot, "settings.json");
+      await initializeProjectData(project, directory => preserveProjectData(project, directory, collaboration.db, previousSettings, path.join(previousRoot, "agent-sessions")));
+      collaboration.markProjectStorage(project.id);
+      project.workspace.storageVersion = 1;
+      } catch (cause) {
+        if (cause instanceof AppError) throw cause;
+        throw new AppError("PROJECT_DATA_UNAVAILABLE", "无法准备完整项目数据，请检查项目目录及应用数据的访问权限。", { status: 409, cause });
+      }
+    }
+    const manifest = await readProjectManifest(project.root);
+    if (!manifest || manifest.id !== project.id) throw new AppError("PROJECT_DATA_UNAVAILABLE", "找不到完整的项目数据，请重新关联包含原 .topolumia 的项目目录。", { status: 409 });
+  }
   async function buildRuntime(project: RuntimeProject): Promise<ProjectRuntime> {
     const dispose: Array<() => unknown> = [];
     try {
-    const historyStore = new ResearchHistoryStore(collaboration.db, project.id);
+    await prepareProjectStorage(project);
+    const projectData = new ProjectDataStore(projectDataPaths(project.root).database, project.id);
+    dispose.push(() => projectData.close());
+    const historyStore = new ResearchHistoryStore(projectData.db, project.id);
     const history = new ResearchHistoryTracker(historyStore);
     const projectConfig = configForProject(project);
     const topologyService = baseTopologyService;
@@ -189,10 +217,10 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     });
     const state = attachPersistence(
       new ResearchState(topologyService.build()),
-      project.id,
+      projectData,
       history,
     );
-    const savedState = collaboration.loadState(project.id);
+    const savedState = projectData.loadState();
     if (savedState) state.hydrate(savedState, topologyService.build());
     const curatorTriggerCoordinator = new TopologyCuratorTriggerCoordinator({
       topologyCurator,
@@ -206,7 +234,7 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
       state,
       topologyService,
       topologyCurator,
-      db: collaboration.db,
+      db: projectData.db,
       assetRoot: path.join(path.dirname(projectConfig.userSettings.file), "research-assets"),
       projectId: project.id,
       projectName: project.name,
@@ -259,7 +287,7 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
       return session ? { name: { codex: "Codex", claude: "Claude Code", opencode: "OpenCode" }[session.provider ?? "codex"] ?? "Agent", model: session.model,
         workbenchSessionId: session.id } : null;
     };
-    const researchAccess = new ResearchAccessService(collaboration, project.id);
+    const researchAccess = new ResearchAccessService(projectData, project.id);
     const core = {
       project,
       config: projectConfig,
@@ -275,6 +303,9 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
       agentSessionGateway,
       agentMedia,
       activeCriticalOperations: 0,
+      activeRequests: 0,
+      projectData,
+      retired: false,
       nativeConfigs,
       history: historyStore,
     };
@@ -290,7 +321,7 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
       runtime.project.workspace = result.workspace;
       await runtime.userSettings.update({ workspaceRevision: result.workspace.revision, researchLocation: "ssh", remoteEnvironment: null });
     };
-    const notebook = new NotebookStore(collaboration.db, project.id, event => history.documentChanged(event));
+    const notebook = new NotebookStore(projectData.db, project.id, event => history.documentChanged(event));
     history.resolveResearchObject = (type, id, revision) => {
       const version = researchCommands.store.get("versions", JSON.stringify([type, id]) + ":" + revision);
       if (!version || !("object" in version)) return null;
@@ -324,6 +355,7 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
       intervalMs: projectConfig.sourceRefresh.intervalMs,
       freshForMs: projectConfig.sourceRefresh.freshForMs,
       isBlocked: () =>
+        removingProjects.has(project.id) ||
         runtime.activeCriticalOperations > 0 ||
         curatorTriggerCoordinator.statusView().running ||
         agentSessionGateway
@@ -364,19 +396,21 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     });
     const disposeRuntime = async () => {
       runtime.sourceRefresh.stop();
+      runtime.curatorTriggerCoordinator.stop();
       await runtime.sourceRefresh.inFlight?.catch(() => {});
-      await Promise.allSettled(dispose.slice().reverse().map(close => Promise.resolve().then(close)));
+      for (const close of dispose.slice().reverse()) await Promise.resolve().then(close).catch(() => {});
     };
     const runtime: ProjectRuntime = { ...core, mlflowRecords, updateWorkspaceDirectory, notebook, groups, records, researchNodes, agentConfiguration, toolEnvironment, sourceRefresh, dispose: disposeRuntime };
     await toolEnvironment.initialize();
     runtimes.set(project.id, runtime);
     return runtime;
     } catch (error) {
-      await Promise.allSettled(dispose.reverse().map(close => Promise.resolve().then(close)));
+      for (const close of dispose.reverse()) await Promise.resolve().then(close).catch(() => {});
       throw error;
     }
   }
   async function getRuntime(projectId: string): Promise<ProjectRuntime> {
+    requireAvailableRuntime(projectId);
     const project = collaboration.projectById(projectId);
     if (!project || project.status === "deleted")
       throw new AppError("PROJECT_NOT_FOUND", "项目不存在。", { status: 404 });
@@ -388,14 +422,17 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     try { return await pending; }
     finally { if (runtimePromises.get(project.id) === pending) runtimePromises.delete(project.id); }
   }
-  async function replaceRuntime(projectId: string, update: () => unknown): Promise<ProjectRuntime> {
+  async function replaceRuntime(projectId: string, update: () => unknown | Promise<unknown>): Promise<ProjectRuntime> {
+    requireAvailableRuntime(projectId);
     if (runtimePromises.has(projectId)) await runtimePromises.get(projectId);
+    requireAvailableRuntime(projectId);
     const current = runtimes.get(projectId);
-    if (current && (current.activeCriticalOperations || current.curatorTriggerCoordinator.statusView().running || current.agentSessionGateway.list({ summary: true }).some(session => ["starting", "running", "awaiting_permission"].includes(session.status)))) throw new AppError("PROJECT_WORKSPACE_BUSY", "项目仍有运行中的任务，请结束后再更换工作目录。", { status: 409 });
+    if (current && (current.activeRequests || current.activeCriticalOperations || current.curatorTriggerCoordinator.statusView().running || current.agentSessionGateway.list({ summary: true }).some(session => ["starting", "running", "awaiting_permission", "closing"].includes(session.status)))) throw new AppError("PROJECT_WORKSPACE_BUSY", "项目仍有运行中的任务，请结束后再更换工作目录。", { status: 409 });
+    if (current) current.retired = true;
     const pending = Promise.resolve().then(async () => {
-      update();
       if (current) await current.dispose();
       runtimes.delete(projectId);
+      await update();
       const project = collaboration.projectById(projectId);
       if (!project) throw new AppError("PROJECT_NOT_FOUND", "项目不存在。", { status: 404 });
       return buildRuntime(project);
@@ -403,7 +440,44 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     runtimePromises.set(projectId, pending);
     try { return await pending; } finally { if (runtimePromises.get(projectId) === pending) runtimePromises.delete(projectId); }
   }
-  const defaultRuntime = await getRuntime(config.project.id);
+  function requireAvailableRuntime(projectId: string) {
+    if (removingProjects.has(projectId))
+      throw new AppError("PROJECT_DELETING", "项目正在删除，请稍后返回项目列表。", { status: 409 });
+    if (collaboration.projectById(projectId)?.status === "deleted")
+      throw new AppError("PROJECT_NOT_FOUND", "项目不存在。", { status: 404 });
+  }
+  async function removeRuntime(projectId: string, remove: (runtime?: ProjectRuntime) => Promise<void>) {
+    requireAvailableRuntime(projectId);
+    removingProjects.add(projectId);
+    let stoppedRuntime: ProjectRuntime | undefined;
+    try {
+      await runtimePromises.get(projectId);
+      const current = runtimes.get(projectId);
+      if (current && (current.activeRequests || current.activeCriticalOperations || current.sourceRefresh.inFlight || current.curatorTriggerCoordinator.statusView().running || current.agentSessionGateway.list({ summary: true }).some(session => ["starting", "running", "awaiting_permission", "closing"].includes(session.status))))
+        throw new AppError("PROJECT_BUSY", "项目仍有运行中的任务或请求，请结束后重试删除。", { status: 409 });
+      current?.sourceRefresh.stop();
+      current?.curatorTriggerCoordinator.stop();
+      stoppedRuntime = current;
+      await remove(current);
+      if (current) await current.dispose();
+      runtimes.delete(projectId);
+    } catch (error) {
+      if (collaboration.projectById(projectId)?.status !== "deleted") {
+        stoppedRuntime?.sourceRefresh.start();
+        stoppedRuntime?.curatorTriggerCoordinator.start();
+      }
+      throw error;
+    } finally {
+      removingProjects.delete(projectId);
+    }
+  }
+  let defaultRuntime: ProjectRuntime | null = null;
+  if (collaboration.projectById(config.project.id)?.status !== "deleted") {
+    try { defaultRuntime = await getRuntime(config.project.id); }
+    catch (error) {
+      if (!(error instanceof AppError) || !error.code.startsWith("PROJECT_DATA_")) throw error;
+    }
+  }
   function applyRuntimeSettings(settings: UserSettings, runtime: ProjectRuntime) {
     const providers = ["mlflow", "wandb", "tensorboard"] as const;
     const previous = Object.fromEntries(
@@ -484,6 +558,9 @@ export async function createProjectRuntimeRegistry({ config, collaboration, opti
     runtimes,
     getRuntime,
     replaceRuntime,
+    removeRuntime,
+    requireAvailableRuntime,
+    prepareProjectStorage,
     defaultRuntime,
     baseTopologyService,
     topologyLayoutService,

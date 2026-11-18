@@ -4,17 +4,19 @@
 
 | 数据 | 当前存储与责任 |
 | --- | --- |
-| 账号、项目、成员、登录、项目投影 | 全局 collaboration SQLite；[CollaborationStore](../../../src/services/platform/collaboration-store.ts) |
-| 节点与组核心、块、对象/块版本、资产元数据、候选、读取回执、任务 | 同库按 project_id 隔离的研究表；[ResearchRepository](../../../src/services/research/objects/repository.ts) |
-| 纪要、周期活动及其版本 | 同库 research_documents / versions；[NotebookStore](../../../src/services/research/notebook-store.ts) |
-| 科研历程 | 同库项目化历史；[ResearchHistoryStore](../../../src/services/research/history/history-store.ts) |
-| Agent 会话 | 每项目 agent-sessions/history.sqlite；[AgentHistoryStore](../../../src/services/agents/agent-history-store.ts) |
-| 科研文件字节及派生预览 | 项目数据目录 research-assets；[资产服务](../../../src/services/research/assets/asset-service.ts) |
+| 账号、登录、项目位置注册、成员与权限、协作审计 | 用户目录的 collaboration SQLite；[CollaborationStore](../../../src/services/platform/collaboration-store.ts) |
+| 节点与组核心、块、对象/块版本、资产元数据、候选、读取回执、任务、拓扑投影与 MCP 调用审计 | 项目根/.topolumia/research.sqlite；[ProjectDataStore](../../../src/services/platform/project-data-store.ts) 和 [ResearchRepository](../../../src/services/research/objects/repository.ts) |
+| 纪要、周期活动及其版本 | 项目科研库 research_documents / versions；[NotebookStore](../../../src/services/research/notebook-store.ts) |
+| 科研历程 | 同一项目科研库；[ResearchHistoryStore](../../../src/services/research/history/history-store.ts) |
+| Agent 会话 | .topolumia/agent-sessions/history.sqlite；[AgentHistoryStore](../../../src/services/agents/agent-history-store.ts) |
+| 科研文件字节及派生预览 | .topolumia/research-assets；[资产服务](../../../src/services/research/assets/asset-service.ts) |
 | 实验记录块、run 与材料对应 | 实验记录块的独立记录集合、块/集合版本和材料引用；连续事件、运行目录、索引、水位、快照与附件由记录接收表维护，静态导入的富事件索引与曲线索引均可从归档原件重建 |
 | 会话图片与原生 imageView 快照 | history.sqlite 同级 attachments；[会话媒体](../../../src/services/agents/agent-attachment-service.ts) |
-| 项目设置、原生 Agent 配置 | settings.json、agent-config；[项目装配](../../../src/application/project-runtime.ts) 决定路径 |
+| 项目设置、原生 Agent 配置、Skill 快照与文件交接 | .topolumia/settings.json、agent-config、agent-skills、transfers；[项目装配](../../../src/application/project-runtime.ts) 决定路径 |
 
-[app-paths.ts](../../../src/lib/app-paths.ts)在所有平台统一使用用户主目录下的 .topolumia，独立于源码和安装目录。全局配置为 ~/.topolumia/topolumia.config.json，账户数据库及每项目资产/设置/会话放 data，默认科研工作区放 workspaces/<projectId>，缓存放 cache。前后端共用配置解析，TOPOLUMIA_CONFIG 仅作为显式实例覆盖；不再根据 AppData、XDG 或 Application Support 自动分散应用数据。
+[app-paths.ts](../../../src/lib/app-paths.ts)在所有平台统一使用用户主目录下的 ~/.topolumia 保存账号、登录、全局配置和缓存，独立于源码和安装目录。全局配置为 ~/.topolumia/topolumia.config.json，账号库位于 data；默认科研工作区为 workspaces/<projectId>，每个工作区内部也有自己的 .topolumia。用户选择本机已有目录时，完整项目数据直接存入该目录/.topolumia。前后端共用全局配置解析，TOPOLUMIA_CONFIG 仅作为显式实例覆盖。
+
+项目的 project.json 保存稳定 ID 和名称，research.sqlite 保存科研数据，其他相邻目录保存配置、会话和资产；项目数据不依赖原安装位置。移动或复制完整项目目录后，使用创建页的“本机已有目录”校验并打开已有项目，保留其身份和内容。账号权限与登录凭据由当前实例重新授予，不从项目副本导入。检测到损坏数据、异项目或两个已有副本时拒绝覆盖；已登记的数据目录消失时报告不可用，不重建空库。实现和回归见[项目目录](../../../src/services/platform/project-data-directory.ts)及[完整存储测试](../../../tests/platform/project-storage.test.ts)。
 
 Python 记录读取器在所在主机使用同一根下 data/record-readers 保存私有凭据、依赖和队列；测试或受控部署可显式覆盖其数据位置。用户选择的现有本机或 SSH 科研目录保持原位置，应用默认工作区与其分别表达。
 
@@ -31,11 +33,13 @@ Python 记录读取器在所在主机使用同一根下 data/record-readers 保�
 
 ## 生命周期与事务
 
-SQLite 事务负责正式科研对象、状态与审计的协调；内存投影需要在失败时恢复，不能形成数据库失败而内存已提交的科研状态。事务辅助见 [sqlite-transaction.ts](../../../src/lib/sqlite-transaction.ts)。
+项目科研 SQLite 的同一事务负责正式对象、拓扑投影与科研历程；内存投影需要在失败时恢复，不能形成数据库失败而内存已提交的科研状态。账号库中的最近更新时间和状态版本仅用于项目列表缓存，不是科研权威。事务辅助见 [sqlite-transaction.ts](../../../src/lib/sqlite-transaction.ts)。
 
 会话历史使用 WAL 与 FULL synchronous。运行实例 maxSessions 不属于历史存储限制；有界 Trace 仅裁剪诊断事件，不裁剪回合正文和整个会话记录。保存失败必须可见和可重试。
 
 科研资产、会话附件与 transfer 临时文件不是同一对象。候选绑定、正式绑定、草稿引用和历史引用决定保留；不能简单按文件年龄删除所有材料。
+
+项目删除以账号库 projects.status=deleted 为访问权威。先在项目库撤销采集授权，再通过账号库事务撤销成员、邀请、权限覆盖并记录审计；Agent 临时凭据同时清除，已有 SSE 连接收到访问撤销。删除期间阻止新运行时请求，运行中的 Agent、整理器、来源刷新、关键操作和 HTTP 请求阻止删除；空闲项目停用采集、关闭转发与运行时后从注册表释放。不可连接或尚未加载的主机读取器可能仍在原主机运行，返回停止结果，失效凭据禁止其继续提交。完整 .topolumia 和本机/SSH 工作目录均保留。默认项目的删除标记保留，启动时不构建其运行时；认证、列表和创建接口不依赖项目运行时。实现与回归见[删除测试](../../../tests/platform/project-deletion.test.ts)。
 
 ## 实验连续记录存储
 
@@ -58,7 +62,7 @@ MLflow 读取导入复用相同项目来源、事件 ledger 和查询索引：�
 
 训练机的[持久队列](../../../scripts/runtime/topolumia_collector/spool.py) 使用独立 SQLite WAL/FULL。事件、必要文件和原生游标一起提交，ACK 后独立推进远端确认点；丢 ACK 重传相同身份。默认待发额度 128 MiB，附件 64 MiB，原件分段 4 MiB；背压暂停读取，停止保留队列。覆盖/截断建立新 generation，完整坏校验不跳过；无法恢复读取前已被外部删除的源文件。
 
-备份同时覆盖应用 SQLite/WAL、资产与 record-blobs；未发送队列仍在训练机另行保留。凭据撤销和块归档不删除数据。旧节点级记录只做一次事务交接，原节点/块完整保留后进入单一新合同，不长期双写。
+备份覆盖完整项目 .topolumia，包含科研 SQLite/WAL、会话库、资产与 record-blobs；未发送队列仍在训练机另行保留。凭据撤销和块归档不删除数据。初始化复制既有应用数据时先完整复制和校验，再发布项目目录，保留原件；之后只有项目库参与科研读写，不维持双写。
 
 ## 节点组归属
 
@@ -77,6 +81,6 @@ MLflow 读取导入复用相同项目来源、事件 ledger 和查询索引：�
 
 ## 项目工作目录
 
-项目 SQLite 的位置记录是项目主工作目录的权威，含本机/SSH/默认工作区选择及独立修订，已有未关联记录保持可读。创建项目、位置和创建者成员身份在同一事务保存；目录验证在提交前完成，不写入所选已有目录。项目 ID 自动生成，名称可以相同；默认位置预览使用与实际创建一致的 ID 和完整路径。
+账号库的位置注册记录本机/SSH/默认工作区选择及独立修订，项目 manifest 决定数据身份。目录浏览与校验只读；实际创建才写入 .topolumia，原代码和研究文件保持原样。新项目自动生成 ID；已有 manifest 的目录使用原 ID 和名称，不覆盖原配置或内容。账号库的项目注册、位置和创建者成员身份在同一事务保存。
 
-应用资产、配置和会话历史继续使用应用数据目录。关联本机目录只改变代码工作根，关联 SSH 目录不会将远端路径当成本机路径。更新使用观察修订；运行中拒绝切换，空闲时关闭原上下文并从同一项目数据重建。旧位置保存设置的目录修订与新位置不符时，运行环境选择和文件范围重新确定，科研内容与原件保留。机制见[环境模块](../modules/tools-and-environments/README.md#项目创建与工作目录)。
+更换本机工作目录使用观察修订并检查运行状态，先暂停后台协调、关闭运行时和数据库，再复制完整 .topolumia、校验并切换位置，原位置保留副本；目标已有另一份数据时不覆盖。项目整体移走后可从新位置重新关联，旧目录不会被自动重建。SSH 项目在独立本机项目根保存同样的 .topolumia，远端目录是代码和训练位置，不通过 SFTP 直接访问 SQLite。目录修订变化时重新确认 Python 选择与文件范围，科研内容和会话保留。机制见[环境模块](../modules/tools-and-environments/README.md#项目创建与工作目录)。

@@ -8,10 +8,15 @@ import type {
   CollaborationStore,
 } from "../services/platform/collaboration-store.js";
 import type { ProjectWorkspaceService } from "../services/platform/project-workspace-service.js";
+import type { ProjectDeletionResult } from "../domain/projects/lifecycle.js";
 import type { SshConnectionService } from "../ssh/ssh-connection-service.js";
 import type { SshEnvironmentHub } from "../ssh/ssh-environment-hub.js";
 import type { ManagedRecordCollectors } from "../services/environments/managed-record-collectors.js";
 type Registry = Awaited<ReturnType<typeof createProjectRuntimeRegistry>>;
+export type PlatformRouteContext = Pick<RouteContext,
+  "request" | "response" | "pathname" | "requestedProjectId" | "requestActor" |
+  "collaboration" | "projectWorkspaces" | "config" | "deleteProject"
+>;
 export type RouteContext = Pick<
   ProjectRuntime,
   | "config"
@@ -35,6 +40,7 @@ export type RouteContext = Pick<
   requestRuntime: ProjectRuntime;
   collaboration: CollaborationStore;
   projectWorkspaces: ProjectWorkspaceService;
+  deleteProject: (projectId: string, input: unknown, actor: CollaborationActor) => Promise<ProjectDeletionResult>;
   sshConnections: SshConnectionService;
   sshEnvironments: SshEnvironmentHub;
   recordCollectors: ManagedRecordCollectors;

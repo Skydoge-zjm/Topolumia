@@ -20,6 +20,10 @@ export function ProjectCreatePage() {
     retry: false,
   });
   const [name, setName] = useState(""),
+    [existingProject, setExistingProject] = useState<{
+      id: string;
+      name: string;
+    } | null>(null),
     [workspace, setWorkspace] = useState(workspaceDraft),
     [directoryReady, setDirectoryReady] = useState(true),
     [nameError, setNameError] = useState(""),
@@ -65,7 +69,7 @@ export function ProjectCreatePage() {
         method: "POST",
         body: JSON.stringify({
           name: name.trim(),
-          id: defaults.data.id,
+          id: existingProject?.id ?? defaults.data.id,
           workspace: workspaceChoice(workspace),
         }),
       });
@@ -92,7 +96,15 @@ export function ProjectCreatePage() {
           <ArrowLeft size={14} aria-hidden />
           {en ? "Projects" : "项目列表"}
         </Link>
-        <h1>{en ? "Create research project" : "创建研究项目"}</h1>
+        <h1>
+          {existingProject
+            ? en
+              ? "Open research project"
+              : "打开研究项目"
+            : en
+              ? "Create research project"
+              : "创建研究项目"}
+        </h1>
       </header>
       {context.isPending && (
         <LoadingSkeleton
@@ -137,7 +149,7 @@ export function ProjectCreatePage() {
               maxLength={120}
               autoFocus
               autoComplete="off"
-              disabled={busy}
+              disabled={busy || Boolean(existingProject)}
               aria-invalid={Boolean(nameError)}
               aria-describedby={
                 nameError ? "new-project-name-error" : undefined
@@ -177,6 +189,13 @@ export function ProjectCreatePage() {
             defaultDirectory={defaults.data?.directory}
             defaultHost={defaults.data?.hostLabel}
             onReadinessChange={setDirectoryReady}
+            onExistingProject={(project) => {
+              setExistingProject(project);
+              if (project) {
+                setName(project.name);
+                setNameError("");
+              }
+            }}
             onChange={(next) => {
               setWorkspace(next);
               setError("");
@@ -230,11 +249,19 @@ export function ProjectCreatePage() {
               )}
               {busy
                 ? en
-                  ? "Creating…"
-                  : "正在创建…"
+                  ? existingProject
+                    ? "Opening…"
+                    : "Creating…"
+                  : existingProject
+                    ? "正在打开…"
+                    : "正在创建…"
                 : en
-                  ? "Create project"
-                  : "创建项目"}
+                  ? existingProject
+                    ? "Open project"
+                    : "Create project"
+                  : existingProject
+                    ? "打开项目"
+                    : "创建项目"}
               {!busy && <ArrowRight size={16} aria-hidden />}
             </button>
           </footer>

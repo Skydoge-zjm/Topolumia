@@ -35,4 +35,5 @@ export type ProjectWorkspace = {
   hostLabel?: string;
   connectionRevision?: number;
   revision: number;
+  storageVersion?: 1;
 };

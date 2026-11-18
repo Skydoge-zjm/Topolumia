@@ -13,6 +13,7 @@ import type { ProjectRecordSource, RecordProvider } from "../../domain/research/
 import type { ResearchActor, AuthenticatedResearchActor } from "../../domain/research/types.js";
 import type { ResearchCommandService } from "../research/research-command-service.js";
 import type { CommandResult } from "../../lib/command.js";
+import type { ProjectDataStore } from "../platform/project-data-store.js";
 const collectorStateSchema = z.looseObject({status:z.string(),phase:z.string().optional(),error:z.string().optional(),checkedAt:z.union([z.string(),z.number()]).optional()});
 type CollectorState = z.infer<typeof collectorStateSchema>;
 type CollectorOptions = { collaboration:CollaborationStore;sshEnvironments:SshEnvironmentHub;sshConnections:SshConnectionService;address:()=>{host:string;port:number}|null;runtimes:Map<string,ProjectRuntime>;dataDirectory?:string };
@@ -26,6 +27,7 @@ export class ManagedRecordCollectors {
   forwards = new Map<string, Awaited<ReturnType<SshConnectionService["reverseForward"]>>>();
   installs = new Map<string, Promise<CollectorState>>();
   closed = false;
+  removedProjects = new Set<string>();
   timer;
   constructor(public options: CollectorOptions) {
     this.timer = setInterval(() => void this.reconcile(), 8000);
@@ -116,7 +118,7 @@ export class ManagedRecordCollectors {
   }
   launch(runtime: ProjectRuntime, source: ProjectRecordSource, action = "start", python: string|undefined = undefined) {
     const key = this.key(runtime, source);
-    if (this.closed || this.tasks.has(key)) return;
+    if (this.closed || this.removedProjects.has(runtime.config.project.id) || this.tasks.has(key)) return;
     this.states.set(key, { status: "deploying", phase: action === "deploy" ? "preparing" : "starting" });
     const task = this.start(runtime, source, action, python).catch(error => { this.states.set(key, { status: errorCode(error) === "SSH_NOT_CONNECTED" ? "waiting" : "error", error: errorText(error).slice(0, 500), checkedAt: new Date().toISOString() }); }).finally(() => this.tasks.delete(key));
     this.tasks.set(key, task);
@@ -124,7 +126,7 @@ export class ManagedRecordCollectors {
   async start(runtime: ProjectRuntime, source: ProjectRecordSource, action: string, python: string | undefined) {
     const key = this.key(runtime, source), c: ResearchCommandService = runtime.researchCommands, actor = this.actor(runtime, source);
     c.check(actor, "project.manageSettings");
-    if (!c.projectRecords.get(source.id)?.enabled || this.closed) return;
+    if (!c.projectRecords.get(source.id)?.enabled || this.closed || this.removedProjects.has(runtime.config.project.id)) return;
     const address = this.options.address();
     if (!address?.port) throw new AppError("COLLECTION_NOT_READY", "工作台服务尚未启动。", { status: 409 });
     let url = `http://${address.host.includes(":") ? "[" + address.host + "]" : address.host}:${address.port}`;
@@ -145,7 +147,7 @@ export class ManagedRecordCollectors {
     this.installs.set(installKey, operation);
     try {
       const result = await operation;
-      if (this.closed || !c.projectRecords.get(source.id)?.enabled) { await this.control(runtime, source, "stop"); return; }
+      if (this.closed || this.removedProjects.has(runtime.config.project.id) || !c.projectRecords.get(source.id)?.enabled) { await this.control(runtime, source, "stop"); return; }
       this.states.set(key, { ...result, status: "starting", checkedAt: new Date().toISOString() });
     } finally { if (this.installs.get(installKey) === operation) this.installs.delete(installKey); }
   }
@@ -179,6 +181,7 @@ export class ManagedRecordCollectors {
   async reconcile() {
     if (this.closed || !this.options.address()?.port) return;
     for (const runtime of this.options.runtimes.values()) for (const source of runtime.researchCommands.projectRecords.all()) {
+      if (this.removedProjects.has(runtime.config.project.id)) continue;
       const key = this.key(runtime, source);
       if (this.tasks.has(key)) continue;
       const state = this.states.get(key);
@@ -200,6 +203,35 @@ export class ManagedRecordCollectors {
       })().finally(() => { if (this.tasks.get(key) === task) this.tasks.delete(key); });
       this.tasks.set(key, task);
     }
+  }
+  async suspendProject(projectId: string) {
+    this.removedProjects.add(projectId);
+    const prefix = projectId + ":";
+    await Promise.allSettled([...this.tasks].filter(([key]) => key.startsWith(prefix)).map(([, task]) => task));
+    for (const [key, forward] of this.forwards) if (key.startsWith(prefix)) { forward.close(); this.forwards.delete(key); }
+  }
+  async removeProject(projectId: string, data?: ProjectDataStore) {
+    this.removedProjects.add(projectId);
+    const runtime = this.options.runtimes.get(projectId);
+    if (!runtime) {
+      const db = data?.db;
+      if (!db) return false;
+      return !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_record_sources'").get() ||
+        !db.prepare("SELECT 1 FROM project_record_sources WHERE project=? AND json_extract(body,'$.enabled')=1 LIMIT 1").get(projectId);
+    }
+    const sources = runtime.researchCommands.projectRecords.all().filter(source => source.mode !== "import");
+    for (const source of sources) runtime.researchCommands.projectRecords.save({ ...source, enabled: false });
+    await Promise.allSettled(sources.flatMap(source => this.tasks.get(this.key(runtime, source)) ?? []));
+    const results = await Promise.allSettled(sources.map(async source => {
+      const key = this.key(runtime, source);
+      try { await this.control(runtime, source, "stop"); }
+      finally {
+        this.forwards.get(key)?.close();
+        this.forwards.delete(key);
+        this.states.delete(key);
+      }
+    }));
+    return results.every(result => result.status === "fulfilled");
   }
   async close() {
     this.closed = true; clearInterval(this.timer);

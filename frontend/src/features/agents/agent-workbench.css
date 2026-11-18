@@ -154,6 +154,11 @@
 .composer-image > button { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--color-line); border-radius: 50%; color: var(--color-ink-soft); background: var(--color-panel); cursor: pointer; }
 .composer-image > button:hover { background: var(--color-mint-soft); }
 .composer-image-feedback { padding: 6px 12px; color: var(--color-muted); font-size: 12px; }
+.composer-command-menu { display: grid; gap: 2px; padding: 6px; border-top: 1px solid var(--color-line-soft); background: var(--color-panel); }
+.composer-command-menu button { display: flex; align-items: baseline; gap: 10px; padding: 7px 8px; border: 0; border-radius: 6px; color: var(--color-ink); background: transparent; text-align: left; cursor: pointer; }
+.composer-command-menu button:hover, .composer-command-menu button:focus-visible { background: var(--color-mint-pale); outline: none; }
+.composer-command-menu strong { min-width: 90px; color: var(--color-green2); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+.composer-command-menu span { color: var(--color-muted); font-size: 12px; }
 .composer-file-input { display: none; }
 .composer-attach { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; color: var(--color-ink-soft); background: transparent; cursor: pointer; }
 .composer-attach:hover { background: var(--color-mint-soft); }

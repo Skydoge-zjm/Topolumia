@@ -8,6 +8,7 @@ let researchBinding = null;
 let developerInstructionsConfigured = false;
 let inlineReviews = false;
 const reviewHistory = new Map();
+let goal = null;
 
 function send(message) {
   if (inlineReviews && message.method === "item/completed") {
@@ -41,6 +42,38 @@ reader.on("line", async (line) => {
     return;
   }
   if (message.method === "initialized") return;
+  if (message.method === "thread/goal/set" || message.method === "thread/goal/clear" || message.method === "thread/goal/get") {
+    if (message.method !== "thread/goal/get" && message.params.origin !== "user") { send({ id: message.id, error: { code: -32602, message: "User origin required" } }); return; }
+    if (message.method === "thread/goal/set") {
+      if (!message.params.objective) { send({ id: message.id, error: { code: -32602, message: "Objective required" } }); return; }
+      goal = { objective: message.params.objective, status: "active" };
+    }
+    if (message.method === "thread/goal/clear") goal = null;
+    send({ id: message.id, result: { goal } }); return;
+  }
+  if (message.method === "thread/name/set") { send({ id: message.id, result: {} }); return; }
+  if (message.method === "thread/compact/start" || message.method === "review/start") {
+    if (process.env.CODEX_FIXTURE_START_REJECT === "1") { send({ id: message.id, error: { code: -32602, message: "Native start rejected" } }); return; }
+    if (message.method === "review/start" && !message.params.target) { send({ id: message.id, error: { code: -32602, message: "Target required" } }); return; }
+    turnNumber++;
+    const turnId = `fixture-codex-turn-${turnNumber}`;
+    const started = () => send({ method: "turn/started", params: { threadId, turn: { id: turnId, status: "inProgress" } } });
+    if (process.env.CODEX_FIXTURE_START_DROP_ACK === "1") { started(); if (process.env.CODEX_FIXTURE_COMMAND_EARLY === "1") completeTurn(); return; }
+    const finish = () => {
+      if (process.env.CODEX_FIXTURE_COMMAND_FAIL === "1") { send({ method: "error", params: { threadId, turnId, error: { message: "Native command failed" } } }); return; }
+      if (process.env.CODEX_FIXTURE_COMMAND_APPROVAL === "1") {
+        pendingApproval = { id: 77 };
+        send({ id: 77, method: "item/commandExecution/requestApproval", params: { threadId, turnId, itemId: "review-tool", command: "git diff", reason: "Review approval" } });
+        return;
+      }
+      if (message.method === "review/start") send({ method: "item/completed", params: { threadId, turnId, item: { id: `review-${turnId}`, type: "agentMessage", text: JSON.stringify(message.params.target) } } });
+      completeTurn();
+    };
+    if (process.env.CODEX_FIXTURE_COMMAND_EARLY === "1") { started(); finish(); }
+    send({ id: message.id, result: message.method === "review/start" ? { turn: { id: turnId, status: "inProgress" }, reviewThreadId: threadId } : {} });
+    if (process.env.CODEX_FIXTURE_COMMAND_EARLY !== "1") setTimeout(() => { started(); if (process.env.CODEX_FIXTURE_COMMAND_HOLD !== "1") finish(); }, 25);
+    return;
+  }
   if (message.method === "thread/start") {
     researchBinding = message.params?.config?.mcp_servers?.topolumia ?? null;
     developerInstructionsConfigured = typeof message.params?.developerInstructions === "string" && message.params.developerInstructions.includes("Topolumia");
@@ -71,6 +104,8 @@ reader.on("line", async (line) => {
   if (message.method === "turn/start") {
     turnNumber += 1;
     const turnId = `fixture-codex-turn-${turnNumber}`;
+    if (process.env.CODEX_FIXTURE_START_DROP_ACK === "1") { send({ method: "turn/started", params: { threadId, turn: { id: turnId, status: "inProgress" } } }); return; }
+    if (process.env.CODEX_FIXTURE_START_WITHOUT_ID === "1") { send({ id: message.id, result: { turn: { status: "inProgress" } } }); return; }
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
     const text = message.params?.input?.[0]?.text ?? "";
     if (text.includes("inline-review")) {

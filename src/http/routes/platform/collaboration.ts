@@ -1,11 +1,11 @@
 import * as z from "zod/v4";
-import type { RouteContext } from "../../route-context.js";
+import type { PlatformRouteContext } from "../../route-context.js";
 import { AppError } from "../../../lib/errors.js";
 import { readJsonObject, sendJson, parseInput } from "../../../lib/http.js";
 
 import { publicProjectForApi } from "../../presenters.js";
 
-export async function handlePlatformCollaborationRoutes(context: RouteContext) {
+export async function handlePlatformCollaborationRoutes(context: PlatformRouteContext) {
   const {
     request,
     response,
@@ -14,7 +14,7 @@ export async function handlePlatformCollaborationRoutes(context: RouteContext) {
     requestActor,
     collaboration,
     projectWorkspaces,
-  }: RouteContext = context;
+  } = context;
   if (pathname.startsWith("/api/project-workspaces")) {
     if (pathname === "/api/project-workspaces/defaults" && request.method === "GET") {
       sendJson(response, 200, projectWorkspaces.defaults(requestActor)); return true;
@@ -32,7 +32,7 @@ export async function handlePlatformCollaborationRoutes(context: RouteContext) {
       sendJson(response, 200, await projectWorkspaces.browse({ kind: params.get("kind"), connectionId: params.get("connectionId"), directory: params.get("directory") ?? "", query: params.get("q") ?? "", offset: Number(params.get("offset") ?? 0) }, requestActor)); return true;
     }
     if (pathname === "/api/project-workspaces/validate" && request.method === "POST") {
-      sendJson(response, 200, { workspace: await projectWorkspaces.prepare(await readJsonObject(request, 16384), requestActor) }); return true;
+      sendJson(response, 200, await projectWorkspaces.validate(await readJsonObject(request, 16384), requestActor)); return true;
     }
     throw new AppError("METHOD_NOT_ALLOWED", "此项目目录操作不可用。", { status: 405 });
   }
@@ -40,7 +40,7 @@ export async function handlePlatformCollaborationRoutes(context: RouteContext) {
   if (pathname === "/api/collaboration/context" && request.method === "GET") {
     const contextProject = collaboration.projectById(requestedProjectId);
     const contextMembership =
-      contextProject?.id === requestedProjectId
+      contextProject?.status !== "deleted" && contextProject?.id === requestedProjectId
         ? requestActor.membership
         : null;
     const contextPermissions = contextMembership
@@ -113,6 +113,10 @@ export async function handlePlatformCollaborationRoutes(context: RouteContext) {
       });
       return true;
     }
+    if (request.method === "DELETE" && suffix === "") {
+      sendJson(response, 200, await context.deleteProject(projectId, await readJsonObject(request, 16384), projectActor));
+      return true;
+    }
     if (request.method === "GET" && suffix === "members") {
       sendJson(response, 200, {
         projectId,
@@ -157,7 +161,7 @@ export async function handlePlatformCollaborationRoutes(context: RouteContext) {
       return true;
     }
     if (request.method === "POST" && acceptMatch) {
-      if (!collaboration.projectById(projectId))
+      if (!collaboration.projectById(projectId) || collaboration.projectById(projectId)?.status === "deleted")
         throw new AppError("PROJECT_NOT_FOUND", "项目不存在。", {
           status: 404,
         });

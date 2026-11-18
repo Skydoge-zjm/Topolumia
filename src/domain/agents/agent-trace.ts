@@ -3,7 +3,7 @@ import type { ConversationEvent } from "./agent-conversation.js";
 type TraceEvent = Pick<ConversationEvent, "type" | "payload"> & Partial<ConversationEvent>;
 
 const meaningful = new Set(["user.message", "session.status", "session.closed", "turn.completed", "turn.failed", "turn.cancelled", "turn.retrying",
-  "approval.requested", "approval.resolved", "usage.updated", "plan.updated", "agent.activity", "agent.delegated", "files.changed", "content.removed", "agent.question.unsupported", "driver.process.closed"]);
+  "approval.requested", "approval.resolved", "usage.updated", "plan.updated", "agent.activity", "agent.delegated", "files.changed", "content.removed", "agent.question.unsupported", "driver.process.closed", "command.started", "command.completed", "command.failed"]);
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

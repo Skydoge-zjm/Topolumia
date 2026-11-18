@@ -320,7 +320,7 @@ export function normalizeConversation(
       continue;
     }
     if (
-      ["turn.failed", "turn.retrying", "session.status"].includes(event.type)
+      ["turn.failed", "turn.retrying", "session.status", "command.started", "command.completed", "command.failed"].includes(event.type)
     ) {
       const error = payload.error as { message?: string } | undefined;
       if (
@@ -334,14 +334,20 @@ export function normalizeConversation(
         kind: "status",
         key: `status:${event.id}`,
         title:
-          event.type === "turn.failed"
+          event.type === "command.failed"
+            ? "命令失败"
+            : event.type === "command.started"
+              ? "正在执行命令"
+              : event.type === "command.completed"
+                ? payload.stopReason === "cancelled" ? "命令已停止" : "命令完成"
+                : event.type === "turn.failed"
             ? "回合失败"
             : event.type === "turn.retrying"
               ? "正在重试"
               : "会话状态",
         status: String(payload.status ?? "info"),
         detail: String(
-          error?.message ?? payload.message ?? payload.status ?? "",
+          error?.message ?? payload.message ?? payload.name ?? payload.status ?? "",
         ),
       });
     }

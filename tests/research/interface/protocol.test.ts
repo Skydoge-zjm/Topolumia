@@ -39,7 +39,7 @@ test("binary transfer keeps XLSX bytes out of context and reads row 4000 from th
   const f=await fixture(t),rows=Array.from({length:5000},(_,i)=>({c1:"row-"+i,c2:i===3999?0:i+.25,c3:i===3999?"":false}));const bytes=Buffer.from(exportXlsxTable({columns:[{key:"c1",label:"Row"},{key:"c2",label:"Metric"},{key:"c3",label:"Value"}],rows},"Results"));await writeFile(path.join(f.binding.env.TOPOLUMIA_TRANSFER_ROOT,"out/large.xlsx"),bytes);
   const upload=(await f.data("transfer_asset",{direction:"upload",relativePath:"out/large.xlsx",idempotencyKey:"large-xlsx"})).data;assert.ok(upload.assetId);assert.equal((await f.data("transfer_asset",{direction:"upload",relativePath:"out/large.xlsx",idempotencyKey:"large-xlsx"})).data.assetId,upload.assetId);
   assert.equal((await f.data("transfer_asset",{direction:"upload",relativePath:"out\\large.xlsx",idempotencyKey:"large-xlsx"})).data.assetId,upload.assetId);
-  const wrongRoot=await f.call("transfer_asset",{direction:"upload",relativePath:`.topolumia-transfer/${path.basename(f.binding.env.TOPOLUMIA_TRANSFER_ROOT)}/out/large.xlsx`,idempotencyKey:"wrong-root"});
+  const wrongRoot=await f.call("transfer_asset",{direction:"upload",relativePath:`.topolumia/transfers/${path.basename(f.binding.env.TOPOLUMIA_TRANSFER_ROOT)}/out/large.xlsx`,idempotencyKey:"wrong-root"});
   assert.equal(wrongRoot.isError,true);assert.equal(wrongRoot.structuredContent.error.detail.suggestedRelativePath,"out/large.xlsx");
   const values=await f.data("read_assets",{assetId:upload.assetId,view:"values",selection:{sheet:"Results",rowOffset:4000,rowLimit:2}});assert.equal(values.data.items[0].values.c1,"row-3999");assert.equal(values.data.items[0].values.c2,0);assert.equal(values.data.items[0].values.c3,"");
   const download={direction:"download",relativePath:"in/copy.xlsx",idempotencyKey:"download-xlsx",target:{kind:"asset",assetId:upload.assetId},variant:"original"};const result=await f.data("transfer_asset",download);assert.deepEqual(await readFile(result.data.path),bytes);assert.equal((await f.data("transfer_asset",download)).deliveryReceipt.id,result.deliveryReceipt.id);
@@ -63,8 +63,8 @@ test("paper sources retain their assets; existing draft blocks can be revised wi
 
 test("research discovery excludes application files and returns actionable schema and PDF capabilities",{timeout:60000},async t=>{
   const f=await fixture(t),workspace=f.runtime.config.project.root;
-  await mkdir(path.join(workspace,".topolumia-transfer/session/out"),{recursive:true});
-  await writeFile(path.join(workspace,".topolumia-transfer/session/out/private.md"),"INTERNAL_NEEDLE");
+  await mkdir(path.join(workspace,".topolumia/transfers/session/out"),{recursive:true});
+  await writeFile(path.join(workspace,".topolumia/transfers/session/out/private.md"),"INTERNAL_NEEDLE");
   await writeFile(path.join(workspace,"readable.md"),"RESEARCH_NEEDLE source evidence.");
   await writeFile(path.join(workspace,"unindexed.pdf"),"%PDF-1.4\nResearch source fixture");
   const indexed=await f.runtime.registry.filesystem.snapshot();

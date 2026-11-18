@@ -53,12 +53,12 @@ get_environment 读取选择与缓存，不启动发现、导入包或执行新�
 
 [创建页面](../../../../frontend/src/features/projects/ProjectCreatePage.tsx)使用自动 ID、名称和工作目录选择。只读[目录浏览器](../../../../frontend/src/features/projects/DirectoryBrowser.tsx)按请求页列出文件夹，SSH 直接使用 SFTP，无需先选 Python。连接创建与登录挑战复用既有控件，弹窗提交不会触发外层创建表单。成功进入研究总览，失败保留草稿，路径或主机变化使旧校验失效。
 
-[目录服务](../../../../src/services/platform/project-workspace-service.ts)复核管理员、规范目录与连接身份后保存项目；目录不可用时不创建半成品项目。[项目存储](../../../../src/services/platform/collaboration-store.ts)将位置、归属与独立修订存于项目 SQLite。默认工作区、本机目录与 SSH 目录三种选择均显式保存；已有未关联状态只读保留，创建/更新不再产生该状态，原目录和内容不迁移。
+[目录服务](../../../../src/services/platform/project-workspace-service.ts)复核管理员、规范目录与连接身份，浏览和校验保持只读。实际创建在项目根内初始化完整 .topolumia；已有 manifest 则识别并打开原项目，不覆盖其名称和内容。[账号存储](../../../../src/services/platform/collaboration-store.ts)保存位置注册、归属和独立修订，[项目存储](../../../../src/services/platform/project-data-store.ts)保存科研库。原代码文件保持原样，异项目、损坏目录和重复副本明确报错。
 
-本机目录成为项目实际根，SSH 目录保留独立的本机应用工作区，并作为该主机的项目目录默认值。总览和工具环境提供同一配置入口；更换目录不删除已有科研对象。目录更新校验观察修订，运行中的任务阻止切换，未变更保存不重建环境。重新建立上下文时，保存设置中的目录修订使旧位置的 Python 选择与文件范围失效；其他设置和历史保留。
+本机目录成为项目实际根；SSH 项目保留独立本机根/.topolumia，远端目录用作代码和采集位置。总览和工具环境提供同一配置入口。更换本机目录时先停止后台协调并关闭项目写入，再复制和校验完整 .topolumia，保留原位置副本并切换注册。目录更新校验观察修订，运行中阻止切换，未变更保存不重建；旧位置的 Python 选择与文件范围失效，其他设置、科研内容和会话保留。
 
 SSH 目录与 Python 独立：首次关联 SSH 仅选择主机与目录，当前环境显示待选择，Agent 梗概返回远程目录和未选择状态，不提供猜测的 Python 命令。原始接收器继续按各自已保存范围采集；新建采集默认使用当前项目在所选主机的目录。
 
 [项目工作目录回归](../../../../tests/platform/project-workspace.test.ts)覆盖创建、只读目录、原文件保护、更换目录、版本冲突、运行上下文重建与 SSH 未选 Python；[前端回归](../../../../frontend/src/features/projects/ProjectCreatePage.spec.tsx)覆盖重复提交、失败草稿、浏览、过期校验和 SSH 弹窗提交边界。
 
-项目默认目录由[用户级路径](../../../../src/lib/app-paths.ts)与项目 ID 确定。创建页先读取默认位置与预生成 ID，显示完整目标后用同一 ID 提交；切换到本机/SSH 来源不重复生成 ID。所有平台的默认配置、数据与缓存统一在用户主目录 ~/.topolumia，默认工作区为其 workspaces 子目录，独立于软件安装。G 视觉方向使用同一主标题、绿色分组标记、原生单选状态与目录图标；状态反馈仅来自实际校验，不预先宣称目录存在。
+项目默认目录由[用户级路径](../../../../src/lib/app-paths.ts)与预生成 ID 确定；创建页同时显示项目数据位置。已有本机项目校验后显示原名称并提供“打开项目”，其 manifest ID 优先于新建预览 ID。默认工作区位于用户目录的 workspaces，账号和全局配置留在用户目录，项目完整数据由根内 .topolumia 承载。界面保持单一主标题、原生单选状态和目录图标；反馈来自实际校验。

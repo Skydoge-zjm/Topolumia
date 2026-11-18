@@ -4,7 +4,7 @@
 
 ## 运行与配置
 
-基础启动见[开发指南](development.md)。所有配置与应用数据默认收在 ~/.topolumia，Windows 同样使用用户主目录中的 .topolumia。全局配置为 ~/.topolumia/topolumia.config.json，结构参考[配置样例](../../config/topolumia.config.example.json)；前后端读取同一文件，TOPOLUMIA_CONFIG 可明确指定隔离实例配置，源码内 config/topolumia.config.json 不自动加载。
+基础启动见[开发指南](development.md)。账号、登录和全局配置收在用户主目录 ~/.topolumia，Windows 使用相同目录约定；项目配置、科研库、资产和会话位于各项目根/.topolumia。全局配置为 ~/.topolumia/topolumia.config.json，结构参考[配置样例](../../config/topolumia.config.example.json)；前后端读取同一文件，TOPOLUMIA_CONFIG 可指定隔离实例配置，源码内配置不自动加载。
 
 
 后端同时服务前端构建，生产式本机运行使用 5510；5610 用于 Vite 开发。修改端口后同时检查代理 apiUrl，并重启受影响服务。
@@ -15,27 +15,31 @@
 
 Agent 原生配置在各项目应用数据目录编辑与保存，使用配置页或 [配置模块](../technical/modules/agent-workbench/configuration.md) 的机制，不能替换为改用户主目录全局文件。
 
-配置、数据、缓存和默认工作区统一在用户主目录 ~/.topolumia 下，按子目录组织，权威规则见[存储架构](../technical/architecture/data-and-storage.md)。新科研工作区位于 ~/.topolumia/workspaces/<项目 ID>，前端预览完整路径。新默认不会修改 SQLite 中已有项目目录；已有实例变更存储配置时，先备份并明确原数据库和设置位置，不能通过创建空数据库代替原实例。
+默认工作区位于 ~/.topolumia/workspaces/<项目 ID>，前端显示工作目录及内部 .topolumia 的完整路径；已有本机目录直接在原位置保存项目数据。路径与数据权威见[存储架构](../technical/architecture/data-and-storage.md)。更改默认工作区配置不会重新定位已登记项目；已知数据目录缺失时报告不可用，不能以空库替代。更换项目目录会关闭写入、复制并校验完整项目数据，再切换登记位置，原副本保留。
 
 ## 健康检查与排障
 
 访问 /api/health 检查后端；同时确认页面实际来自构建版还是 Vite。排查前确定进程 PID、端口、工作目录与配置来源，避免把旧 dist 或另一个服务误认为当前实现。
 
+浏览器登录默认 8 小时并采用活跃续期；如果长时间没有请求，过期后需要重新登录。可在用户配置的 collaboration.sessionTtlMs 调整绝对会话时长，修改后重启后端生效。Agent token 不复用浏览器 cookie。
+
 日志放用户缓存目录或显式指定的忽略目录，避免写入请求凭据或完整原生配置。Agent 问题按 [排障方法](agent-debugging.md) 沿原生事件、统一投影、存储和前端定位。
 
 ## 备份
 
-备份应覆盖 [存储架构](../technical/architecture/data-and-storage.md) 列出的全局 SQLite、每项目会话库、科研资产字节、会话媒体、设置与原生配置；还要确认用户科研工作目录是否另行备份。
+备份应覆盖用户级账号与全局配置，以及每个完整项目目录，包含 .topolumia 内的科研库、会话库、资产、会话媒体、设置和原生配置；训练机未发送队列与外部科研文件另行备份。数据归属见[存储架构](../technical/architecture/data-and-storage.md)。
 
 最简单可靠的本机操作是：
 
 1. 记录实际数据路径并让应用正常关闭，确保检查点与数据库连接结束。
-2. 将 ~/.topolumia 复制到独立备份位置，包含配置、data 中的数据库、资产和会话及 workspaces 中的默认项目；显式关联的外部科研目录另行备份。记录时间和代码版本。
+2. 将 ~/.topolumia 与所有位于其他位置的项目目录复制到独立备份位置，包含各项目隐藏的 .topolumia。记录时间和代码版本。
 3. 校验文件完整性，恢复到隔离位置检查，再用于真实恢复。
 
 运行中不能只复制一个 .sqlite 文件并忽略 WAL；如需在线备份，应使用 SQLite 正规备份机制。不要把候选、媒体或历史当作可随意重建的缓存。
 
 当前没有统一的自动备份/恢复产品功能，上述是人工操作方法。
+
+在新实例打开项目副本时，创建页选择其本机目录并校验，识别原 ID 和名称后打开；账号与主机登录不随项目副本导入。同一实例中，原位置仍存在的重复副本不会自动替换原项目。项目目录已整体移走时，可以用同一入口重新关联新位置。
 
 ## 源码发布与文档版本
 

@@ -207,3 +207,26 @@ test("collaboration context recovers from a stale project and supports member li
   assert.equal(afterRole.payload.membership.role, "guest");
   assert.equal(afterRole.payload.permissions.includes("research.recordProgress"), false);
 });
+
+test("agent MCP credentials survive an abrupt backend restart until their session is closed", async () => {
+  const app = await makeApp();
+  const cookie = await bootstrap(app);
+  const actor = app.collaboration.actorForUser(app.collaboration.userByUsername("admin").id, "research-project");
+  const token = app.collaboration.issueAgentCredential(actor, "research-project", "runtime-restart", { researchSessionId: "session-restart" });
+  const databaseFile = app.config.collaboration.databaseFile;
+  app.collaboration.close();
+  const restarted = await startMvpServer({
+    port: 0,
+    testMode: false,
+    collaborationFile: databaseFile,
+    config: { collaboration: { allowDevIdentity: false }, sourceRefresh: { enabled: false } },
+  });
+  apps.push(restarted);
+  const response = await request(restarted, "/api/research/context?projectId=research-project", { headers: { "x-rw-session": token, "x-rw-project-id": "research-project" } });
+  assert.equal(response.response.status, 200, JSON.stringify(response.payload));
+  assert.equal(response.payload.projectId, "research-project");
+  restarted.collaboration.revokeAgentCredential("runtime-restart");
+  const unauthorized = await request(restarted, "/api/research/context?projectId=research-project", { headers: { "x-rw-session": token, "x-rw-project-id": "research-project" } });
+  assert.equal(unauthorized.response.status, 401);
+  assert.equal(cookie.startsWith("rw_session="), true);
+});

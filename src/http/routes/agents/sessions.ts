@@ -37,6 +37,9 @@ export async function handleAgentsSessionsRoutes(context: RouteContext) {
   const runtimeConfig = context.requestRuntime.config;
   const persistMatch = pathname.match(/^\/api\/agent-sessions\/([^/]+)\/persist$/);
   if (persistMatch && request.method === "POST") { sendJson(response, 200, await agentSessionGateway.persist(persistMatch[1])); return true; }
+  const commandMatch = pathname.match(/^\/api\/agent-sessions\/([^/]+)\/commands$/);
+  if (commandMatch && request.method === "GET") { sendJson(response, 200, { commands: agentSessionGateway.listCommands(commandMatch[1]) }); return true; }
+  if (commandMatch && request.method === "POST") { sendJson(response, 202, agentSessionGateway.executeCommand(commandMatch[1], await readJsonObject(request))); return true; }
   const media = context.requestRuntime.agentMedia;
   const changesMatch = pathname.match(/^\/api\/agent-sessions\/([^/]+)\/research-changes$/);
   if (changesMatch && request.method === "GET") {

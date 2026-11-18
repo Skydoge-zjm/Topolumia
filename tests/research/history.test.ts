@@ -99,11 +99,11 @@ test("deleting a node atomically removes graph relationships and group membershi
 test("business and history roll back together on state or history persistence failure", async t => {
   const { app, actor } = await fixture(t);
   const version = app.state.topology.stateVersion, count = app.state.topology.nodes.length;
-  const originalSave = app.collaboration.saveState.bind(app.collaboration);
-  app.collaboration.saveState = () => { throw new Error("Simulated state write failure"); };
+  const originalSave = app.projectData.saveState.bind(app.projectData);
+  app.projectData.saveState = () => { throw new Error("Simulated state write failure"); };
   assert.throws(() => app.researchNodes.createNode("note", { nodeName: "Must roll back" }, actor), /Simulated/);
   assert.equal(app.state.topology.stateVersion, version); assert.equal(app.state.topology.nodes.length, count); assert.equal(app.history.list().total, 0);
-  app.collaboration.saveState = originalSave;
+  app.projectData.saveState = originalSave;
   const originalAppend = app.history.append.bind(app.history);
   app.history.append = () => { throw new Error("Simulated history failure"); };
   assert.throws(() => app.records.save({ type: "progress", title: "Rollback notebook" }, actor), /Simulated/);

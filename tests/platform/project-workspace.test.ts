@@ -96,14 +96,14 @@ test("project names generate unique IDs and isolated workspaces without a direct
   );
   const project = app.collaboration.projectById(first.data.project.id);
   assert.equal(project.workspace.directory, project.root);
-  assert.deepEqual(await readdir(project.root), []);
+  assert.deepEqual(await readdir(project.root), [".topolumia"]);
   assert.equal(
     app.collaboration.membership(project.id, actor.user.id).role,
     "p-admin",
   );
 });
 
-test("existing local directories are validated and reused without writing into their contents", async (t) => {
+test("existing local directories receive project data while original files remain intact", async (t) => {
   const { app, root, request } = await fixture(t);
   const directory = path.join(root, "existing-code");
   await mkdir(directory);
@@ -124,7 +124,7 @@ test("existing local directories are validated and reused without writing into t
   assert.deepEqual(runtime.config.filesystem.roots, [
     await realpath(directory),
   ]);
-  assert.deepEqual(await readdir(directory), ["keep.py"]);
+  assert.deepEqual((await readdir(directory)).sort(), [".topolumia", "keep.py"]);
   assert.equal(
     await readFile(path.join(directory, "keep.py"), "utf8"),
     "print('original')\n",

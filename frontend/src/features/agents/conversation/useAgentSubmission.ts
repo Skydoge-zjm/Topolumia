@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction, RefObject } from "react";
 import type { AgentSession, AgentImageAttachment } from "@/shared/types/api";
 import type { AgentSubmission } from "./components/AgentComposer";
 import { AgentTurnInputSchema } from "@/shared/types/schemas";
+import { findAgentCommand, parseAgentCommand } from "@domain/agents/agent-commands";
 import {
   agentStorageKey,
   readAgentStorage,
@@ -128,9 +129,14 @@ export function useAgentSubmission({
             },
           ),
         );
-      await request(`/api/agent-sessions/${encodeURIComponent(id)}/turns`, {
+      await request(`/api/agent-sessions/${encodeURIComponent(id)}/${input.command ? "commands" : "turns"}`, {
         method: "POST",
-        body: JSON.stringify({
+        body: JSON.stringify(input.command ? {
+          ...input.command,
+          id: input.clientMessageId,
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+        } : {
           text: input.text,
           model: input.model,
           reasoningEffort: input.reasoningEffort,
@@ -186,11 +192,20 @@ export function useAgentSubmission({
         model: model || undefined,
         reasoningEffort: effort,
       });
+      const parsed = parseAgentCommand(input.text);
+      const command = parsed && findAgentCommand(session.capabilities?.commands ?? [], parsed.name);
+      if (parsed && (!command || images.length)) {
+        setError(images.length
+          ? en ? "Agent commands cannot include images." : "Agent 命令不能附带图片。"
+          : en ? "This Agent does not support that command." : "当前 Agent 不支持该命令。");
+        return;
+      }
       void submit({
         ...input,
         reasoningEffort: effort,
         clientMessageId: crypto.randomUUID(),
         attachments: images,
+        ...(parsed && command ? { command: { name: command.name, arguments: parsed.arguments } } : {}),
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "输入无效");

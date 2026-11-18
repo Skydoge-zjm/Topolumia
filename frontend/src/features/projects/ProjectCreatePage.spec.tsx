@@ -325,6 +325,46 @@ it("does not reuse a successful directory check after the input changes", async 
   expect(field).toHaveValue("/new");
 });
 
+it("recognizes an existing project and opens its stable identity without overwriting its name", async () => {
+  const fetch = show((path) => {
+    if (path === "/api/project-workspaces/validate")
+      return Response.json({
+        workspace: { kind: "local", directory: "/research/moved" },
+        project: { id: "existing-project", name: "Existing research" },
+      });
+    if (path === "/api/projects")
+      return Response.json({ project: { id: "existing-project" } });
+  });
+  await screen.findByRole("textbox", { name: "Project name" });
+  fireEvent.click(
+    screen.getByRole("radio", { name: "Existing local directory" }),
+  );
+  const field = screen.getByRole("textbox", { name: "Local directory" });
+  fireEvent.change(field, { target: { value: "/research/moved" } });
+  fireEvent.blur(field);
+  await screen.findByText("Project found: Existing research");
+  expect(screen.getByRole("textbox", { name: "Project name" })).toHaveValue(
+    "Existing research",
+  );
+  expect(screen.getByRole("textbox", { name: "Project name" })).toBeDisabled();
+  expect(screen.getByText("/research/moved/.topolumia")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open project" }));
+  await screen.findByRole("heading", { name: "Research overview" });
+  const body = JSON.parse(
+    String(
+      fetch.mock.calls.find(([path]) => path === "/api/projects")![1]?.body,
+    ),
+  );
+  expect(body).toEqual({
+    id: "existing-project",
+    name: "Existing research",
+    workspace: { kind: "local", directory: "/research/moved" },
+  });
+  expect(localStorage.getItem("research-workbench-project")).toBe(
+    "existing-project",
+  );
+});
+
 it("completes SSH login in place without submitting the parent project form", async () => {
   const user = userEvent.setup();
   const profile: any = {

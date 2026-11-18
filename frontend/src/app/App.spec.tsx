@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { LoginPage } from "./entry/LoginPage";
+import { useUiStore } from "@/shared/state/ui";
 
 function renderApp(path: string, initialized = true) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -53,5 +54,22 @@ describe("React application shell", () => {
   it("offers administrator setup on an uninitialized workbench", async () => {
     renderApp("/", false);
     expect(await screen.findByRole("link", { name: /创建管理员账号/ })).toBeTruthy();
+  });
+
+  it("returns a deleted project workspace to the list and clears the stale selection", async () => {
+    useUiStore.setState({ locale: "zh" });
+    localStorage.setItem("research-workbench-project", "deleted-project");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(
+      url === "/api/auth/status" ? { initialized: true } :
+      url === "/api/auth/me" ? { user: { id: "owner" } } :
+      url === "/api/collaboration/context" ? { actor: { id: "owner", serverRole: "s-admin" }, project: null, projects: [], permissions: ["*"] } : {},
+    )));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    try {
+      render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/overview"]}><App /></MemoryRouter></QueryClientProvider>);
+      expect(await screen.findByRole("heading", { name: "项目列表" })).toBeTruthy();
+      expect(localStorage.getItem("research-workbench-project")).toBeNull();
+      expect(screen.getByRole("link", { name: "创建项目" })).toBeTruthy();
+    } finally { client.clear(); }
   });
 });

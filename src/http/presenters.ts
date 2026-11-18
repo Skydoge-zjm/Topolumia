@@ -5,7 +5,7 @@ import { AppError } from "../lib/errors.js";
 
 
 export function publicProjectForApi(project: RuntimeProject | null | undefined) {
-  if (!project) return null;
+  if (!project || project.status === "deleted") return null;
   return {
     id: project.id,
     name: project.name,
