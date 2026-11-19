@@ -22,9 +22,18 @@
   border-top: 1px solid var(--color-line);
   overflow-wrap: anywhere;
 }
+.table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
 .table tbody tr:hover,
+.table tbody tr:focus-visible,
 .current {
   background: var(--color-mint-soft);
+}
+.table tbody tr:focus-visible {
+  outline: 2px solid var(--color-mint);
+  outline-offset: -2px;
 }
 .openProject {
   display: block;
@@ -47,12 +56,28 @@
   outline-offset: 3px;
 }
 .actions {
-  width: 100px;
+  width: 78px;
+  padding-right: 12px !important;
   white-space: nowrap;
 }
 .deleteButton {
-  min-height: 44px;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #98a49e;
+  opacity: 0.72;
+}
+.deleteButton:hover,
+.deleteButton:focus-visible {
+  background: var(--color-alert-soft);
   color: var(--color-alert);
+  opacity: 1;
 }
 .deleteForm {
   display: grid;
@@ -118,4 +143,126 @@
   .actions {
     width: 80px;
   }
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.createProject {
+  border-color: #134D36;
+  background: #134D36;
+  color: #fff !important;
+}
+.createProject:hover {
+  border-color: #0F3C2A;
+  background: #0F3C2A;
+  color: #fff !important;
+}
+.projectCell {
+  min-width: 220px;
+}
+.projectNameLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.currentBadge {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #E6F4EE;
+  color: #134D36;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.projectIdCell {
+  max-width: 240px;
+}
+.projectId {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.projectIdValue {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.copyId {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #98a49e;
+  opacity: 0.55;
+}
+.copyId:hover,
+.copyId:focus-visible {
+  background: var(--color-mint-soft);
+  color: var(--color-green2);
+  opacity: 1;
+}
+.roleBadge,
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.roleBadge {
+  background: #F0F3F1;
+  color: #5D6D65;
+}
+.statusBadge {
+  background: #E6F4EE;
+  color: #134D36;
+}
+.statusBadge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #178D70;
+}
+.statusArchived {
+  background: #F0F3F1;
+  color: #68766E;
+}
+.statusArchived i {
+  background: #98A49E;
+}
+.openHint {
+  flex: 0 0 auto;
+  color: var(--color-green2);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.table tbody tr:hover .openHint,
+.table tbody tr:focus-visible .openHint {
+  opacity: 1;
+  transform: translateX(0);
 }

@@ -262,7 +262,7 @@ select option { color: var(--color-ink); background: #fff; }
 .composer-model-control select:hover, .composer-model-control select:focus { border-color: transparent; background-color: transparent; box-shadow: none; }
 
 .reference-page { max-width: 1440px; margin: 0 auto; padding: 18px 26px 42px; }
-.reference-projects { padding-top: 40px; }.reference-page-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }.reference-page-header h1 { margin: 0; color: var(--color-ink); font: 600 24px/1.15 var(--font-ui); }.reference-page-header p { margin: 10px 0 0; color: var(--color-muted); font-size: 14px; }.reference-project-table { overflow: hidden; border: 1px solid var(--color-line); border-radius: 5px; background: #fff; }.reference-project-table > header, .reference-project-row { display: grid; grid-template-columns: minmax(220px, 1.55fr) minmax(150px, 1fr) minmax(120px, .7fr) minmax(100px, .65fr) minmax(150px, .8fr); gap: 18px; align-items: center; width: 100%; padding: 16px 22px; }.reference-project-table > header { color: var(--color-ink); font-size: 14px; font-weight: 700; }.reference-project-row { border: 0; border-top: 1px solid var(--color-line); background: #fff; color: var(--color-ink-soft); text-align: left; }.reference-project-row:hover, .reference-project-row.is-current { background: var(--color-mint-soft); }.reference-project-row strong { color: var(--color-ink); font: 600 16px var(--font-ui); }.reference-project-row span { font-size: 14px; }.reference-project-row .status { display: flex; align-items: center; gap: 7px; }.reference-project-row .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--color-mint); }.reference-project-row .status i.muted { background: #9ba4a0; }.reference-project-create { display: flex; justify-content: center; padding: 34px 0; }.page--create { max-width: 1200px; margin: 0 auto; padding: 40px 58px 72px; }.page-head--narrow { max-width: 800px; margin-inline: auto; }.page--create .page-head { margin-bottom: 24px; }.page--create .page-head h1 { font-size: 24px; }.create-form { display: grid; gap: 25px; width: min(800px, 100%); margin: auto; padding: 36px; border: 1px solid var(--color-line); border-radius: 5px; background: #fff; box-shadow: var(--shadow-soft); }.create-form label { display: grid; gap: 8px; color: var(--color-ink); font-size: 14px; font-weight: 700; }.create-form label i { color: #c65c51; font-style: normal; }.create-form input { min-height: 48px; padding: 0 14px; border: 1px solid #b8c9bf; background: #fff; }.create-form small { color: var(--color-muted); font-weight: 400; }.form-actions { display: flex; gap: 12px; }
+.reference-projects { padding-top: 40px; }.reference-page-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }.reference-page-header h1 { margin: 0; color: var(--color-ink); font: 600 24px/1.15 var(--font-ui); }.reference-page-header p { margin: 10px 0 0; color: var(--color-muted); font-size: 14px; }.reference-project-table { overflow: hidden; border: 1px solid var(--color-line); border-radius: 5px; background: #fff; }.reference-project-table > header, .reference-project-row { display: grid; grid-template-columns: minmax(220px, 1.55fr) minmax(150px, 1fr) minmax(120px, .7fr) minmax(100px, .65fr) minmax(150px, .8fr); gap: 18px; align-items: center; width: 100%; padding: 16px 22px; }.reference-project-table > header { color: var(--color-ink); font-size: 14px; font-weight: 700; }.reference-project-row { border: 0; border-top: 1px solid var(--color-line); background: #fff; color: var(--color-ink-soft); text-align: left; }.reference-project-row:hover, .reference-project-row.is-current { background: var(--color-mint-soft); }.reference-project-row strong { color: var(--color-ink); font: 600 16px var(--font-ui); }.reference-project-row span { font-size: 14px; }.reference-project-row .status { display: flex; align-items: center; gap: 7px; }.reference-project-row .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--color-mint); }.reference-project-row .status i.muted { background: #9ba4a0; }.page--create { max-width: 1200px; margin: 0 auto; padding: 40px 58px 72px; }.page-head--narrow { max-width: 800px; margin-inline: auto; }.page--create .page-head { margin-bottom: 24px; }.page--create .page-head h1 { font-size: 24px; }.create-form { display: grid; gap: 25px; width: min(800px, 100%); margin: auto; padding: 36px; border: 1px solid var(--color-line); border-radius: 5px; background: #fff; box-shadow: var(--shadow-soft); }.create-form label { display: grid; gap: 8px; color: var(--color-ink); font-size: 14px; font-weight: 700; }.create-form label i { color: #c65c51; font-style: normal; }.create-form input { min-height: 48px; padding: 0 14px; border: 1px solid #b8c9bf; background: #fff; }.create-form small { color: var(--color-muted); font-weight: 400; }.form-actions { display: flex; gap: 12px; }
 .reference-page .page-title { margin-bottom: 24px; }
 .reference-page .page-title h1 { font-size: 24px; line-height: 1.15; font-weight: 600; }
 .record-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
@@ -484,4 +484,72 @@ select option { color: var(--color-ink); background: #fff; }
 .topbar .topbar-account-trigger small,
 .topbar .topbar-account-trigger > svg {
   color: #6B7E73;
+}
+
+.project-topbar {
+  background: #F7FAF8;
+  border-bottom: 1px solid #E5E9E6;
+  color: #0F291E;
+}
+.project-topbar .brand {
+  color: #0F291E;
+}
+.project-topbar .brand-copy strong {
+  color: #0F291E;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.project-topbar .brand-mark {
+  background: transparent;
+}
+.project-topbar .brand-mark img {
+  padding: 0;
+  transform: scale(1.45);
+}
+.project-topbar-divider {
+  background: #E5E9E6;
+}
+.project-topbar > strong {
+  color: #0F291E;
+}
+.project-topbar .account-chip {
+  color: #0F291E;
+}
+.project-topbar .account-chip b {
+  color: #0F291E;
+}
+.project-topbar .account-chip small {
+  color: #6B7E73;
+}
+.project-topbar .button {
+  border-color: #DCE3DF;
+  background: #EFF3F1;
+  color: #2C4A3E;
+}
+.project-topbar .button:hover {
+  border-color: #DCE3DF;
+  background: #E4EBE7;
+  color: #2C4A3E;
+}
+
+.project-topbar .project-topbar-locale-select {
+  min-width: 94px;
+}
+.project-topbar .project-topbar-locale-select .select-menu-trigger {
+  min-height: 36px;
+  padding: 0 9px 0 11px;
+  border-color: #DCE3DF;
+  border-radius: 7px;
+  background: #EFF3F1;
+  color: #2C4A3E;
+}
+.project-topbar .project-topbar-locale-select .select-menu-trigger:hover,
+.project-topbar .project-topbar-locale-select.is-open .select-menu-trigger {
+  border-color: #DCE3DF;
+  background: #E4EBE7;
+  color: #2C4A3E;
+  box-shadow: none;
+}
+.project-topbar .project-topbar-locale-select .select-menu-trigger svg {
+  color: #2C4A3E;
 }
