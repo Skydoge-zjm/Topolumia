@@ -117,7 +117,7 @@ const AgentPage = lazy(() =>
 function BrandMark() {
   return (
     <span className="brand-mark" aria-hidden="true">
-      <img src="/topolumia-mark.png" alt="" />
+      <img src="/brand/topolumia-logo-variant-5.svg" alt="" />
     </span>
   );
 }

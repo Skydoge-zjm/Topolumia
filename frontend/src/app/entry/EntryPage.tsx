@@ -17,7 +17,7 @@ export function EntryPage({ setupMode }: { setupMode: boolean }) {
   return (
     <div className={styles.entry}>
       <header className={styles.bar}>
-        <img className={styles.wordmark} src="/topolumia-wordmark-white-clean.png" alt="Topolumia" />
+        <div className={styles.brandLockup}><img className={styles.brandIcon} src="/brand/topolumia-logo-variant-5.svg" alt="" /><span>Topolumia</span></div>
         <span className={styles.spacer} />
         <button className={styles.ghost} type="button" onClick={() => setLocale(en ? "zh" : "en")}>{en ? "中文" : "EN"}</button>
         <Link className={styles.ghost} to="/login">{setupMode ? (en ? "Set up" : "初始化") : (en ? "Sign in" : "登录")}</Link>

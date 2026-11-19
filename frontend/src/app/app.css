@@ -4,7 +4,7 @@
 .topbar { display: flex; align-items: center; gap: 16px; padding: 0 24px; border-bottom: 1px solid #2f705d; background: var(--color-green); color: #f5fbf6; box-shadow: none; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 180px; color: #fff; font-weight: 700; letter-spacing: .01em; }
 .brand-mark { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; overflow: hidden; border: 0; border-radius: 8px; background: #fffaF0; box-shadow: none; }
-.brand-mark img { display: block; width: 100%; height: 100%; }
+.brand-mark img { display: block; width: 100%; height: 100%; padding: 4px; object-fit: contain; }
 .topbar-project { padding-left: 16px; border-left: 1px solid #5d8c7b; color: #b1d0c1; font: 500 var(--font-label)/1.4 "Segoe UI", sans-serif; }
 .topbar-spacer { flex: 1; }
 .topbar button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: white; color: var(--color-ink); transition: border-color .18s ease, background .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease; }
@@ -433,3 +433,55 @@ select option { color: var(--color-ink); background: #fff; }
 .trace-final-output { max-height: 560px; overflow: auto; margin: 0; color: var(--color-ink-soft); font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (pointer: coarse) { .agent-page .tool-group > summary, .agent-page .tool-group.compact-event > summary { min-height: 36px; } }
+
+.topbar {
+  background: #F7FAF8;
+  border-bottom: 1px solid #E5E9E6;
+  color: #0F291E;
+}
+.topbar .brand {
+  color: #0F291E;
+}
+.topbar .brand-copy strong {
+  color: #0F291E;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.topbar .brand-mark {
+  background: transparent;
+}
+.topbar .brand-mark img {
+  padding: 0;
+  transform: scale(1.45);
+}
+.topbar .topbar-locale-select .select-menu-trigger {
+  border-color: #DCE3DF;
+  background: #EFF3F1;
+  color: #2C4A3E;
+}
+.topbar .topbar-locale-select .select-menu-trigger:hover,
+.topbar .topbar-locale-select.is-open .select-menu-trigger {
+  border-color: #DCE3DF;
+  background: #E4EBE7;
+  color: #2C4A3E;
+  box-shadow: none;
+}
+.topbar .topbar-locale-select .select-menu-trigger svg {
+  color: #2C4A3E;
+}
+.topbar .topbar-account-trigger {
+  color: #0F291E;
+}
+.topbar .topbar-account-trigger:hover,
+.topbar .topbar-account-trigger:focus-visible {
+  border-color: #DCE3DF;
+  background: #E4EBE7;
+  color: #0F291E;
+}
+.topbar .topbar-account-trigger strong {
+  color: #0F291E;
+}
+.topbar .topbar-account-trigger small,
+.topbar .topbar-account-trigger > svg {
+  color: #6B7E73;
+}

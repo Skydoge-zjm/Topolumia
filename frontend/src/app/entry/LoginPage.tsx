@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 
 import { api } from "@/shared/lib/api";
 import { useUiStore } from "@/shared/state/ui";
@@ -36,13 +36,13 @@ export function LoginPage({ setupMode = false, onLoggedIn }: { setupMode?: boole
   return (
     <div className={styles.login}>
       <aside className={styles.loginArt} aria-hidden="true">
-        <img className={styles.wordmark} src="/topolumia-wordmark-white-clean.png" alt="" />
+        <div className={styles.brandLockup}><img className={styles.brandIcon} src="/brand/topolumia-logo-variant-5.svg" alt="" /><span>Topolumia</span></div>
         <TopologyIllustration />
       </aside>
       <main className={styles.loginMain}>
         <Link className={styles.back} to="/"><ArrowLeft size={15} aria-hidden="true" />{en ? "Home" : "首页"}</Link>
         <form className={styles.form} onSubmit={submit} aria-busy={pending}>
-          <img className={styles.formMark} src="/topolumia-mark.png" alt="Topolumia" />
+          <img className={styles.formMark} src="/brand/topolumia-logo-variant-5.svg" alt="Topolumia" />
           <h1>{title}</h1>
           {setupMode && (
             <label className={styles.field}>
@@ -75,7 +75,7 @@ export function LoginPage({ setupMode = false, onLoggedIn }: { setupMode?: boole
           {setupMode && <small className={styles.hint} id="password-rule">{en ? "At least 12 characters" : "至少 12 个字符"}</small>}
           {error && <p className={styles.error} role="alert">{error}</p>}
           <button className={styles.submit} type="submit" disabled={pending}>
-            {pending && <LoaderCircle className={styles.spin} size={16} aria-hidden="true" />}
+            {pending && <img className={styles.loadingMark} src="/brand/topolumia-loading-mark-animated.svg" alt="" aria-hidden="true" />}
             {setupMode ? (en ? "Create and sign in" : "创建并登录") : (en ? "Sign in" : "登录")}
           </button>
         </form>
