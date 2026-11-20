@@ -63,23 +63,25 @@ for (const [provider, label] of [
   test(`${label} edits its full native configuration and reloads the actual data file`, async ({
     page,
   }) => {
-    const card = page
-      .getByRole("article")
-      .filter({ has: page.getByRole("heading", { name: label, exact: true }) });
-    await card.getByRole("button", { name: "配置", exact: true }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(
-      dialog.getByRole("combobox", { name: "默认模型", exact: true }),
-    ).toBeVisible();
-    await expect(
-      dialog.getByLabel("配置文件内容", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      dialog.getByRole("button", { name: "全部配置项", exact: true }),
-    ).toHaveCount(0);
-    const bounds = await dialog.boundingBox();
-    expect(bounds!.width).toBeLessThanOrEqual(700);
-    expect(bounds!.height).toBeLessThanOrEqual(700);
+    const engine = page.getByRole("tab", { name: new RegExp("^" + label) });
+    await engine.click();
+    const settings = page.getByTestId("agent-configuration-page");
+    await expect(settings.getByRole("tab", { name: "完整配置项" })).toBeVisible();
+    if (provider === "codex") {
+      const desktop = await settings.boundingBox();
+      await page.setViewportSize({ width: 1920, height: 960 });
+      const wide = await settings.boundingBox();
+      const main = await page.getByRole("main").evaluate((element) => ({
+        left: element.getBoundingClientRect().left,
+        width: element.clientWidth,
+      }));
+      expect(wide!.width).toBeGreaterThan(desktop!.width + 250);
+      const leftGap = wide!.x - main.left;
+      const rightGap = main.left + main.width - wide!.x - wide!.width;
+      expect(leftGap).toBeGreaterThan(32);
+      expect(Math.abs(leftGap - rightGap)).toBeLessThan(2);
+    }
+    await settings.getByRole("tab", { name: /^原生文件/ }).click();
     const content =
       provider === "codex"
         ? '# Native browser configuration\nmodel = "gpt-6-luna"\nmodel_reasoning_effort = "high"\n[features]\nresearch_custom_flag = true\n'
@@ -95,9 +97,9 @@ for (const [provider, label] of [
               2,
             )
           : '// JSONC native config\n{"model":"lab/gpt-6-luna","permission":{"bash":"ask"},"provider":{"lab":{"options":{"baseURL":"https://lab.example/v1"}}},}\n';
-    await dialog.getByLabel("配置文件内容", { exact: true }).fill(content);
-    await dialog.getByRole("button", { name: "保存配置", exact: true }).click();
-    await expect(dialog).toHaveCount(0);
+    await settings.getByLabel("配置文件内容", { exact: true }).fill(content);
+    await settings.getByRole("button", { name: "保存配置", exact: true }).click();
+    await expect(settings.getByText(/原生配置已保存/)).toBeVisible();
     const saved = await (
       await page.request.get(
         app.url + `/api/agent-configuration/profiles/${provider}/native-config`,
@@ -107,7 +109,8 @@ for (const [provider, label] of [
     expect(await readFile(saved.path, "utf8")).toBe(content);
     expect(saved.path).toContain("agent-config");
     await page.reload();
-    await card.getByRole("button", { name: "配置", exact: true }).click();
+    await engine.click();
+    await settings.getByRole("tab", { name: /^原生文件/ }).click();
     await expect(page.getByLabel("配置文件内容", { exact: true })).toHaveValue(
       content,
     );
@@ -115,7 +118,7 @@ for (const [provider, label] of [
       await page
         .getByLabel("配置文件内容", { exact: true })
         .evaluate((element) => getComputedStyle(element).fontFamily),
-    ).not.toMatch(/monospace/i);
+    ).toMatch(/monospace/i);
     await page.screenshot({
       path: runtimeArtifact(`agent-native-${provider}.png`),
       fullPage: true,
@@ -124,20 +127,20 @@ for (const [provider, label] of [
 test("native text supports nested options, syntax errors and stale-save recovery", async ({
   page,
 }) => {
-  const card = page
-    .getByRole("article")
-    .filter({ has: page.getByRole("heading", { name: "Codex", exact: true }) });
-  await card.getByRole("button", { name: "配置", exact: true }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog
+  await page.getByRole("tab", { name: /^Codex/ }).click();
+  const settings = page.getByTestId("agent-configuration-page");
+  await settings.getByRole("tab", { name: /^原生文件/ }).click();
+  await settings
     .getByLabel("配置文件内容", { exact: true })
     .fill(
       'model = "gpt-6-luna"\n[mcp_servers.papers]\ncommand = "python"\nargs = ["-m", "paper_server"]\n',
     );
-  await dialog
+  await settings.getByRole("tab", { name: "常用设置", exact: true }).click();
+  await settings
     .getByRole("combobox", { name: "默认模型", exact: true })
     .fill("custom-model");
-  const text = await dialog
+  await settings.getByRole("tab", { name: /^原生文件/ }).click();
+  const text = await settings
     .getByLabel("配置文件内容", { exact: true })
     .inputValue();
   expect(parseNativeConfig("codex", text)).toMatchObject({
@@ -160,33 +163,51 @@ test("native text supports nested options, syntax errors and stale-save recovery
       },
     },
   );
-  await dialog.getByRole("button", { name: "保存配置", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toContainText("配置已被修改");
+  await settings.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(settings.getByRole("alert")).toContainText("配置已被修改");
   page.once("dialog", (dialog) => dialog.accept());
-  await dialog.getByRole("button", { name: "重新载入", exact: true }).click();
-  await expect(dialog.getByLabel("配置文件内容", { exact: true })).toHaveValue(
+  await settings.getByRole("button", { name: "重新载入", exact: true }).click();
+  await expect(settings.getByLabel("配置文件内容", { exact: true })).toHaveValue(
     /Another writer/,
   );
-  await dialog
+  await settings
     .getByLabel("配置文件内容", { exact: true })
     .fill('model = "unterminated');
   await expect(
-    dialog.getByRole("button", { name: "保存配置", exact: true }),
+    settings.getByRole("button", { name: "保存配置", exact: true }),
   ).toBeDisabled();
 });
 test("common model edits update native files and Agent settings stay out of workspace settings", async ({
   page,
 }) => {
-  const card = page.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "Claude Code", exact: true }),
-  });
-  await card.getByRole("button", { name: "配置", exact: true }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog
+  await page.getByRole("tab", { name: /^Claude Code/ }).click();
+  const settings = page.getByTestId("agent-configuration-page");
+  const configPath = settings.locator('code[title$="settings.json"]');
+  const copy = settings.getByRole("button", { name: "复制配置文件路径" });
+  await expect(configPath).toHaveCSS("white-space", "nowrap");
+  await expect(configPath).toHaveCSS("text-overflow", "ellipsis");
+  await expect(copy).toBeVisible();
+  const pathBounds = await configPath.boundingBox();
+  expect(pathBounds!.width).toBeGreaterThan(400);
+  const save = settings.getByRole("button", { name: "保存配置", exact: true });
+  await expect(save).toBeDisabled();
+  await expect(settings.locator("form > footer")).toHaveCSS(
+    "background-color",
+    "rgb(250, 251, 251)",
+  );
+  await expect(settings.getByRole("tablist", { name: "Agent 引擎" })).toHaveCSS(
+    "background-color",
+    "rgb(247, 250, 248)",
+  );
+  await settings.getByRole("radio", { name: "指定模型" }).check();
+  await settings
     .getByRole("combobox", { name: "默认模型", exact: true })
-    .fill("gpt-6-luna");
-  await dialog.getByRole("button", { name: "保存配置", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
+    .fill("inline-model");
+  await expect(save).toBeEnabled();
+  await expect(save).toHaveCSS("background-color", "rgb(19, 77, 54)");
+  await expect(save).toHaveCSS("color", "rgb(255, 255, 255)");
+  await save.click();
+  await expect(settings.getByText(/原生配置已保存/)).toBeVisible();
   const saved = await (
     await page.request.get(
       app.url + "/api/agent-configuration/profiles/claude/native-config",
@@ -194,7 +215,7 @@ test("common model edits update native files and Agent settings stay out of work
   ).json();
   expect(
     parseNativeConfig("claude", await readFile(saved.path, "utf8")).model,
-  ).toBe("gpt-6-luna");
+  ).toBe("inline-model");
   await page.getByRole("link", { name: "工作区设置", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Codex 沙箱", exact: true }),

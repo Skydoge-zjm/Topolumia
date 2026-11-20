@@ -207,7 +207,7 @@ function RouteLoading({ en }: { en: boolean }) {
   const { pathname } = useLocation();
   const compactRail = useUiStore(state => state.agentFocus || state.sessionRailCollapsed);
   const layout = pathname === "/agents" ? "agent" : pathname === "/agent-settings" ? "configuration" : /\/topology\/(nodes|groups)\//.test(pathname) || /\/records\/.+/.test(pathname) ? "detail" : "page";
-  return <section className={pathname === "/agent-settings" ? "page" : layout === "detail" ? "research-workspace research-detail" : "research-workspace"}>{layout === "detail" && <Link className="research-back" to={pathname.startsWith("/topology/") ? "/topology" : "/records"}>← {pathname.startsWith("/topology/") ? en ? "Research topology" : "科研拓扑" : en ? "Research records" : "研究记录"}</Link>}<LoadingSkeleton layout={layout} compactRail={compactRail} heading={layout !== "agent"} label={en ? "Loading page…" : "正在载入页面…"} /></section>;
+  return <section className={layout === "configuration" ? "agent-configuration-layout" : layout === "detail" ? "research-workspace research-detail" : "research-workspace"}>{layout === "detail" && <Link className="research-back" to={pathname.startsWith("/topology/") ? "/topology" : "/records"}>← {pathname.startsWith("/topology/") ? en ? "Research topology" : "科研拓扑" : en ? "Research records" : "研究记录"}</Link>}<LoadingSkeleton layout={layout} compactRail={compactRail} heading={layout !== "agent"} label={en ? "Loading page…" : "正在载入页面…"} /></section>;
 }
 
 function ContextError({ error, retry, en }: { error: Error; retry: () => void; en: boolean }) {

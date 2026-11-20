@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { AutocompleteInput } from "@/shared/ui/AutocompleteInput";
 import { SelectMenu } from "@/shared/ui/SelectMenu";
 import type { ConfiguredAgent } from "./AgentConfigurationPage";
 import { openCodeV1PermissionValue } from "./opencode/v1/permissions";
@@ -20,25 +19,8 @@ export function CommonAgentSettings({
 }) {
   const effortKey =
     agent.provider === "codex" ? "model_reasoning_effort" : "effortLevel";
-  const modelValue = typeof value.model === "string" ? value.model
-    : configKey === "opencode-v2" && value.model && typeof value.model.providerID === "string" && typeof value.model.model === "string"
-      ? `${value.model.providerID}/${value.model.model}${value.model.variant ? `#${value.model.variant}` : ""}` : "";
   return (
     <div className="native-settings-list">
-      <SettingRow label={en ? "Default model" : "默认模型"}>
-        <AutocompleteInput
-          ariaLabel={en ? "Default model" : "默认模型"}
-          suggestionsLabel={en ? "Show model suggestions" : "显示模型建议"}
-          placeholder={en ? "Use default model" : "使用默认模型"}
-          options={agent.models.map((model) => ({
-            value: model.id,
-            label: model.label,
-          }))}
-          value={modelValue}
-          onChange={(model) => update(["model"], model || undefined)}
-          maxLength={160}
-        />
-      </SettingRow>
       {agent.provider !== "opencode" && (
         <SettingRow label={en ? "Reasoning effort" : "推理强度"}>
           <ConfigChoice
@@ -103,9 +85,7 @@ export function CommonAgentSettings({
             />
           </SettingRow>
           <details className="native-settings-advanced">
-            <summary>
-              {en ? "Codex advanced settings" : "Codex 高级设置"}
-            </summary>
+            <summary>{en ? "More runtime options" : "更多运行选项"}</summary>
             <div className="native-settings-advanced-body">
               <NumberSetting
                 label={en ? "Context window" : "上下文窗口"}

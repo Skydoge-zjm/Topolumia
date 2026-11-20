@@ -8,7 +8,7 @@
 
 Codex 为 config.toml，Claude Code 为 settings.json，OpenCode 两版均为 opencode.jsonc。V1 保留 agent-config/opencode 目录，V2 使用独立的 agent-config/opencode-v2；配置缓存、Schema 和快照按配置身份隔离，Provider 品牌身份保持 opencode。保存校验并原子替换，防止路径符号链接和失效内容；创建会话取得配置快照，运行会话不因后续编辑被静默改写。
 
-前端 [NativeAgentConfigEditor](../../../../frontend/src/features/agents/configuration/NativeAgentConfigEditor.tsx) 提供常用字段和原文编辑。两种编辑方式维护同一配置；不能用常用表单重建文件而丢掉高级字段。
+前端 [NativeAgentConfigEditor](../../../../frontend/src/features/agents/configuration/NativeAgentConfigEditor.tsx) 内嵌于引擎选项卡，提供常用设置、完整配置项和原生文件三种视图。完整配置项列出公开 Schema 的顶层字段和已保存的自定义字段，可按 JSON 输入字段值。三种视图共用一个草稿，通过相同的修订校验保存。常用设置可移除模型覆盖以跟随运行时默认值，默认引擎通过独立的项目设置立即更新。
 
 ## 启动映射
 
