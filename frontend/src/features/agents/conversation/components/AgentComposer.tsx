@@ -204,8 +204,8 @@ export function AgentComposer({
                 ? "Restore this conversation to continue"
                 : "恢复归档后继续会话"
               : en
-                ? "Ask a research question or paste an image…"
-                : "提出研究问题，或粘贴图片…"
+                ? "Research with Topolumia…"
+                : "和 Topolumia 一起研究…"
           }
           rows={1}
           onKeyDown={(event) => {
@@ -245,65 +245,76 @@ export function AgentComposer({
             <ImagePlus size={17} />
           </button>
           {submitting && <span className="composer-status" role="status">{en ? "Sending…" : "正在发送…"}</span>}
-          <div
-            className="composer-model-control"
-            title={
-              en ? "Settings for the next message" : "下一条消息使用的设置"
-            }
-          >
-            {loading ? <><Skeleton width={110} height={30} /><Skeleton width={70} height={30} /></> : <><SelectMenu
-              value={session ? model : ""}
-              onChange={setModel}
-              ariaLabel={en ? "Model" : "模型"}
-              options={session ? models : [{ value: "", label: "—" }]}
-              disabled={!session}
-            />
-            <SelectMenu
-              value={session ? effort : ""}
-              onChange={setEffort}
-              ariaLabel={en ? "Reasoning effort" : "推理强度"}
-              options={session ? efforts : [{ value: "", label: "—" }]}
-              disabled={!session}
-            /></>}
+          <div className="composer-actions">
+            <div
+              className="composer-model-control"
+              title={
+                en ? "Settings for the next message" : "下一条消息使用的设置"
+              }
+            >
+              {loading ? <><Skeleton width={110} height={30} /><Skeleton width={70} height={30} /></> : <>
+                <div className="composer-setting">
+                  <SelectMenu
+                    className="composer-setting-menu"
+                    value={session ? model : ""}
+                    onChange={setModel}
+                    ariaLabel={en ? "Model" : "模型"}
+                    options={session ? models : [{ value: "", label: "—" }]}
+                    disabled={!session}
+                  />
+                </div>
+                <span className="composer-setting-divider" aria-hidden="true" />
+                <div className="composer-setting">
+                  <SelectMenu
+                    className="composer-setting-menu"
+                    value={session ? effort : ""}
+                    onChange={setEffort}
+                    ariaLabel={en ? "Reasoning effort" : "推理强度"}
+                    options={session ? efforts : [{ value: "", label: "—" }]}
+                    disabled={!session}
+                  />
+                </div>
+              </>}
+            </div>
+            <button
+              className={"composer-send " + (stop ? "is-stop" : "")}
+              type={stop ? "button" : "submit"}
+              onClick={stop ? onStop : undefined}
+              disabled={
+                stop
+                  ? stopping
+                  : !sendable ||
+                    (!draft.trim() && !images.length) ||
+                    hasUnknownCommand ||
+                    submitting ||
+                    uploading
+              }
+              aria-label={
+                stop
+                  ? stopping
+                    ? en
+                      ? "Stopping Agent"
+                      : "正在停止 Agent"
+                    : en
+                      ? "Stop Agent"
+                      : "停止 Agent"
+                  : executing
+                    ? en
+                      ? "Queue message"
+                      : "排队发送"
+                    : en
+                      ? "Send message"
+                      : "发送消息"
+              }
+            >
+              <span className="composer-control-arrow" aria-hidden="true">
+                <ArrowUp size={17} />
+              </span>
+              <span className="composer-control-stop" aria-hidden="true">
+                <span className="composer-stop-icon" />
+              </span>
+            </button>
           </div>
-          <button
-            className={`composer-send ${stop ? "is-stop" : ""}`}
-            type={stop ? "button" : "submit"}
-            onClick={stop ? onStop : undefined}
-            disabled={
-              stop
-                ? stopping
-                : !sendable ||
-                  (!draft.trim() && !images.length) ||
-                  hasUnknownCommand ||
-                  submitting ||
-                  uploading
-            }
-            aria-label={
-              stop
-                ? stopping
-                  ? en
-                    ? "Stopping Agent"
-                    : "正在停止 Agent"
-                  : en
-                    ? "Stop Agent"
-                    : "停止 Agent"
-                : executing
-                  ? en
-                    ? "Queue message"
-                    : "排队发送"
-                  : en
-                    ? "Send message"
-                    : "发送消息"
-            }
-          >
-            <span className="composer-control-arrow" aria-hidden="true">
-              <ArrowUp size={17} />
-            </span>
-            <span className="composer-control-stop" aria-hidden="true">
-              <span className="composer-stop-icon" />
-            </span>
-          </button>
         </div>
       </div>
     </form>

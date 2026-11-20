@@ -162,7 +162,7 @@ it.each([true, false])(
         ...(phases ? { phase: "final_answer" } : {}),
       }),
     ];
-    const props = { en: false, onApproval: vi.fn(), onSave: vi.fn() };
+    const props = { en: false, onApproval: vi.fn() };
     const { container, rerender } = render(
       <ConversationItems {...props} items={normalizeConversation(rows)} />,
     );
@@ -180,18 +180,10 @@ it.each([true, false])(
         .querySelector(".message-actions"),
     ).toBeNull();
     expect(screen.getAllByRole("button", { name: "复制消息" })).toHaveLength(1);
-    expect(
-      screen.getAllByRole("button", { name: "整理为科研笔记" }),
-    ).toHaveLength(1);
-    expect(
-      screen
-        .getByRole("button", { name: "整理为科研笔记" })
-        .closest(".message"),
-    ).toHaveTextContent("最终研究结果。");
   },
 );
 
-it("keeps repeated MCP calls independently collapsed after opening the activity summary", async () => {
+it("groups repeated MCP calls one level deeper while keeping each call independently collapsed", async () => {
   const items = normalizeConversation([
     event(1, "tool.started", {
       toolCallId: "a",
@@ -213,10 +205,16 @@ it("keeps repeated MCP calls independently collapsed after opening the activity 
   batch.open = true;
   fireEvent(batch, new Event("toggle"));
   await waitFor(() =>
-    expect(container.querySelectorAll(".tool-group")).toHaveLength(2),
+    expect(container.querySelectorAll(".tool-batch")).toHaveLength(1),
   );
   expect(container.querySelector(".tool-result-view")).toBeNull();
-  const call = container.querySelector<HTMLDetailsElement>(".tool-group")!;
+  const run = container.querySelector<HTMLDetailsElement>(".tool-batch")!;
+  run.open = true;
+  fireEvent(run, new Event("toggle"));
+  await waitFor(() =>
+    expect(run.querySelectorAll(".tool-body > .tool-group")).toHaveLength(2),
+  );
+  const call = run.querySelector<HTMLDetailsElement>(".tool-body > .tool-group")!;
   call.open = true;
   fireEvent(call, new Event("toggle"));
   await waitFor(() =>
@@ -226,7 +224,7 @@ it("keeps repeated MCP calls independently collapsed after opening the activity 
     "first",
   );
   expect(
-    container.querySelectorAll<HTMLDetailsElement>(".tool-group")[1].open,
+    run.querySelectorAll<HTMLDetailsElement>(".tool-body > .tool-group")[1].open,
   ).toBe(false);
 });
 

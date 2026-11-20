@@ -117,7 +117,7 @@ const AgentPage = lazy(() =>
 function BrandMark() {
   return (
     <span className="brand-mark" aria-hidden="true">
-      <img src="/topolumia-mark.png" alt="" />
+      <img src="/brand/topolumia-logo-variant-5.svg" alt="" />
     </span>
   );
 }
@@ -207,7 +207,7 @@ function RouteLoading({ en }: { en: boolean }) {
   const { pathname } = useLocation();
   const compactRail = useUiStore(state => state.agentFocus || state.sessionRailCollapsed);
   const layout = pathname === "/agents" ? "agent" : pathname === "/agent-settings" ? "configuration" : /\/topology\/(nodes|groups)\//.test(pathname) || /\/records\/.+/.test(pathname) ? "detail" : "page";
-  return <section className={pathname === "/agent-settings" ? "page" : layout === "detail" ? "research-workspace research-detail" : "research-workspace"}>{layout === "detail" && <Link className="research-back" to={pathname.startsWith("/topology/") ? "/topology" : "/records"}>← {pathname.startsWith("/topology/") ? en ? "Research topology" : "科研拓扑" : en ? "Research records" : "研究记录"}</Link>}<LoadingSkeleton layout={layout} compactRail={compactRail} heading={layout !== "agent"} label={en ? "Loading page…" : "正在载入页面…"} /></section>;
+  return <section className={layout === "configuration" ? "agent-configuration-layout" : layout === "detail" ? "research-workspace research-detail" : "research-workspace"}>{layout === "detail" && <Link className="research-back" to={pathname.startsWith("/topology/") ? "/topology" : "/records"}>← {pathname.startsWith("/topology/") ? en ? "Research topology" : "科研拓扑" : en ? "Research records" : "研究记录"}</Link>}<LoadingSkeleton layout={layout} compactRail={compactRail} heading={layout !== "agent"} label={en ? "Loading page…" : "正在载入页面…"} /></section>;
 }
 
 function ContextError({ error, retry, en }: { error: Error; retry: () => void; en: boolean }) {
@@ -255,12 +255,16 @@ function ProjectShell() {
             <small>{context.data ? context.data.actor?.serverRole ?? "researcher" : <Skeleton width={64} height={12} />}</small>
           </span>
         </span>
-        <button
-          className="button"
-          onClick={() => setLocale(locale === "en" ? "zh" : "en")}
-        >
-          {locale === "en" ? "中文" : "EN"}
-        </button>
+        <SelectMenu
+          className="project-topbar-locale-select"
+          value={locale}
+          onChange={(value) => setLocale(value as "zh" | "en")}
+          ariaLabel={locale === "en" ? "Language" : "语言"}
+          options={[
+            { value: "zh", label: "中文" },
+            { value: "en", label: "English" },
+          ]}
+        />
         <button className="button" onClick={logout}>
           <LogOut size={15} /> {locale === "en" ? "Sign out" : "退出"}
         </button>

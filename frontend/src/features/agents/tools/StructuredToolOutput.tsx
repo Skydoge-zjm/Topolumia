@@ -114,11 +114,15 @@ const localized = (value: unknown, en: boolean): string => {
 const isRecord = (value: unknown) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const scalar = (value: unknown) => value === null || typeof value !== "object";
+const isLongScalar = (value: unknown) =>
+  typeof value === "string" &&
+  (value.length > 56 || value.includes("\n") || /https?:\/\//.test(value));
+const compactScalar = (value: unknown) => scalar(value) && !isLongScalar(value);
 
 function LongText({ value, en }: { value: string; en: boolean }) {
   const [full, setFull] = useState(false);
   return (
-    <span className="structured-text">
+    <span className="structured-text structured-text-block">
       {full ? value : value.slice(0, 1800)}
       {!full && value.length > 1800 && (
         <button className="structured-more" onClick={() => setFull(true)}>
@@ -130,7 +134,15 @@ function LongText({ value, en }: { value: string; en: boolean }) {
     </span>
   );
 }
-function DeferredValue({ value, en }: { value: unknown; en: boolean }) {
+function DeferredValue({
+  value,
+  en,
+  label,
+}: {
+  value: unknown;
+  en: boolean;
+  label?: string;
+}) {
   const [open, setOpen] = useState(false),
     size = Array.isArray(value)
       ? value.length
@@ -144,11 +156,12 @@ function DeferredValue({ value, en }: { value: unknown; en: boolean }) {
       }}
     >
       <summary>
+        {label ? `${label} · ` : ""}
         {en
           ? `${size} ${Array.isArray(value) ? "items" : "fields"}`
           : `${size} ${Array.isArray(value) ? "项内容" : "个字段"}`}
       </summary>
-      {open && <StructuredValue value={value} en={en} />}
+      {open && <StructuredValue value={value} en={en} contextLabel={label} />}
     </details>
   );
 }
@@ -157,10 +170,12 @@ export function StructuredValue({
   value,
   en,
   depth = 0,
+  contextLabel,
 }: {
   value: unknown;
   en: boolean;
   depth?: number;
+  contextLabel?: string;
 }) {
   const [shown, setShown] = useState(20);
   if (value === null || value === undefined)
@@ -173,7 +188,8 @@ export function StructuredValue({
     return <span>{value ? (en ? "Yes" : "是") : en ? "No" : "否"}</span>;
   if (typeof value === "number") return <span>{String(value)}</span>;
   if (typeof value === "string") return <LongText value={value} en={en} />;
-  if (depth >= 3) return <DeferredValue value={value} en={en} />;
+  if (depth >= 3)
+    return <DeferredValue value={value} en={en} label={contextLabel} />;
   if (Array.isArray(value)) {
     if (!value.length)
       return (
@@ -182,7 +198,7 @@ export function StructuredValue({
     const visible = value.slice(0, shown),
       table = value.every(
         (item) =>
-          isRecord(item) && Object.values(outputRecord(item)).every(scalar),
+          isRecord(item) && Object.values(outputRecord(item)).every(compactScalar),
       );
     const columns = table
       ? [
@@ -218,6 +234,7 @@ export function StructuredValue({
                           value={outputRecord(item)[key]}
                           en={en}
                           depth={depth + 1}
+                          contextLabel={fieldLabel(key, en)}
                         />
                       </td>
                     ))}
@@ -230,6 +247,7 @@ export function StructuredValue({
                             ),
                           )}
                           en={en}
+                          label={en ? "Details" : "详情"}
                         />
                       </td>
                     )}
@@ -242,7 +260,17 @@ export function StructuredValue({
           <ol className="structured-list">
             {visible.map((item, i) => (
               <li key={i}>
-                <StructuredValue value={item} en={en} depth={depth + 1} />
+                <div className="structured-item-heading">
+                  {en ? `Item ${i + 1}` : `第 ${i + 1} 项`}
+                </div>
+                <div className="structured-item-value">
+                  <StructuredValue
+                    value={item}
+                    en={en}
+                    depth={depth + 1}
+                    contextLabel={en ? `Item ${i + 1}` : `第 ${i + 1} 项`}
+                  />
+                </div>
               </li>
             ))}
           </ol>
@@ -275,16 +303,42 @@ export function StructuredValue({
       <span className="structured-empty">{en ? "No fields" : "暂无字段"}</span>
     );
   return (
-    <div>
+    <div className="structured-object">
       <dl className="structured-fields">
-        {entries.slice(0, shown).map(([key, text]) => (
-          <div key={key}>
-            <dt>{fieldLabel(key, en)}</dt>
-            <dd>
-              <StructuredValue value={text} en={en} depth={depth + 1} />
-            </dd>
-          </div>
-        ))}
+        {entries.slice(0, shown).map(([key, text]) => {
+          const nested = !scalar(text),
+            long = isLongScalar(text),
+            rowClass = [
+              nested ? "structured-field-nested" : "",
+              long ? "structured-field-long" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+          return (
+            <div className={rowClass} key={key}>
+              <dt>{fieldLabel(key, en)}</dt>
+              <dd>
+                {nested ? (
+                  <div className="structured-nested-value">
+                    <StructuredValue
+                      value={text}
+                      en={en}
+                      depth={depth + 1}
+                      contextLabel={fieldLabel(key, en)}
+                    />
+                  </div>
+                ) : (
+                  <StructuredValue
+                    value={text}
+                    en={en}
+                    depth={depth + 1}
+                    contextLabel={fieldLabel(key, en)}
+                  />
+                )}
+              </dd>
+            </div>
+          );
+        })}
       </dl>
       {entries.length > shown && (
         <button

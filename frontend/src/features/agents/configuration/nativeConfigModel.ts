@@ -1,5 +1,10 @@
 import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
-import { parse as jsonParse, printParseErrorCode } from "jsonc-parser";
+import {
+  applyEdits,
+  modify,
+  parse as jsonParse,
+  printParseErrorCode,
+} from "jsonc-parser";
 export type NativeConfigDocument = {
   configKey?: string;
   provider: string;
@@ -62,4 +67,32 @@ export function setConfigPath(
   if (item === undefined) delete target[path.at(-1)!];
   else target[path.at(-1)!] = item;
   return result;
+}
+
+export function updateConfigSource(
+  provider: string,
+  source: string,
+  previous: Record<string, unknown>,
+  next: Record<string, unknown>,
+) {
+  const changed = [
+    ...new Set([...Object.keys(previous), ...Object.keys(next)]),
+  ].filter(
+    (key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]),
+  );
+  if (!changed.length) return source;
+  if (provider === "codex") return serializeConfig(provider, next);
+  const formattingOptions = {
+    tabSize: 2,
+    insertSpaces: true,
+    eol: source.includes("\r\n") ? "\r\n" : "\n",
+  };
+  return changed.reduce(
+    (content, key) =>
+      applyEdits(
+        content,
+        modify(content, [key], next[key], { formattingOptions }),
+      ),
+    source,
+  );
 }

@@ -1,6 +1,10 @@
 # Topolumia
 
-本地优先的科研工作台：连接 Codex、Claude Code 和 OpenCode，通过 MCP 读写科研上下文，管理研究拓扑、实验与来源。Agent 提出的变更经人工审阅后进入正式记录。
+<p align="center">
+  <img src="frontend/public/brand/topolumia-logo-full.svg" alt="Topolumia" width="720" />
+</p>
+
+面向 Agent 与人的科研工作台：连接研究拓扑、文献、实验与科研上下文，让 Agent 的提议经过人工审阅后进入正式记录。
 
 项目处于探索开发阶段，当前主要面向本机使用，功能和数据结构仍在迭代。第一次使用可按 [入门教程](docs/playbooks/getting-started.md) 完成从空项目到研究记录的流程。
 

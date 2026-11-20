@@ -228,10 +228,9 @@ test("Agent configuration owns runtime checks, default models and navigation to 
   await expect(
     page.getByRole("heading", { name: "Agent 配置", exact: true }),
   ).toBeVisible();
-  for (const name of ["Codex", "Claude Code", "OpenCode", "科研 MCP"])
-    await expect(
-      page.getByRole("heading", { name, exact: true }),
-    ).toBeVisible();
+  for (const name of [/^Codex/, /^Claude Code/, /^OpenCode/])
+    await expect(page.getByRole("tab", { name })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "科研 MCP" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Python", exact: true }),
   ).toHaveCount(0);
@@ -241,16 +240,13 @@ test("Agent configuration owns runtime checks, default models and navigation to 
   await expect(
     page.getByRole("button", { name: "检查全部 Agent", exact: true }),
   ).toBeEnabled({ timeout: 20000 });
-  const codex = page
-    .getByRole("article")
-    .filter({ has: page.getByRole("heading", { name: "Codex", exact: true }) });
-  await expect(codex.getByText("可用", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: /^Codex/ }).click();
+  await expect(page.getByText("无需单独认证", { exact: true })).toBeVisible();
   await expect(
     page.getByText(
       /^科研 MCP 握手、授权与 CLI 往返通过；\d+ 个工具，使用只读凭据探测。$/,
     ),
   ).toBeVisible();
-  await codex.getByRole("button", { name: "配置", exact: true }).click();
   await page.getByRole("button", { name: "显示模型建议", exact: true }).click();
   await expect(
     page.getByRole("listbox", { name: "默认模型", exact: true }),
@@ -262,7 +258,7 @@ test("Agent configuration owns runtime checks, default models and navigation to 
   await page
     .getByRole("combobox", { name: "默认模型", exact: true })
     .press("Escape");
-  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "常用设置", exact: true })).toHaveAttribute("aria-selected", "true");
   await page
     .getByRole("combobox", { name: "默认模型", exact: true })
     .press("ArrowDown");
@@ -271,15 +267,11 @@ test("Agent configuration owns runtime checks, default models and navigation to 
     .getByRole("combobox", { name: "默认模型", exact: true })
     .fill("fixture-project-model");
   await page.getByRole("button", { name: "保存配置", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(
-    codex.getByText("fixture-project-model", { exact: true }),
-  ).toBeVisible();
-  const opencode = page.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "OpenCode", exact: true }),
-  });
-  await opencode.getByRole("button", { name: "设为默认", exact: true }).click();
-  await expect(opencode.getByText("默认 Agent", { exact: true })).toBeVisible();
+  await expect(page.getByText(/原生配置已保存/)).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "默认模型", exact: true })).toHaveValue("fixture-project-model");
+  await page.getByRole("tab", { name: /^OpenCode/ }).click();
+  await page.getByRole("switch", { name: /设为默认 Agent/ }).click();
+  await expect(page.getByRole("tab", { name: /OpenCode.*默认/ })).toBeVisible();
   const settings = await (
     await page.request.get(`${app.url}/api/settings`)
   ).json();

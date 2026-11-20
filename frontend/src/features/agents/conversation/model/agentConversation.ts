@@ -22,7 +22,8 @@ export type ConversationItem = {
     | "status"
     | "activity"
     | "subagent"
-    | "activity-batch";
+    | "activity-batch"
+    | "tool-batch";
   key: string;
   role?: "user" | "assistant";
   text?: string;

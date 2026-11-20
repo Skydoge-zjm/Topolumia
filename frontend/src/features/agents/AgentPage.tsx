@@ -326,19 +326,6 @@ export function AgentPage() {
       );
       await refresh();
     });
-  const onSaved = useCallback(
-    (id: string) => {
-      if (activeRef.current === id) setTab("changes");
-      void client.invalidateQueries({
-        queryKey: ["agent-research-context", project, id],
-      });
-      void client.invalidateQueries({ queryKey: ["agent-research-changes", project, id] });
-      void client.invalidateQueries({
-        queryKey: ["research-context", project],
-      });
-    },
-    [client, project],
-  );
   const onSource = useCallback((ref: string, version?: string) => {
     setSource({ ref, version });
     setTab("context");
@@ -690,7 +677,6 @@ export function AgentPage() {
               session?.status === "running" && !stopping && !disconnected
             }
             onSource={onSource}
-            onSaved={onSaved}
             onReview={onReview}
             searchTarget={
               searchTarget?.sessionId === activeId ? searchTarget : undefined

@@ -59,7 +59,6 @@
   .research-page-heading { flex-direction: row; }
   .reference-project-table { max-width: 100%; overflow-x: auto; }
   .reference-project-table > header, .reference-project-row { min-width: 680px; }
-  .reference-project-create { margin-top: 24px; }
   .page--create { width: 100%; max-width: 100%; margin: 0; padding: 0; }
   .page-head--narrow { margin: 0 0 24px; }
   .create-form { width: 100%; max-width: 100%; padding: 20px; }

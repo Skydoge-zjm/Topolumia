@@ -2,17 +2,19 @@ import type { ConversationItem } from "@/features/agents/conversation/model/agen
 import { renderMarkdown, renderReasoningSummary } from "@/shared/lib/markdown";
 import {
   groupActivityRuns,
+  groupToolRuns,
   activitySummary,
 } from "@/features/agents/conversation/model/agentActivity";
 import { compactTraceEvents } from "@domain/agents/agent-trace";
 import { AgentEventIcon } from "../../icons/AgentEventIcon";
-import { Check, Copy, NotebookPen } from "lucide-react";
+import { CheckCircle2, CircleX, Copy } from "lucide-react";
 import { Fragment, memo, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { copyText } from "@/shared/lib/copyText";
 import {
   toolCallLabel,
   topolumiaToolLabel,
+  describeTool,
 } from "@/features/agents/tools/agentTool";
 import { ToolResult } from "../../tools/ToolResult";
 import {
@@ -34,7 +36,6 @@ type Props = {
     selection: AgentApprovalSelection,
   ) => void | Promise<void>;
   groupActivities?: boolean;
-  onSave?: (item: ConversationItem) => Promise<void>;
   onSource?: (ref: string, version?: string) => void;
   afterItem?: (item: ConversationItem) => ReactNode;
   deferMessages?: boolean;
@@ -58,6 +59,34 @@ function conversationStatus(status: string | undefined, en: boolean): string {
   return labels[status ?? ""]?.[en ? 1 : 0] ?? (en ? "Info" : "信息");
 }
 
+function ToolStatusIcon({ status, en }: { status?: string; en: boolean }) {
+  const failed = ["failed", "error", "cancelled", "incomplete"].includes(status ?? "");
+  if (!["completed", "success", "failed", "error", "cancelled", "incomplete"].includes(status ?? "")) return null;
+  const Icon = failed ? CircleX : CheckCircle2;
+  return (
+    <span
+      className={`tool-status-icon ${failed ? "is-failed" : "is-success"}`}
+      role="img"
+      aria-label={failed ? (en ? "Tool failed" : "工具失败") : en ? "Tool completed" : "工具完成"}
+      title={failed ? (en ? "Tool failed" : "工具失败") : en ? "Tool completed" : "工具完成"}
+    >
+      <Icon size={15} strokeWidth={2} aria-hidden="true" />
+    </span>
+  );
+}
+function repeatedToolLabel(item: ConversationItem, count: number, en: boolean): string {
+  const firstTool = item.children?.find((child) => child.kind === "tool");
+  const description = firstTool ? describeTool(firstTool, en) : undefined;
+  if (description?.kind === "terminal")
+    return en ? `Run ${count} terminal commands` : `执行 ${count} 次终端命令`;
+  const label = item.title ?? (en ? "tool" : "工具");
+  if (description?.key === "mcp:topolumia") {
+    const match = /^(.*?)(科研操作|科研环境|科研上下文|节点关系|科研信息|节点|来源|内容块|研究附件|研究文件|格式说明|候选变更)$/.exec(label);
+    if (match)
+      return en ? `${match[1]} ${count} ${match[2]}` : `${match[1]} ${count} 次${match[2]}`;
+  }
+  return en ? `Call ${label} ${count} times` : `调用 ${label} ${count} 次`;
+}
 function containsApproval(item: ConversationItem): boolean {
   return (
     (item.kind === "approval" && item.status === "pending") ||
@@ -115,13 +144,10 @@ function Expander({
 function Message({
   item,
   en,
-  onSave,
   onSource,
   deferMessages,
-}: Pick<Props, "en" | "onSave" | "onSource" | "deferMessages"> & { item: ConversationItem }) {
-  const [feedback, setFeedback] = useState(""),
-    [saving, setSaving] = useState(false),
-    [saved, setSaved] = useState(false);
+}: Pick<Props, "en" | "onSource" | "deferMessages"> & { item: ConversationItem }) {
+  const [feedback, setFeedback] = useState("");
   const partial =
     item.completion && !["completed", "streaming"].includes(item.completion);
   const copy = async (value: string) => {
@@ -130,20 +156,6 @@ function Message({
       setFeedback(en ? "Copied" : "已复制");
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "复制失败");
-    }
-  };
-  const save = async () => {
-    if (!onSave || saving || saved) return;
-    setSaving(true);
-    setFeedback("");
-    try {
-      await onSave(item);
-      setSaved(true);
-      setFeedback(en ? "Submitted for research review" : "已提交研究变更审阅");
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "保存失败，请重试");
-    } finally {
-      setSaving(false);
     }
   };
   return (
@@ -160,14 +172,8 @@ function Message({
       data-motion-candidate={item.streaming ? "true" : undefined}
       data-state={item.streaming ? "running" : undefined}
     >
-      {item.role !== "user" && (item.phase || item.streaming || partial) && (
+      {item.role !== "user" && (item.streaming || partial) && (
         <header>
-          {item.phase === "commentary" && (
-            <span className="streaming">{en ? "Progress" : "进展"}</span>
-          )}
-          {item.phase === "final_answer" && (
-            <span className="streaming">{en ? "Answer" : "答复"}</span>
-          )}
           {item.streaming && (
             <>
               <span
@@ -206,30 +212,6 @@ function Message({
           >
             <Copy size={13} />
           </button>
-          {item.role === "assistant" &&
-            !item.streaming &&
-            onSave &&
-            item.sourceEventIds?.length && (
-              <button
-                type="button"
-                disabled={saving || saved}
-                onClick={() => void save()}
-                aria-label={en ? "Propose research note" : "整理为科研笔记"}
-              >
-                <NotebookPen size={13} />
-                {saving
-                  ? en
-                    ? "Saving…"
-                    : "提交中…"
-                  : saved
-                    ? en
-                      ? "Submitted"
-                      : "已提交"
-                    : en
-                      ? "Research note"
-                      : "科研笔记"}
-              </button>
-            )}
           {feedback && <span role="status">{feedback}</span>}
         </div>
       )}
@@ -328,11 +310,6 @@ const ConversationRow = memo(function ConversationRow({
                 {en ? "Running" : "运行中"}
               </span>
             )}
-            {summary.failed > 0 && (
-              <span className="activity-state has-failures">
-                {en ? `${summary.failed} failed` : `${summary.failed} 项失败`}
-              </span>
-            )}
             {summary.incomplete > 0 && (
               <span className="activity-state">
                 {en
@@ -340,15 +317,12 @@ const ConversationRow = memo(function ConversationRow({
                   : `${summary.incomplete} 项未完成`}
               </span>
             )}
-            <span className="motion-complete-badge" aria-hidden="true">
-              <Check size={12} />
-            </span>
           </>
         }
         renderBody={() => (
           <ConversationItems
             {...props}
-            items={item.children ?? []}
+            items={groupToolRuns(item.children ?? [], en)}
             groupActivities={false}
           />
         )}
@@ -387,6 +361,32 @@ const ConversationRow = memo(function ConversationRow({
         )}
       />
     );
+  if (item.kind === "tool-batch") {
+    const count = item.callCount ?? item.children?.length ?? 0;
+    return (
+      <Expander
+        item={item}
+        className="tool-group tool-batch"
+        state={item.status}
+        bodyClass="tool-body"
+        summary={
+          <>
+            <AgentEventIcon item={item} />
+            <span className="tool-call-title" translate="no" title={item.title}>
+              {repeatedToolLabel(item, count, en)}
+            </span>
+          </>
+        }
+        renderBody={() => (
+          <ConversationItems
+            {...props}
+            items={item.children ?? []}
+            groupActivities={false}
+          />
+        )}
+      />
+    );
+  }
   if (item.kind === "tool") {
     const researchLabel = topolumiaToolLabel(item, en, item.status);
     const label = toolCallLabel(item, en, item.status);
@@ -405,14 +405,15 @@ const ConversationRow = memo(function ConversationRow({
             {(item.callCount ?? 1) > 1 && (
               <span className="streaming">×{item.callCount}</span>
             )}
-            {(!researchLabel || item.status !== "running") && (
-              <span className="streaming">
-                {conversationStatus(item.status, en)}
-              </span>
+            {item.status === "running" ? (
+              !researchLabel && (
+                <span className="streaming">
+                  {conversationStatus(item.status, en)}
+                </span>
+              )
+            ) : (
+              <ToolStatusIcon status={item.status} en={en} />
             )}
-            <span className="motion-complete-badge" aria-hidden="true">
-              <Check size={12} />
-            </span>
           </>
         }
         renderBody={() => (

@@ -41,7 +41,7 @@ beforeEach(() => {
     project: { id: "project-a", name: "Project A" },
     agents: ["Codex", "Claude Code", "OpenCode"].map((label, index) => ({
       id: ["codex", "claude", "opencode"][index],
-      provider: label,
+      provider: ["codex", "claude", "opencode"][index],
       label,
       model: "gpt-6-luna",
       models: [{ id: "gpt-6-luna", label: "6 Luna" }],
@@ -138,17 +138,20 @@ async function open() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  await screen.findByRole("heading", { name: "Codex" });
+  await screen.findByRole("tab", { name: /^Codex/ });
   return userEvent.setup();
 }
-const card = (name: string) =>
-  within(screen.getByRole("heading", { name }).closest("article")!);
+const panel = () => within(screen.getByRole("tabpanel"));
 
 it("groups the three Agents and research integration without duplicating tool configuration", async () => {
   await open();
-  for (const name of ["Codex", "Claude Code", "OpenCode", "科研 MCP"])
-    expect(screen.getByRole("heading", { name })).toBeInTheDocument();
-  expect(screen.getAllByText("gpt-6-luna")).toHaveLength(3);
+  for (const name of [/^Codex/, "Claude Code", "OpenCode"])
+    expect(screen.getByRole("tab", { name })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "科研 MCP" })).toBeInTheDocument();
+  expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+  expect(screen.getByRole("combobox", { name: "默认模型" })).toHaveValue(
+    "gpt-6-luna",
+  );
   expect(
     screen.queryByRole("heading", { name: "Node.js" }),
   ).not.toBeInTheDocument();
@@ -161,33 +164,33 @@ it("groups the three Agents and research integration without duplicating tool co
 it("checks one Agent and distinguishes installation from missing authentication", async () => {
   const user = await open();
   holdCheck = true;
-  await user.click(card("Claude Code").getByRole("button", { name: "检查" }));
+  await user.click(screen.getByRole("tab", { name: "Claude Code" }));
+  await user.click(panel().getByRole("button", { name: "检查" }));
   await waitFor(() => expect(release).toBeTypeOf("function"));
-  expect(screen.getByRole("button", { name: "正在检查…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "检查中…" })).toBeDisabled();
   release!();
-  expect(await card("Claude Code").findByText("需要登录")).toBeInTheDocument();
-  expect(card("Claude Code").getByText("1.2.3")).toBeInTheDocument();
+  expect(await panel().findByText("需要登录")).toBeInTheDocument();
+  expect(panel().getByText("已安装 · 1.2.3")).toBeInTheDocument();
   expect(requests[0]).toMatchObject({
     path: "/api/agent-configuration/check",
     body: { profileId: "claude" },
   });
-  expect(card("Codex").getAllByText("待检查").length).toBeGreaterThan(0);
+  await user.click(screen.getByRole("tab", { name: /^Codex/ }));
+  expect(panel().getByText("安装待检")).toBeVisible();
 });
 
 it("saves the selected Agent's default model", async () => {
   const user = await open();
-  await user.click(card("Codex").getByRole("button", { name: "配置" }));
-  const dialog = screen.getByRole("dialog");
-  await user.clear(within(dialog).getByRole("combobox", { name: "默认模型" }));
+  await user.clear(panel().getByRole("combobox", { name: "默认模型" }));
   await user.type(
-    within(dialog).getByRole("combobox", { name: "默认模型" }),
+    panel().getByRole("combobox", { name: "默认模型" }),
     "fixture-new-model",
   );
-  await user.click(within(dialog).getByRole("button", { name: "保存配置" }));
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  await user.click(panel().getByRole("button", { name: "保存配置" }));
+  expect(await screen.findByText(/Agent 配置已保存/)).toBeVisible();
+  expect(panel().getByRole("combobox", { name: "默认模型" })).toHaveValue(
+    "fixture-new-model",
   );
-  expect(card("Codex").getByText("fixture-new-model")).toBeInTheDocument();
   expect(requests[0]).toMatchObject({
     method: "PATCH",
     path: "/api/agent-configuration/profiles/codex",
@@ -197,9 +200,11 @@ it("saves the selected Agent's default model", async () => {
 
 it("selects the default Agent independently of its model and probe state", async () => {
   const user = await open();
-  await user.click(card("OpenCode").getByRole("button", { name: "设为默认" }));
-  expect(await card("OpenCode").findByText("默认 Agent")).toBeInTheDocument();
-  expect(card("Codex").queryByText("默认 Agent")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "OpenCode" }));
+  await user.click(panel().getByRole("switch"));
+  await screen.findByRole("tab", { name: /OpenCode.*默认/ });
+  expect(panel().getByRole("switch")).toBeChecked();
+  expect(screen.getByRole("tab", { name: "Codex" })).toBeVisible();
   expect(requests).toHaveLength(1);
   expect(requests[0].body).toEqual({ makeDefault: true });
 });
@@ -207,7 +212,6 @@ it("selects the default Agent independently of its model and probe state", async
 it("keeps a rejected model visible for correction", async () => {
   const user = await open();
   saveError = true;
-  await user.click(card("Codex").getByRole("button", { name: "配置" }));
   await user.clear(screen.getByRole("combobox", { name: "默认模型" }));
   await user.type(
     screen.getByRole("combobox", { name: "默认模型" }),
@@ -246,12 +250,34 @@ it("shows a retryable error instead of fabricated Agent availability", async () 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Agent 配置暂时不可用",
   );
-  expect(
-    screen.queryByRole("heading", { name: "Codex" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /^Codex/ })).not.toBeInTheDocument();
   loadError = false;
   await userEvent.click(screen.getByRole("button", { name: "重试" }));
   expect(
-    await screen.findByRole("heading", { name: "Codex" }),
+    await screen.findByRole("tab", { name: /^Codex/ }),
   ).toBeInTheDocument();
+});
+
+it("preserves an unsaved draft when the engine switch is canceled", async () => {
+  const user = await open();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  try {
+    await user.clear(panel().getByRole("combobox", { name: "默认模型" }));
+    await user.type(
+      panel().getByRole("combobox", { name: "默认模型" }),
+      "unsaved-model",
+    );
+    await user.click(screen.getByRole("tab", { name: "Claude Code" }));
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(panel().getByRole("combobox", { name: "默认模型" })).toHaveValue(
+      "unsaved-model",
+    );
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole("tab", { name: "Claude Code" }));
+    expect(panel().getByRole("combobox", { name: "默认模型" })).toHaveValue(
+      "gpt-6-luna",
+    );
+  } finally {
+    confirm.mockRestore();
+  }
 });

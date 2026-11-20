@@ -7,7 +7,6 @@
 .pair, .heading, .tabs { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .heading { min-height: 48px; margin-bottom: 8px; }
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
-.configuration .cards .panel { min-height: 290px; }
 .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; padding: 20px 24px; border: 1px solid var(--color-line-soft); border-radius: 8px; }
 .tabs { justify-content: flex-start; padding: 4px 0; }
 .sessions { min-height: 280px; }
@@ -30,4 +29,4 @@
 @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pulse { 0%, 100% { opacity: .65; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .fill { animation: none; } }
-@media (max-width: 900px) { .agent, .agent.compactRail { grid-template-columns: minmax(0, 1fr); }.rail { display: none; }.cards { grid-template-columns: minmax(0, 1fr); }.configuration .cards .panel { min-height: 230px; }.facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }.bubble { width: 92%; }.bubble.user { width: 82%; } }
+@media (max-width: 900px) { .agent, .agent.compactRail { grid-template-columns: minmax(0, 1fr); }.rail { display: none; }.cards { grid-template-columns: minmax(0, 1fr); }.facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }.bubble { width: 92%; }.bubble.user { width: 82%; } }

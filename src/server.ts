@@ -272,7 +272,7 @@ export async function createMvpApplication(options: ApplicationOptions = {}) {
         try {
           if (["POST", "PATCH", "DELETE"].includes(request.method ?? "GET")) {
             const ownedSession = pathname.match(
-              /^\/api\/agent-sessions\/([^/]+)(?:\/(?:turns|commands|persist|attachments(?:\/[^/]+)?|cancel|resume|sync|close|notes|permissions\/reset|approvals\/[^/]+|queue\/[^/]+))?$/,
+              /^\/api\/agent-sessions\/([^/]+)(?:\/(?:turns|commands|persist|attachments(?:\/[^/]+)?|cancel|resume|sync|close|permissions\/reset|approvals\/[^/]+|queue\/[^/]+))?$/,
             );
             if (
               ownedSession &&

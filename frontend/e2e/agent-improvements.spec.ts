@@ -100,7 +100,7 @@ test("queued edits retain FIFO and model; native session grants can be reset in 
   await expect(page.getByRole("button", { name: "已允许会话编辑" })).toHaveCount(0);
 });
 
-test("scientific replies expose real source evidence, copyable code and reviewable full research notes", async ({ page, context }) => {
+test("scientific replies expose real source evidence and copyable code", async ({ page, context }) => {
   test.setTimeout(60_000); await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await create(page, "Scientific record"); await send(page, "scientific-note");
   const answer = page.locator(".message:not(.user)"); await expect(answer).toContainText("实验结果记录"); await done(page);
@@ -111,20 +111,6 @@ test("scientific replies expose real source evidence, copyable code and reviewab
   await expect(page.locator(".agent-source-preview pre")).toContainText("Scientific evidence must retain its source version");
   await page.getByRole("button", { name: "关闭来源预览" }).click();
   await expect(page.locator(".evidence-read").filter({ hasText: "来源内容" })).toContainText("file:README.md");
-  await page.getByRole("button", { name: "关闭研究上下文" }).click(); await answer.hover();
-  await answer.getByRole("button", { name: "整理为科研笔记", exact: true }).click(); await expect(answer).toContainText("已提交研究变更审阅");
-  const candidate = page.getByRole("region", { name: "本轮科研变更", exact: true }).getByRole("article", { name: "保存会话「Scientific record」的研究回复", exact: true });
-  await expect(candidate).toContainText("Scientific record");
-  await candidate.getByRole("button", { name: "接受并保存", exact: true }).click();
-  const saved = candidate.getByRole("link", { name: /^查看已保存对象/ });
-  await expect(saved).toBeVisible();
-  await saved.click();
-  await page.reload();
-  await expect(page.getByRole("main").getByText("结果需要进一步复核。", { exact: true })).toBeVisible();
-  await expect(page.getByRole("main").getByRole("math")).toHaveCount(1); await page.screenshot({ path: "test-results/agent-scientific-note.png", fullPage: true });
-  await page.getByRole("link", { name: "研究记录", exact: true }).click();
-  await page.getByRole("button", { name: "纪要与记录", exact: true }).click();
-  await expect(page.locator(".research-record-timeline")).not.toContainText("结果需要进一步复核");
 });
 
 test("renaming, pinning, archiving and restoring preserve the same conversation", async ({ page }) => {

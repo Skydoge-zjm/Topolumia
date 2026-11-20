@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <mask id="v5HorizMask" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="white" />
+      <path d="M 220 218 L 256 182 L 338 182 L 338 254 L 256 254 Z" fill="black" />
+    </mask>
+    <mask id="v5VertMask" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="white" />
+      <rect x="174" y="190" width="56" height="56" fill="black" />
+    </mask>
+  </defs>
+
+  <rect
+    x="110"
+    y="110"
+    width="292"
+    height="108"
+    rx="54"
+    fill="none"
+    stroke="#0F172A"
+    stroke-width="32"
+    mask="url(#v5HorizMask)"
+  />
+
+  <rect
+    x="202"
+    y="164"
+    width="108"
+    height="240"
+    rx="54"
+    fill="none"
+    stroke="#10B981"
+    stroke-width="32"
+    mask="url(#v5VertMask)"
+  />
+
+  <path d="M 256 194 L 280 218 L 256 242 L 232 218 Z" fill="#F59E0B" />
+</svg>

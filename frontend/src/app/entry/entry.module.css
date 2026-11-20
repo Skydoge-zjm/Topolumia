@@ -12,12 +12,23 @@
   gap: 8px;
   padding: 16px clamp(20px, 5vw, 64px);
 }
-.wordmark {
+.brandLockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.brandIcon {
   display: block;
-  width: 150px;
-  height: 40px;
-  object-fit: cover;
-  object-position: center;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  border-radius: 8px;
+  background: #fffaf0;
+  object-fit: contain;
 }
 .spacer {
   flex: 1;
@@ -200,9 +211,14 @@
   width: min(360px, 100%);
 }
 .formMark {
+  display: block;
   width: 40px;
   height: 40px;
+  padding: 4px;
+  border: 1px solid var(--color-line-soft);
   border-radius: 10px;
+  background: #fffaf0;
+  object-fit: contain;
 }
 .form h1 {
   margin: 0 0 8px;
@@ -290,15 +306,6 @@
 .submit:disabled {
   opacity: 0.7;
 }
-.spin {
-  animation: spin 0.9s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (max-width: 900px) {
   .hero {
     grid-template-columns: 1fr;
@@ -317,8 +324,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .relation,
-  .spin {
+  .relation {
     animation: none;
   }
   .primary svg,
@@ -328,4 +334,10 @@
   .field input {
     transition: none;
   }
+}
+
+.loadingMark {
+  display: block;
+  width: 16px;
+  height: 16px;
 }

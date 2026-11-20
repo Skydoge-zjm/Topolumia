@@ -21,11 +21,13 @@ function Output({
   en,
   research = false,
   onSource,
+  exitCode,
 }: {
   value: unknown;
   en: boolean;
   research?: boolean;
   onSource?: (ref: string, version?: string) => void;
+  exitCode?: unknown;
 }) {
   const [full, setFull] = useState(false),
     [copied, setCopied] = useState(false),
@@ -36,7 +38,14 @@ function Output({
   return (
     <div className="tool-output-view">
       <div className="output-toolbar">
-        <span>{en ? "Output" : "输出"}</span>
+        <span className="output-toolbar-meta">
+          <span>{en ? "Output" : "输出"}</span>
+          {exitCode !== undefined && (
+            <span className="tool-exit-code">
+              {en ? "Exit code" : "退出码"} {text(exitCode)}
+            </span>
+          )}
+        </span>
         <button
           type="button"
           onClick={() =>
@@ -134,7 +143,6 @@ export function ToolResult({
     <div className="tool-detail tool-result-view" translate="no">
       {command !== undefined && (
         <>
-          <div className="tool-section-label">{en ? "Command" : "命令"}</div>
           <pre
             className="tool-command tool-content-scroll"
             tabIndex={0}
@@ -143,20 +151,6 @@ export function ToolResult({
           >
             {text(command)}
           </pre>
-          <dl className="tool-facts">
-            {(item.cwd ?? p.cwd) !== undefined && (
-              <>
-                <dt>{en ? "Directory" : "目录"}</dt>
-                <dd>{text(item.cwd ?? p.cwd)}</dd>
-              </>
-            )}
-            {item.exitCode !== undefined && (
-              <>
-                <dt>{en ? "Exit code" : "退出码"}</dt>
-                <dd>{text(item.exitCode)}</dd>
-              </>
-            )}
-          </dl>
         </>
       )}
       {command === undefined && input !== undefined && (
@@ -203,6 +197,7 @@ export function ToolResult({
           en={en}
           research={research}
           onSource={onSource}
+          exitCode={item.exitCode}
         />
       ) : !command && !changes?.length ? (
         <Output
