@@ -1,101 +1,245 @@
-/* Bilingual copy. Chinese lives in index.html; this table replaces it when EN is on. */
-const en = {
-  "meta.title": "Topolumia · A local-first research workbench",
-  "meta.description":
-    "Connect Codex, Claude Code and OpenCode, read and write research context over MCP, and organise questions, literature, hypotheses, experiments and conclusions as a topology.",
-  "nav.topology": "Topology",
-  "nav.agents": "Agents",
-  "nav.install": "Install",
-  "nav.source": "GitHub",
-  "hero.title": "Research is not a chat. It is a map that keeps growing.",
-  "hero.lead":
-    "Topolumia is a local-first research workbench. It connects Codex, Claude Code and OpenCode, reads and writes research context over MCP, and organises questions, literature, hypotheses, experiments and conclusions as a topology you can explore. Changes proposed by an agent go to review first; you decide what enters the record.",
-  "hero.primary": "Get the source on GitHub",
-  "hero.secondary": "Read the tutorial",
-  "hero.meta": "Node.js 22.13+ · MIT licence · Listens on 127.0.0.1 by default",
-  "map.title":
-    "Topology sketch: literature supports a hypothesis, an experiment verifies it and produces observations, the conclusion narrows to a gap, and an agent proposes a new lead.",
-  "pillars.topology.title": "Topology first",
-  "pillars.topology.body":
-    "Questions, hypotheses, experiments and observations exist as nodes and relations, with node groups for tightly related material. A type core offers the minimum structure and imposes no mandatory sections.",
-  "pillars.review.title": "Human review",
-  "pillars.review.body":
-    "An agent allowed to run tools has not thereby had its conclusions accepted. Proposals arrive with their sources, and once accepted they are written through the same formal commit path as your own edits.",
-  "pillars.local.title": "Local first",
-  "pillars.local.body":
-    "Accounts, sessions and research data stay in local SQLite. When you need compute, Topolumia detects Python, Conda and venv on this machine or over SSH, and the agent explores with its own tools.",
-  "topology.title": "Questions, hypotheses, experiments and conclusions keep their relations.",
-  "topology.body":
-    "Literature nodes hold bibliographic data, method notes, key figures and open questions; experiment details show metrics, curves and links from related runs. Every formal object traces back to its source, and the topology updates instead of spawning another notebook.",
-  "topology.caption": "Research topology",
-  "topology.alt":
-    "Research topology view: literature, hypothesis, experiment and observation nodes joined by labelled relations, with node details on the right",
-  "agents.title": "Agents read the context, propose changes, and you decide.",
-  "agents.body":
-    "Sessions run inside the native Codex, Claude Code or OpenCode runtime while Topolumia serves research interfaces over MCP. Long tasks keep running with no per-turn countdown, and you can stop a session at any time.",
-  "agents.candidate.title": "Pending review · new conclusion",
-  "agents.candidate.body": "From Literature 3, Literature 5 and run 20250614; linked to #Node-003.",
-  "agents.candidate.accept": "Accept",
-  "agents.candidate.reject": "Reject",
-  "agents.caption": "Agent session",
-  "agents.alt":
-    "Agent session view: session history on the left, conversation with cited sources in the middle, context and approval policy on the right",
-  "record.title": "Every accepted change keeps its provenance.",
-  "record.body":
-    "The research record lists manual edits, agent proposals, source syncs and experiment results in time order, alongside minutes from group meetings, reading, reviews and periodic activity. Logic and chronology stay separate, so looking back shows the evidence, not only the conclusion.",
-  "record.caption": "Research record",
-  "record.alt":
-    "Research record view: events listed in time order, with record detail and evidence chain on the right",
-  "install.title": "Run it on your machine.",
-  "install.body":
-    "You need Node.js 22.13+ (22 / 24 LTS), npm and Git. The first visit to http://127.0.0.1:5510 creates the administrator account; there is no preset password. Agent CLIs and model providers are yours to prepare.",
-  "foot.source": "Source",
-  "foot.docs": "Docs",
-  "foot.contribute": "Contribute",
-  "foot.security": "Security",
-  "foot.note": "MIT licence · © 2026 Topolumia contributors",
-};
+/* All public copy stays in the HTML. The Chinese page also works without scripts. */
+"use strict";
 
-const nodes = document.querySelectorAll("[data-i18n]");
-const original = new Map();
-for (const node of nodes) original.set(node, node.innerHTML);
-const originalAlts = new Map();
-for (const node of document.querySelectorAll("[data-i18n-alt]")) originalAlts.set(node, node.alt);
-const originalContent = new Map();
-for (const node of document.querySelectorAll("[data-i18n-content]")) originalContent.set(node, node.content);
+const root = document.documentElement;
+const languageButton = document.getElementById("language");
+const sourceText = new Map();
+const storageKey = "topolumia-site-lang";
+let language = "zh";
+let copyReset;
 
-// Inline code in a translated string is written with backticks.
-const markup = text => text.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-function apply(lang) {
-  const english = lang === "en";
-  document.documentElement.lang = english ? "en" : "zh-CN";
-  for (const node of nodes) {
-    const key = node.dataset.i18n;
-    if (!english) node.innerHTML = original.get(node);
-    else if (en[key]) node.innerHTML = markup(en[key]);
+function initialLanguage() {
+  const requested = new URLSearchParams(location.search).get("lang");
+  if (requested === "en" || requested === "zh") return requested;
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored === "en" || stored === "zh") return stored;
+  } catch {
+    /* The site can run without local storage. */
   }
-  for (const node of document.querySelectorAll("[data-i18n-alt]")) {
-    const key = node.dataset.i18nAlt;
-    node.alt = english && en[key] ? en[key] : originalAlts.get(node);
-  }
-  for (const node of document.querySelectorAll("[data-i18n-content]")) {
-    const key = node.dataset.i18nContent;
-    node.content = english && en[key] ? en[key] : originalContent.get(node);
-  }
-  const label = document.querySelector("[data-lang-label]");
-  if (label) label.textContent = english ? "中文" : "EN";
-  const button = document.querySelector(".lang");
-  if (button) button.setAttribute("aria-label", english ? "切换到中文" : "Switch to English");
-  document.title = english ? en["meta.title"] : original.get(document.querySelector("[data-i18n='meta.title']")).replace(/<[^>]+>/g, "");
-  try { localStorage.setItem("topolumia-site-lang", english ? "en" : "zh"); } catch {}
+  return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
 
-document.querySelector(".lang").addEventListener("click", () => {
-  apply(document.documentElement.lang === "en" ? "zh" : "en");
-});
+function localText(zh, en) {
+  return language === "en" ? en : zh;
+}
 
-let saved = null;
-try { saved = localStorage.getItem("topolumia-site-lang"); } catch {}
-const preferred = saved || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en");
-apply(preferred);
+function setLanguage(value) {
+  language = value === "en" ? "en" : "zh";
+  root.lang = localText("zh-CN", "en");
+  for (const [element, original] of sourceText) {
+    element.textContent = localText(original, element.dataset.en);
+  }
+  for (const img of document.querySelectorAll("[data-en-alt]")) {
+    img.dataset.zhAlt ??= img.alt;
+    img.alt = localText(img.dataset.zhAlt, img.dataset.enAlt);
+  }
+  for (const element of document.querySelectorAll("[data-en-aria]")) {
+    element.dataset.zhAria ??= element.getAttribute("aria-label");
+    element.setAttribute("aria-label", localText(element.dataset.zhAria, element.dataset.enAria));
+  }
+  languageButton.textContent = localText("EN", "中文");
+  languageButton.setAttribute("aria-label", localText("Switch to English", "切换到中文"));
+  document.title = localText(
+    "Topolumia · 在 AI4Research 时代，掌控你的科研。",
+    "Topolumia · Take charge of your research in the AI4Research era",
+  );
+  document.querySelector('meta[name="description"]').content = localText(
+    "Topolumia 是本地优先的人机共研工作台。把 Codex、Claude Code 和 OpenCode 的研究提议连到文献、实验曲线与原始记录。",
+    "A local-first workbench for researchers and agents. Connect research proposals from Codex, Claude Code and OpenCode to papers, experiment curves and raw records.",
+  );
+  resetCopy();
+  renderExperiment();
+}
+
+// Both sets of tabs support roving focus and standard arrow/Home/End navigation.
+function bindTabs(tablist) {
+  const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+  function select(active) {
+    for (const tab of tabs) {
+      const selected = tab === active;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      document.getElementById(tab.getAttribute("aria-controls")).hidden = !selected;
+    }
+    if (active.dataset.tab === "chart") drawPlot();
+  }
+  for (const [index, tab] of tabs.entries()) {
+    tab.addEventListener("click", () => select(tab));
+    tab.addEventListener("keydown", (event) => {
+      const targets = {
+        ArrowLeft: (index + tabs.length - 1) % tabs.length,
+        ArrowRight: (index + 1) % tabs.length,
+        Home: 0,
+        End: tabs.length - 1,
+      };
+      if (!Object.hasOwn(targets, event.key)) return;
+      event.preventDefault();
+      const next = tabs[targets[event.key]];
+      select(next);
+      next.focus();
+    });
+  }
+}
+
+// Final values, chart, table and JSONL all read the same small demonstration dataset.
+const experiments = {
+  17: {
+    baseline: [61, 65.4, 69.1, 71.4, 74.2, 76, 77.1, 78.4, 80.1, 81.2, 82.3, 83.2],
+    method: [61, 66.1, 70.6, 73.8, 76.1, 78.2, 80.2, 81.1, 82, 83.7, 84.2, 85.2],
+  },
+  29: {
+    baseline: [60.7, 64.3, 68.4, 72, 74.5, 76.2, 78.5, 79.3, 80.2, 81.9, 82.1, 83.4],
+    method: [60.7, 65.1, 70, 71.9, 75.1, 77.3, 78.4, 80.2, 81.5, 82.7, 83.2, 83.9],
+  },
+  43: {
+    baseline: [60.2, 65, 68.8, 71.2, 74.7, 76.4, 77.9, 78.8, 80.2, 81.1, 82, 82.6],
+    method: [60.2, 65.1, 69.3, 72.8, 75, 77.5, 79.6, 81.3, 82, 83.2, 84, 84.8],
+  },
+};
+const seedControl = document.getElementById("seed");
+const plot = document.getElementById("plot");
+const svgNamespace = "http://www.w3.org/2000/svg";
+function svgNode(tag, attributes, label) {
+  const element = document.createElementNS(svgNamespace, tag);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+  if (label !== undefined) element.textContent = label;
+  return element;
+}
+
+function drawPlot() {
+  if (plot.clientWidth === 0 || plot.clientHeight === 0) return;
+  const series = experiments[seedControl.value];
+  const width = plot.clientWidth,
+    height = plot.clientHeight;
+  const left = 28,
+    right = width - 12,
+    top = 10,
+    bottom = height - 23;
+  const x = (step) => left + (step * (right - left)) / 11;
+  const y = (value) => bottom - ((value - 60) * (bottom - top)) / 30;
+  const svg = svgNode("svg", {
+    viewBox: "0 0 " + width + " " + height,
+    role: "img",
+    "aria-label":
+      localText("基线和新方法的验证准确率曲线，随机种子 ", "Baseline and method validation accuracy for seed ") +
+      seedControl.value,
+  });
+  for (const value of [60, 70, 80, 90]) {
+    svg.append(
+      svgNode("line", {
+        x1: left,
+        x2: right,
+        y1: y(value),
+        y2: y(value),
+        stroke: "#d3dacb",
+        "stroke-dasharray": "3 5",
+      }),
+    );
+    svg.append(svgNode("text", { x: 0, y: y(value) + 4 }, String(value)));
+  }
+  for (const step of [0, 2, 4, 6, 8, 11]) {
+    svg.append(svgNode("text", { x: x(step), y: height - 3, "text-anchor": "middle" }, String(step)));
+  }
+  for (const [key, stroke] of [
+    ["baseline", "#975d38"],
+    ["method", "#236747"],
+  ]) {
+    const values = series[key];
+    const pts = values.map((v, i) => x(i).toFixed(1) + "," + y(v).toFixed(1)).join(" ");
+    const style = {
+      points: pts,
+      fill: "none",
+      stroke,
+      "stroke-width": 2.7,
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+    };
+    if (key === "baseline") style["stroke-dasharray"] = "7 5";
+    svg.append(svgNode("polyline", style));
+    values.forEach((v, i) =>
+      svg.append(
+        svgNode("circle", { cx: x(i), cy: y(v), r: i === 11 ? 4 : 2.3, fill: "#fffef9", stroke, "stroke-width": 1.5 }),
+      ),
+    );
+  }
+  plot.replaceChildren(svg);
+}
+
+function renderExperiment() {
+  const seed = Number(seedControl.value);
+  const run = experiments[seed];
+  document.getElementById("base-value").textContent = run.baseline.at(-1).toFixed(1) + "%";
+  document.getElementById("method-value").textContent = run.method.at(-1).toFixed(1) + "%";
+  const tableRows = [];
+  const records = [];
+  run.baseline.forEach((base, step) => {
+    const row = document.createElement("tr");
+    for (const value of [String(step), base.toFixed(1), run.method[step].toFixed(1)]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    tableRows.push(row);
+    for (const name of ["baseline", "method"]) {
+      records.push(JSON.stringify({ seed, run: name, step, "val/accuracy_pct": run[name][step] }));
+    }
+  });
+  document.getElementById("values").replaceChildren(...tableRows);
+  document.getElementById("raw").textContent = records.join("\n");
+  document.getElementById("raw-name").textContent = "seed-" + seed + ".jsonl";
+  drawPlot();
+}
+
+function resetCopy() {
+  clearTimeout(copyReset);
+  document.getElementById("copy-label").textContent = localText("复制", "Copy");
+}
+
+async function copyCommands() {
+  const code = document.getElementById("commands");
+  const label = document.getElementById("copy-label");
+  clearTimeout(copyReset);
+  try {
+    await navigator.clipboard.writeText(code.textContent);
+    label.textContent = localText("已复制", "Copied");
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(code);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    label.textContent = localText("已选中，可手动复制", "Selected for copying");
+  }
+  copyReset = setTimeout(resetCopy, 2600);
+}
+
+for (const element of document.querySelectorAll("[data-en]")) {
+  sourceText.set(element, element.textContent);
+}
+for (const tablist of document.querySelectorAll('[role="tablist"]')) bindTabs(tablist);
+seedControl.addEventListener("change", renderExperiment);
+document.getElementById("copy").addEventListener("click", copyCommands);
+languageButton.addEventListener("click", () => {
+  const next = language === "en" ? "zh" : "en";
+  setLanguage(next);
+  try {
+    localStorage.setItem(storageKey, next);
+  } catch {
+    /* Optional preference. */
+  }
+  const url = new URL(location.href);
+  if (url.searchParams.has("lang")) {
+    url.searchParams.set("lang", next);
+    try {
+      history.replaceState(null, "", url);
+    } catch {
+      /* Local file preview. */
+    }
+  }
+});
+setLanguage(initialLanguage());
+seedControl.disabled = false;
+root.classList.add("js");
+if ("ResizeObserver" in window) new ResizeObserver(drawPlot).observe(plot);
+else window.addEventListener("resize", drawPlot);
