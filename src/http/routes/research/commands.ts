@@ -9,7 +9,9 @@ import { readJsonObject, sendJson, headerValue, parseInput } from "../../../lib/
 import { fail } from "../../../domain/research/access.js";
 import { executeResearchTool } from "../../../services/research/tool-executor.js";
 import { summarizeCandidate, candidateChangedBlockIds } from "../../../services/research/changes/candidate-summary.js";
-const parseQuery=(url: URL): Record<string, unknown> =>Object.fromEntries([...url.searchParams.entries()].filter(([k])=>!["viewMode","view","projectId"].includes(k)).map(([k,v])=>[k,["limit","maxChars","offset","length","expectedRevision","revision"].includes(k)?Number(v):["nodeIds","owner","object","kinds","relationTypes","factPaths","types","selection"].includes(k)?JSON.parse(v):v]));
+const parseQuery=(url: URL): Record<string, unknown> =>Object.fromEntries([...url.searchParams.entries()].filter(([k])=>
+  k !== "viewMode" && k !== "projectId" && (k !== "view" || url.pathname === "/api/research/schemas")
+).map(([k,v])=>[k,["limit","maxChars","offset","length","expectedRevision","revision"].includes(k)?Number(v):["nodeIds","owner","object","kinds","relationTypes","factPaths","types","selection"].includes(k)?JSON.parse(v):v]));
 async function bytes(request: RouteContext["request"],response: RouteContext["response"],runtime: RouteContext["requestRuntime"],actor: RouteContext["requestActor"],id: string,variant: string){
   const file=await runtime.researchCommands.assets.content(id,variant??"original",actor);
   response.writeHead(200,{"content-type":file.mediaType,"content-length":file.sizeBytes,"content-disposition":(["application/pdf","image/png","image/jpeg","image/webp"].includes(file.mediaType)?"inline":"attachment")+"; filename*=UTF-8''"+encodeURIComponent(file.name),"x-content-sha256":file.checksum,"x-content-type-options":"nosniff","cache-control":"no-store"});
