@@ -15,7 +15,7 @@ test("real MCP → CLI saves a paper hierarchy, incrementally revises it and pre
   assert.equal(p.formalChangesApplied,false);
   assert.equal(f.runtime.researchCommands.nodes.nodes().length,context.data.counts.nodes);
   const nodeId=p.nodes[0].nodeId,blockId=p.nodes[0].blocks[0].blockId;
-  const draft=await f.data("read_blocks",{mode:"read",owner: { kind: "node", id: nodeId },blockId,view:"text",candidateId:p.candidateId});
+  const draft=await f.data("read_blocks",p.nodes[0].blocks[0].readHint);
   assert.equal(draft.data.text,body);assert.equal(draft.readReceipts[0].scope,"candidate");
   const edit={candidateId:p.candidateId,expectedRevision:1,nodeChanges:[{nodeId,corePatch:{venue:"Updated venue"},addBlocks:[{title:"Limits",type:"richText",payload:{format:"markdown",body:"Partial coverage."}}]}]};
   const revised=(await f.data("edit_candidate",edit)).data;
@@ -23,6 +23,7 @@ test("real MCP → CLI saves a paper hierarchy, incrementally revises it and pre
   assert.equal((await f.data("edit_candidate",edit)).data.revision,2);
   assert.equal((await f.data("read_blocks",{mode:"read",owner: { kind: "node", id: nodeId },blockId,view:"text",candidateId:p.candidateId})).data.text,body);
   const candidateNodes=await f.data("read_candidates",{mode:"show",candidateId:p.candidateId,section:"nodes"});
+  assert.equal(candidateNodes.data.items[0].blocks[0].readHint.candidateId, p.candidateId);
   const coreRef=candidateNodes.data.items[0].coreRefs.venue;
   assert.equal((await f.data("read_source",{...coreRef,candidateId:p.candidateId})).data.text,"Updated venue");
   const stale=await f.call("edit_candidate",{...edit,reason:"Different stale edit"});assert.equal(stale.isError,true);
