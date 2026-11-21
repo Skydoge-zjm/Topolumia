@@ -1,186 +1,941 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
-    <meta charset="UTF-8" />
+    <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0b3b30" />
-    <title data-i18n="meta.title">Topolumia · 本地优先的科研工作台</title>
-    <meta name="description" data-i18n-content="meta.description" content="连接 Codex、Claude Code 和 OpenCode，通过 MCP 读写科研上下文，把问题、文献、假说、实验和结论组织成可探索的拓扑。" />
-    <meta property="og:title" content="Topolumia" />
-    <meta property="og:description" content="本地优先的科研工作台：研究拓扑、Agent 候选与人审阅。" />
+    <meta name="theme-color" content="#f8f8f1" />
+    <title>Topolumia · 在 AI4Research 时代，掌控你的科研。</title>
+    <meta
+      name="description"
+      content="Topolumia 是本地优先的人机共研工作台。把 Codex、Claude Code 和 OpenCode 的研究提议连到文献、实验曲线与原始记录。"
+    />
     <meta property="og:type" content="website" />
+    <meta property="og:title" content="Topolumia · 在 AI4Research 时代，掌控你的科研。" />
+    <meta property="og:description" content="用同一张科研拓扑连接跨会话状态、实验依据与人工审阅。" />
     <meta property="og:url" content="https://skydoge-zjm.github.io/Topolumia/" />
+    <meta property="og:image" content="https://skydoge-zjm.github.io/Topolumia/assets/social-preview.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Topolumia 宣传页首屏，Agent 的配对实验、数据曲线与研究者的描图纸" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="assets/style.css" />
+    <link rel="stylesheet" href="assets/tracing-sheets.css" />
+    <script src="assets/site.js" defer></script>
+    <script src="assets/tracing-sheets.js" defer></script>
   </head>
-  <body>
-    <header class="bar">
-      <a class="brand" href="./" aria-label="Topolumia">
-        <img src="assets/mark.png" alt="" width="28" height="28" />
-        <span>Topolumia</span>
-      </a>
-      <nav class="nav" aria-label="主要">
-        <a href="#topology" data-i18n="nav.topology">科研拓扑</a>
-        <a href="#agents" data-i18n="nav.agents">Agent 协作</a>
-        <a href="#install" data-i18n="nav.install">安装</a>
-        <a href="https://github.com/Skydoge-zjm/Topolumia" data-i18n="nav.source">GitHub</a>
-      </nav>
-      <button class="lang" type="button" aria-label="Switch to English">
-        <span data-lang-label>EN</span>
-      </button>
+  <body id="top">
+    <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" class="symbols">
+      <metadata>
+        Lucide icons. ISC License Copyright (c) 2026 Lucide Icons and Contributors Permission to use, copy, modify,
+        and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above
+        copyright notice and this permission notice appear in all copies. THE SOFTWARE IS PROVIDED "AS IS" AND THE
+        AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+        AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES
+        OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+        NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
+        SOFTWARE. --- The following Lucide icons are derived from the Feather project: airplay, alert-circle,
+        alert-octagon, alert-triangle, aperture, arrow-down-circle, arrow-down-left, arrow-down-right, arrow-down,
+        arrow-left-circle, arrow-left, arrow-right-circle, arrow-right, arrow-up-circle, arrow-up-left, arrow-up-right,
+        arrow-up, at-sign, calendar, cast, check, chevron-down, chevron-left, chevron-right, chevron-up, chevrons-down,
+        chevrons-left, chevrons-right, chevrons-up, circle, clipboard, clock, code, columns, command, compass,
+        corner-down-left, corner-down-right, corner-left-down, corner-left-up, corner-right-down, corner-right-up,
+        corner-up-left, corner-up-right, crosshair, database, divide-circle, divide-square, dollar-sign, download,
+        external-link, feather, frown, hash, headphones, help-circle, info, italic, key, layout, life-buoy, link-2,
+        link, loader, lock, log-in, log-out, maximize, meh, minimize, minimize-2, minus-circle, minus-square, minus,
+        monitor, moon, more-horizontal, more-vertical, move, music, navigation-2, navigation, octagon, pause-circle,
+        percent, plus-circle, plus-square, plus, power, radio, rss, search, server, share, shopping-bag, sidebar,
+        smartphone, smile, square, table-2, tablet, target, terminal, trash-2, trash, triangle, tv, type, upload,
+        x-circle, x-octagon, x-square, x, zoom-in, zoom-out The MIT License (MIT) (for the icons listed above) Copyright
+        (c) 2013-present Cole Bemis Permission is hereby granted, free of charge, to any person obtaining a copy of this
+        software and associated documentation files (the "Software"), to deal in the Software without restriction,
+        including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+        sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+        following conditions: The above copyright notice and this permission notice shall be included in all copies or
+        substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+        NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+        SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+      </metadata>
+      <symbol id="i-ArrowRight" viewBox="0 0 24 24">
+        <path d="M5 12h14"></path>
+        <path d="m12 5 7 7-7 7"></path>
+      </symbol>
+      <symbol id="i-ArrowUpRight" viewBox="0 0 24 24">
+        <path d="M7 7h10v10"></path>
+        <path d="M7 17 17 7"></path>
+      </symbol>
+      <symbol id="i-ArrowDown" viewBox="0 0 24 24">
+        <path d="M12 5v14"></path>
+        <path d="m19 12-7 7-7-7"></path>
+      </symbol>
+      <symbol id="i-GitFork" viewBox="0 0 24 24">
+        <circle cx="12" cy="18" r="3"></circle>
+        <circle cx="6" cy="6" r="3"></circle>
+        <circle cx="18" cy="6" r="3"></circle>
+        <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"></path>
+        <path d="M12 12v3"></path>
+      </symbol>
+      <symbol id="i-ScanEye" viewBox="0 0 24 24">
+        <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+        <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+        <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+        <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+        <circle cx="12" cy="12" r="1"></circle>
+        <path d="M18.944 12.33a1 1 0 0 0 0-.66 7.5 7.5 0 0 0-13.888 0 1 1 0 0 0 0 .66 7.5 7.5 0 0 0 13.888 0"></path>
+      </symbol>
+      <symbol id="i-GitBranch" viewBox="0 0 24 24">
+        <path d="M15 6a9 9 0 0 0-9 9V3"></path>
+        <circle cx="18" cy="6" r="3"></circle>
+        <circle cx="6" cy="18" r="3"></circle>
+      </symbol>
+      <symbol id="i-FileSearch" viewBox="0 0 24 24">
+        <path
+          d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
+        ></path>
+        <path d="M14 2v5a1 1 0 0 0 1 1h5"></path>
+        <circle cx="11.5" cy="14.5" r="2.5"></circle>
+        <path d="M13.3 16.3 15 18"></path>
+      </symbol>
+      <symbol id="i-Network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1"></rect>
+        <rect x="2" y="16" width="6" height="6" rx="1"></rect>
+        <rect x="9" y="2" width="6" height="6" rx="1"></rect>
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path>
+        <path d="M12 12V8"></path>
+      </symbol>
+      <symbol id="i-ChartNoAxesCombined" viewBox="0 0 24 24">
+        <path d="M12 16v5"></path>
+        <path d="M16 14.639V21"></path>
+        <path d="M20 10.656V21"></path>
+        <path d="m22 3-8.646 8.646a.5.5 0 0 1-.708 0L9.354 8.354a.5.5 0 0 0-.707 0L2 15"></path>
+        <path d="M4 18.463V21"></path>
+        <path d="M8 14.656V21"></path>
+      </symbol>
+      <symbol id="i-FileJson" viewBox="0 0 24 24">
+        <path
+          d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
+        ></path>
+        <path d="M14 2v5a1 1 0 0 0 1 1h5"></path>
+        <path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"></path>
+        <path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1"></path>
+      </symbol>
+
+      <symbol id="i-NotebookPen" viewBox="0 0 24 24">
+        <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"></path>
+        <path d="M2 6h4"></path>
+        <path d="M2 10h4"></path>
+        <path d="M2 14h4"></path>
+        <path d="M2 18h4"></path>
+        <path
+          d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"
+        ></path>
+      </symbol>
+      <symbol id="i-Copy" viewBox="0 0 24 24">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+      </symbol>
+      <symbol id="i-Terminal" viewBox="0 0 24 24">
+        <path d="M12 19h8"></path>
+        <path d="m4 17 6-6-6-6"></path>
+      </symbol>
+
+      <symbol id="i-Braces" viewBox="0 0 24 24">
+        <path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"></path>
+        <path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path>
+      </symbol>
+      <symbol id="i-Table2" viewBox="0 0 24 24">
+        <path d="M3 9h18"></path>
+        <path d="M9 3v18"></path>
+        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+      </symbol>
+      <symbol id="i-ChevronDown" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+
+      <symbol id="i-Focus" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+        <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+        <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+        <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+      </symbol>
+    </svg>
+    <a class="skip" href="#main"><span data-en="Skip to content">跳到正文</span></a>
+    <header class="site-header">
+      <div class="wrap header-inner">
+        <a class="brand" href="#top" aria-label="Topolumia"
+          ><img src="assets/favicon.svg" width="42" height="42" alt="" /><span>Topolumia</span></a
+        >
+        <nav class="nav" aria-label="站点导航" data-en-aria="Site navigation">
+          <a href="#story"><span data-en="Field notes">研究现场</span></a
+          ><a href="#workbench"><span data-en="Workbench">工作台</span></a
+          ><a href="#install"><span data-en="Get started">开始使用</span></a>
+        </nav>
+        <div class="header-actions"
+          ><button id="language" type="button" class="language js-only" aria-label="Switch to English">EN</button>
+          <a class="header-link" href="https://github.com/Skydoge-zjm/Topolumia"
+            >GitHub <svg class="icon" aria-hidden="true"><use href="#i-ArrowUpRight"></use></svg></a
+        ></div>
+      </div>
     </header>
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-text">
+          <h1 id="hero-title"
+            ><span class="hero-opening"
+              ><span data-en="In the ">在 </span><em>AI4Research</em><span data-en=" era,"> 时代，</span></span
+            ><span class="hero-statement" data-en="take charge of your research.">掌控你的科研。</span></h1
+          >
+          <p class="hero-intro" data-original="intro"
+            ><span
+              data-en="When Codex, Claude Code or OpenCode are running literature reviews, code changes and dozens of experiments in parallel, a new bottleneck emerges. "
+              >当你用 Codex、Claude Code 或 OpenCode 并行推进文献调研、代码修改和数十组实验时，真正的瓶颈是</span
+            ><strong data-en="Execution outpaces human understanding, and research starts losing its order"
+              >执行闭环跑得比人的认知闭环更快，科研正在失去秩序</strong
+            ><span data-en=".">：</span></p
+          >
+          <div class="hero-actions"
+            ><a class="button primary" href="#install"
+              ><span data-en="Start locally">在本机开始</span
+              ><svg class="icon" aria-hidden="true"><use href="#i-ArrowRight"></use></svg></a
+            ><a class="text-link" href="#workbench"
+              ><span data-en="Explore the workbench">探索工作台</span
+              ><svg class="icon" aria-hidden="true"><use href="#i-ArrowDown"></use></svg></a
+          ></div>
+          <div class="hero-meta"
+            ><span class="status-dot"></span><span data-en="Local-first">本地优先</span><span class="mid-dot">·</span
+            ><a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/LICENSE"
+              ><span data-en="MIT licensed">MIT 开源</span></a
+            ></div
+          >
+        </div>
+        <figure id="research-tracing-sheets" data-phase="idle" aria-labelledby="rts-title">
+          <div class="rts-art">
+            <svg
+              class="rts-scene"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="3 -10 687 395"
+              role="img"
+              aria-labelledby="rts-title rts-description"
+            >
+              <title id="rts-title" data-en="Agent experiments on three tracing sheets">
+                Agent 的两次实验与研究者的描图纸
+              </title>
+              <desc
+                id="rts-description"
+                data-en="An agent runs the baseline and the new method with the same seed. Observations appear on the bottom sheet, comparison curves on the middle sheet, and a pencil marks the same point on the top sheet. The sheets separate and align again."
+              >
+                Agent
+                用同一随机种子依次运行基线和新方法。底纸记录观测，中层绘出曲线，铅笔标出对应的数据点，三张描图纸展开后重新对齐。
+              </desc>
+              <defs>
+                <path
+                  id="rts-page"
+                  d="M4 1 Q1 1 1 5 L.6 191 Q.7 195 4 195 L312 195.4 Q316 195.4 317 192 L317.5 5 Q317 1 314 1 Z"
+                />
+                <clipPath id="rts-trim"><use href="#rts-page" /></clipPath>
+                <clipPath id="rts-live-curve" clipPathUnits="userSpaceOnUse">
+                  <rect class="rts-curve-window" x="0" y="0" width="318" height="196" />
+                </clipPath>
+                <pattern id="rts-graph-paper" patternUnits="userSpaceOnUse" x="24" y="19" width="13" height="13">
+                  <path d="M0 13 V0 H13" fill="none" stroke="#84a88c" stroke-width=".55" />
+                </pattern>
+                <pattern id="rts-fibre" patternUnits="userSpaceOnUse" width="16" height="13">
+                  <path
+                    d="M1.5 6.6 l.9 -.28 M8.6 11 l1.3 -.26 M12.3 3.3 l.65 -.17"
+                    fill="none"
+                    stroke="#627e62"
+                    stroke-opacity=".2"
+                    stroke-width=".52"
+                  />
+                </pattern>
+                <path
+                  id="rts-method-line"
+                  d="M35 150 C47 149 52 139 63 138 S80 124 88 126 S101 135 111 125 S130 103 141 104 S156 112 166 101 S181 88 190 90 S199 95 205 85 S220 66 228 64 S241 69 249 58 S269 46 279 50 S290 44 298 39"
+                />
+                <path
+                  id="rts-base-line"
+                  d="M35 150 C47 150 54 145 64 144 S79 136 89 137 S103 144 115 136 S131 122 143 124 S158 130 170 119 S183 111 194 112 S207 111 217 104 S235 99 245 101 S262 89 271 90 S288 84 298 85"
+                />
+                <g id="rts-sample"><circle r="2.05" fill="#f6f8eb" stroke="#668363" stroke-width=".95" /></g>
+                <g id="rts-measure"><circle r="1.65" fill="#567654" /></g>
+                <g id="rts-registration" fill="none" stroke-linecap="round">
+                  <circle r="2.8" stroke="#2e674e" stroke-width="1.1" />
+                  <path d="M-5 0h2 M3 0h2 M0 -5v2 M0 3v2" stroke="#47694b" stroke-width=".7" />
+                </g>
+              </defs>
 
-    <main>
-      <section class="hero">
-        <div class="hero-copy">
-          <h1 data-i18n="hero.title">研究不是一次对话，而是一张会生长的图。</h1>
-          <p data-i18n="hero.lead">
-            Topolumia 是本地优先的科研工作台。它连接 Codex、Claude Code 与 OpenCode，
-            通过 MCP 读写科研上下文，把问题、文献、假说、实验和结论组织成可探索的拓扑；
-            Agent 提出的变更先进入审阅，再由你决定是否写入研究记录。
-          </p>
-          <div class="cta">
-            <a class="button solid" href="https://github.com/Skydoge-zjm/Topolumia">
-              <span data-i18n="hero.primary">从 GitHub 获取源码</span>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            </a>
-            <a class="button ghost" href="https://github.com/Skydoge-zjm/Topolumia/blob/main/docs/playbooks/getting-started.md" data-i18n="hero.secondary">阅读入门教程</a>
+              <g class="rts-cable" aria-hidden="true" fill="none">
+                <path class="rts-cable-line" stroke="#95aa93" stroke-width="1.3" stroke-linecap="round" />
+                <circle class="rts-signal" r="3.1" fill="#367758" stroke="#fcfbf4" stroke-width="1" />
+              </g>
+              <g class="rts-bottom">
+                <g transform="rotate(4.6 410.56 156.36)">
+                  <g transform="matrix(1.04 -.26 .46 .76 144 167)">
+                    <use href="#rts-page" transform="translate(0 2)" fill="#c3ccb2" stroke="#96a586" stroke-width="1" />
+                    <use href="#rts-page" fill="#e5edd8" stroke="#91a384" stroke-width="1.1" />
+                    <path d="M286 17h38q3 0 3 3v19q0 3-3 3h-38Z" fill="#a9c29e" stroke="#749375" stroke-width=".65" />
+                    <path d="M319 21v17m2-17v17" fill="none" stroke="#66876c" stroke-width=".7" />
+                    <g clip-path="url(#rts-trim)">
+                      <rect x="18" y="15" width="282" height="159" fill="url(#rts-graph-paper)" />
+                      <use href="#rts-page" fill="url(#rts-fibre)" opacity=".58" />
+                      <path d="M28 156V37 M28 156H300" fill="none" stroke="#799171" stroke-width="1" />
+                      <path
+                        d="M51 155v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3"
+                        fill="none"
+                        stroke="#799171"
+                        stroke-width=".8"
+                      />
+                      <g class="rts-observations">
+                        <use href="#rts-sample" x="35" y="150" />
+                        <use href="#rts-sample" x="47" y="147" />
+                        <use href="#rts-sample" x="63" y="144" />
+                        <use href="#rts-sample" x="78" y="139" />
+                        <use href="#rts-sample" x="89" y="137" />
+                        <use href="#rts-sample" x="102" y="139" />
+                        <use href="#rts-sample" x="115" y="136" />
+                        <use href="#rts-sample" x="131" y="127" />
+                        <use href="#rts-sample" x="143" y="124" />
+                        <use href="#rts-sample" x="157" y="124" />
+                        <use href="#rts-sample" x="170" y="119" />
+                        <use href="#rts-sample" x="184" y="113" />
+                        <use href="#rts-sample" x="194" y="112" />
+                        <use href="#rts-sample" x="217" y="104" />
+                        <use href="#rts-sample" x="228" y="101" />
+                        <use href="#rts-sample" x="245" y="101" />
+                        <use href="#rts-sample" x="271" y="90" />
+                        <use href="#rts-sample" x="298" y="85" />
+                        <use href="#rts-measure" x="35" y="150" />
+                        <use href="#rts-measure" x="47" y="146" />
+                        <use href="#rts-measure" x="63" y="138" />
+                        <use href="#rts-measure" x="78" y="130" />
+                        <use href="#rts-measure" x="88" y="126" />
+                        <use href="#rts-measure" x="101" y="130" />
+                        <use href="#rts-measure" x="111" y="125" />
+                        <use href="#rts-measure" x="126" y="109" />
+                        <use href="#rts-measure" x="141" y="104" />
+                        <use href="#rts-measure" x="154" y="106" />
+                        <use href="#rts-measure" x="166" y="101" />
+                        <use href="#rts-measure" x="181" y="91" />
+                        <use href="#rts-measure" x="190" y="90" />
+                        <use href="#rts-measure" x="205" y="85" />
+                        <use href="#rts-measure" x="216" y="71" />
+                        <use href="#rts-measure" x="228" y="64" />
+                        <use href="#rts-measure" x="249" y="58" />
+                        <use href="#rts-measure" x="279" y="50" />
+                        <use href="#rts-measure" x="298" y="39" />
+                      </g>
+                    </g>
+                    <g class="rts-registered-sample" transform="translate(228 64)"><use href="#rts-registration" /></g>
+                    <circle
+                      class="rts-paper-port"
+                      cx="1.5"
+                      cy="112"
+                      r="2.6"
+                      fill="#f7f6e9"
+                      stroke="#69856a"
+                      stroke-width="1.05"
+                    />
+                  </g>
+                </g>
+              </g>
+
+              <g class="rts-middle">
+                <g transform="matrix(1.04 -.26 .46 .76 144 167)">
+                  <path
+                    d="M1 191 Q1 196 5 197 L313 197 Q317 197 317 192"
+                    fill="#c2cdb6"
+                    stroke="#a0b197"
+                    stroke-width=".7"
+                  />
+                  <use href="#rts-page" fill="#f6f8e8" fill-opacity=".56" stroke="#91aa91" stroke-width="1.05" />
+                  <path d="M10 1h29v6H10Z" fill="#acc1a4" opacity=".8" />
+                  <g fill="none" stroke="#849a83" stroke-opacity=".66" stroke-width=".65">
+                    <path d="M34 158h264 M34 121h264 M34 82h264 M34 43h264" stroke-dasharray=".8 4.2" />
+                    <path d="M28 40v120h270" />
+                    <path d="M35 160v3m52-3v3m53-3v3m53-3v3m53-3v3m51-3v3" />
+                  </g>
+                  <g clip-path="url(#rts-live-curve)">
+                    <path
+                      d="M35 150 C47 149 52 139 63 138 S80 124 88 126 S101 135 111 125 S130 103 141 104 S156 112 166 101 S181 88 190 90 S199 95 205 85 S220 66 228 64 S241 69 249 58 S269 46 279 50 S290 44 298 39 L298 85 C288 84 281 89 271 90 S255 102 245 101 S226 98 217 104 S205 113 194 112 S180 111 170 119 S154 126 143 124 S125 131 115 136 S99 137 89 137 S75 140 64 144 S45 150 35 150Z"
+                      fill="#96b798"
+                      fill-opacity=".22"
+                    />
+                    <use
+                      href="#rts-base-line"
+                      fill="none"
+                      stroke="#627d64"
+                      stroke-width="1.8"
+                      stroke-dasharray="5 3.8"
+                      stroke-linecap="round"
+                    />
+                    <use
+                      href="#rts-method-line"
+                      fill="none"
+                      stroke="#245f48"
+                      stroke-width="2.65"
+                      stroke-linecap="round"
+                    />
+                    <circle cx="228" cy="64" r="3.6" fill="#f8f8e9" stroke="#245f48" stroke-width="1.55" />
+                  </g>
+                  <path
+                    d="M52 181h23m8 0h17"
+                    stroke="#739072"
+                    stroke-width="1.25"
+                    stroke-linecap="round"
+                    stroke-dasharray="3 2"
+                  />
+                  <path d="M113 181h27" stroke="#386b50" stroke-width="1.9" stroke-linecap="round" />
+                </g>
+              </g>
+
+              <g class="rts-top">
+                <g transform="rotate(-4.6 410.56 156.36)">
+                  <g transform="matrix(1.04 -.26 .46 .76 144 167)">
+                    <use href="#rts-page" fill="#fffaf0" fill-opacity=".29" stroke="#a5ad96" stroke-width=".98" />
+                    <use href="#rts-page" fill="url(#rts-fibre)" opacity=".38" />
+                    <path d="M291 1h23q3 0 3.5 4v19Z" fill="#f0edda" stroke="#b1b59f" stroke-width=".7" />
+                    <path d="M290 1q12 11 27.5 23" stroke="#9ea78e" fill="none" stroke-width=".7" />
+                    <g class="rts-ink" fill="none" stroke="#ae5b3e" stroke-linecap="round" stroke-linejoin="round">
+                      <path
+                        class="rts-circle-stroke"
+                        pathLength="1"
+                        d="M246 54c-5-8-19-11-31-6-15 6-18 20-8 28 9 8 30 7 41-2 9-8 6-18-4-23-7-4-15-5-22-3"
+                        stroke-width="2.1"
+                      />
+                      <path d="M210 77c7 5 19 6 28 3m-30-28c4-4 10-6 16-7" stroke-width=".85" opacity=".8" />
+                      <path d="M249 76c9 7 20 7 31 5" stroke-width="1.25" />
+                      <path d="M72 152c14 0 26-1 38-5m-34 8c10 0 18-1 24-2" stroke-width="1.45" opacity=".78" />
+                    </g>
+                    <g fill="none" stroke="#a5ac97" stroke-width=".8" stroke-linecap="round">
+                      <path d="M11 30v-9h8m274 154h9v-8" />
+                    </g>
+                  </g>
+                </g>
+              </g>
+
+              <g class="rts-register" aria-hidden="true">
+                <path
+                  d="M370.56 206.36 L410.56 156.36"
+                  fill="none"
+                  stroke="#71876b"
+                  stroke-width="1.05"
+                  stroke-dasharray="2 4"
+                />
+                <path
+                  class="rts-upper-guide"
+                  d="M410.56 156.36 L453.56 99.36"
+                  fill="none"
+                  stroke="#ad6c4f"
+                  stroke-width="1.05"
+                  stroke-dasharray="2 4"
+                />
+                <circle cx="370.56" cy="206.36" r="2.4" fill="#fbfaf1" stroke="#779375" stroke-width="1.2" />
+                <circle cx="410.56" cy="156.36" r="2.5" fill="#fbfaf1" stroke="#2a6249" stroke-width="1.2" />
+                <circle
+                  class="rts-upper-guide"
+                  cx="453.56"
+                  cy="99.36"
+                  r="2.2"
+                  fill="#fbfaf1"
+                  stroke="#ab6548"
+                  stroke-width="1.2"
+                />
+              </g>
+
+              <g class="rts-pencil">
+                <g class="rts-pen-shift">
+                  <g transform="translate(429 150) rotate(-22)">
+                    <path
+                      d="M0 0 21-4.4 181-4.4 185-2.8 185 3 181 4.4 21 4.4Z"
+                      fill="#456b56"
+                      stroke="#41634d"
+                      stroke-width=".7"
+                      stroke-linejoin="round"
+                    />
+                    <path d="M20-4.4h156v2.15H18Z" fill="#88a188" />
+                    <path d="M18-2.25h160v3.7H18Z" fill="#5d8168" />
+                    <path d="M17 1.45h161v2.9H21Z" fill="#3c624d" />
+                    <path
+                      d="M0 0 22-4.4 19-2.4 22-.6 19 1.1 21.5 4.4Z"
+                      fill="#dbbc91"
+                      stroke="#b09775"
+                      stroke-width=".5"
+                      stroke-linejoin="round"
+                    />
+                    <path d="m0 0 5.3-1 .4 1.9Z" fill="#65544a" />
+                    <path d="M174-4.4h3.3v8.8H174Z" fill="#ddd7b8" />
+                    <path d="M177.3-4.4h3.7q5.7.2 5.7 4.4t-5.7 4.4h-3.7Z" fill="#b47156" />
+                    <path d="M180.8-3.6q4.1.1 4.4 2" fill="none" stroke="#d49b7d" stroke-width=".8" />
+                  </g>
+                </g>
+              </g>
+            </svg>
           </div>
-          <p class="meta" data-i18n="hero.meta">Node.js 22.13+ · MIT 许可 · 默认仅监听 127.0.0.1</p>
-        </div>
-
-        <figure class="map" aria-label="科研拓扑示意">
-          <svg viewBox="0 0 640 520" role="img" aria-labelledby="map-title">
-            <title id="map-title" data-i18n="map.title">科研拓扑示意：文献支持假说，假说经实验验证产生观察，推论导出缺口，Agent 提议补充线索。</title>
-            <rect class="plot" x="4" y="4" width="632" height="512" rx="10" />
-            <g class="edges" aria-hidden="true">
-              <path class="edge" d="M250 88 C215 112 172 132 156 152" />
-              <path class="edge" d="M360 88 C402 110 440 130 452 152" />
-              <path class="edge" d="M210 180 H390" />
-              <path class="edge" d="M140 208 C150 238 220 260 268 282" />
-              <path class="edge" d="M330 338 C368 356 430 378 458 402" />
-              <path class="edge" d="M480 208 V402" />
-              <path class="edge" d="M300 338 C258 358 196 378 160 402" />
-              <path class="edge proposal" d="M210 430 C260 430 300 400 300 360" />
-            </g>
-            <g class="edge-labels" aria-hidden="true">
-              <text x="186" y="118">支持</text>
-              <text x="420" y="116">引用</text>
-              <text x="292" y="170">验证</text>
-              <text x="196" y="252">支持</text>
-              <text x="402" y="370">支持</text>
-              <text x="492" y="306">产生</text>
-              <text x="216" y="372">导出</text>
-              <text class="proposal-label" x="126" y="470">Agent 提议</text>
-            </g>
-            <g class="nodes" aria-hidden="true">
-              <g class="node literature"><rect x="210" y="32" width="180" height="56" rx="8" /><text x="300" y="56">文献</text><text class="sub" x="300" y="74">12 篇</text></g>
-              <g class="node hypothesis"><rect x="30" y="152" width="180" height="56" rx="8" /><text x="120" y="176">假说</text><text class="sub" x="120" y="194">1 条</text></g>
-              <g class="node experiment"><rect x="390" y="152" width="180" height="56" rx="8" /><text x="480" y="176">实验</text><text class="sub" x="480" y="194">3 项</text></g>
-              <g class="node conclusion"><rect x="210" y="282" width="180" height="56" rx="8" /><text x="300" y="306">推论</text><text class="sub" x="300" y="324">2 条</text></g>
-              <g class="node observation"><rect x="390" y="402" width="180" height="56" rx="8" /><text x="480" y="426">观察</text><text class="sub" x="480" y="444">4 条</text></g>
-              <g class="node gap"><rect x="30" y="402" width="180" height="56" rx="8" /><text x="120" y="426">缺口</text><text class="sub" x="120" y="444">待补充</text></g>
-            </g>
-          </svg>
-        </figure>
-      </section>
-
-      <section class="pillars" aria-label="产品原则">
-        <article>
-          <h2 data-i18n="pillars.topology.title">拓扑优先</h2>
-          <p data-i18n="pillars.topology.body">问题、假说、实验和观察以节点与关系存在，节点组容纳紧密相关的内容。类型核心只提供最小结构，不预置强制栏目。</p>
-        </article>
-        <article>
-          <h2 data-i18n="pillars.review.title">人工审阅</h2>
-          <p data-i18n="pillars.review.body">Agent 获准执行工具，不代表它的科研结论已被接受。候选变更连同来源进入审阅，接受后由同一条正式提交链路写入。</p>
-        </article>
-        <article>
-          <h2 data-i18n="pillars.local.title">本地优先</h2>
-          <p data-i18n="pillars.local.body">账号、会话与研究数据保存在本机 SQLite。需要算力时检测本机或 SSH 远程的 Python、Conda 与 venv，Agent 据此在自己的工具中探索。</p>
-        </article>
-      </section>
-
-      <section class="feature" id="topology">
-        <div class="feature-copy">
-          <h2 data-i18n="topology.title">问题、假说、实验与结论保留它们的关系。</h2>
-          <p data-i18n="topology.body">
-            文献节点保存书目信息、方法理解、关键图表与疑问；实验详情展示关联运行的指标、曲线和外部链接。
-            每个正式对象都能追溯到它的来源，拓扑随之更新，而不是另开一份笔记。
-          </p>
-        </div>
-        <figure class="shot">
-          <img src="assets/shots/topology.webp" width="1440" height="960" loading="lazy"
-            alt="科研拓扑界面：文献、假说、实验、观察等节点由带标签的关系连接，右侧显示节点详情" data-i18n-alt="topology.alt" />
-          <figcaption data-i18n="topology.caption">科研拓扑</figcaption>
-        </figure>
-      </section>
-
-      <section class="feature reverse" id="agents">
-        <div class="feature-copy">
-          <h2 data-i18n="agents.title">Agent 读取上下文，提出候选，由你决定。</h2>
-          <p data-i18n="agents.body">
-            会话运行在 Codex、Claude Code 或 OpenCode 的原生运行时中，Topolumia 通过 MCP 提供研究接口。
-            长任务持续运行，不做整回合倒计时；需要停止时随时可以打断。
-          </p>
-          <div class="candidate">
-            <p class="candidate-head">
-              <span class="dot" aria-hidden="true"></span>
-              <span data-i18n="agents.candidate.title">待审阅 · 新建推论</span>
-            </p>
-            <p class="candidate-body" data-i18n="agents.candidate.body">来自 文献[3]、文献[5] 与 实验运行 20250614；关联节点 #Node-003。</p>
-            <p class="candidate-actions" aria-hidden="true">
-              <span class="chip solid" data-i18n="agents.candidate.accept">接受</span>
-              <span class="chip" data-i18n="agents.candidate.reject">拒绝</span>
-            </p>
+          <div class="rts-terminal" aria-hidden="true">
+            <span class="rts-term-head"
+              ><span class="rts-agent-name"
+                ><svg class="icon" aria-hidden="true"><use href="#i-Terminal"></use></svg>Agent</span
+              ></span
+            >
+            <span class="rts-command" data-cmd="baseline"
+              ><span>run baseline</span><span class="rts-state">✓</span></span
+            >
+            <span class="rts-command" data-cmd="method"><span>run method</span><span class="rts-state">✓</span></span>
+            <span class="rts-seed"><span>seed 17</span><span class="rts-count">2/2</span></span>
+            <span class="rts-socket" aria-hidden="true"></span>
           </div>
-        </div>
-        <figure class="shot">
-          <img src="assets/shots/sessions.webp" width="1440" height="960" loading="lazy"
-            alt="Agent 会话界面：左侧为会话历史，中间为对话与引用来源，右侧为上下文与审批策略" data-i18n-alt="agents.alt" />
-          <figcaption data-i18n="agents.caption">Agent 会话</figcaption>
+          <button
+            type="button"
+            class="rts-surface"
+            hidden
+            aria-label="播放或暂停科研过程动画"
+            data-en-aria="Play or pause the research animation"
+            aria-describedby="rts-description"
+            aria-pressed="false"
+          ></button>
         </figure>
       </section>
-
-      <section class="feature" id="record">
-        <div class="feature-copy">
-          <h2 data-i18n="record.title">每一次接受，都留下出处。</h2>
-          <p data-i18n="record.body">
-            研究记录按时间列出人工修改、Agent 提议、来源同步与实验结果，并保存组会、阅读、复盘和周期活动纪要。
-            逻辑拓扑与时间活动各司其职，回溯时看到的是依据，而不只是结论。
-          </p>
+      <section class="story" id="story" aria-labelledby="story-title">
+        <div class="wrap story-inner">
+          <div class="story-copy"
+            ><h2 id="story-title"><span data-en="When research splits across chats">当会话分开之后</span></h2>
+            <div class="story-emblem" aria-hidden="true"
+              ><svg viewBox="0 0 190 65" fill="none">
+                <path d="M2 33h45c25 0 28-23 50-23h78M47 33h128M47 33c25 0 28 23 50 23h78" stroke="currentColor" />
+                <circle cx="47" cy="33" r="4" fill="currentColor" />
+                <circle cx="177" cy="10" r="4" />
+                <circle cx="177" cy="33" r="4" />
+                <circle cx="177" cy="56" r="4" /></svg
+            ></div>
+          </div>
+          <ul class="pain-list">
+            <li
+              ><span class="pain-icon"
+                ><svg class="icon" aria-hidden="true"><use href="#i-GitFork"></use></svg></span
+              ><p data-original="pain"
+                ><span
+                  data-en="You switch chats to revisit an experiment, and the agent forgets which runs should be paired by random seed."
+                  >换一个会话重新分析实验，Agent 忘了哪些 run 才能按随机种子配对；</span
+                ></p
+              ></li
+            >
+            <li
+              ><span class="pain-icon"
+                ><svg class="icon" aria-hidden="true"><use href="#i-ScanEye"></use></svg></span
+              ><p data-original="pain"
+                ><span
+                  data-en="You open a fresh chat for an independent check, only for shared memory to give away the previous conclusion."
+                  >想找新会话独立复核，共享记忆却提前把旧结论剧透给了它；</span
+                ></p
+              ></li
+            >
+            <li
+              ><span class="pain-icon"
+                ><svg class="icon" aria-hidden="true"><use href="#i-GitBranch"></use></svg></span
+              ><p data-original="pain"
+                ><span
+                  data-en="Chat B just found a bug in the evaluation script. Chat A is still writing an elaborate analysis on the old premise."
+                  >B 会话刚查出评测脚本有 Bug，A 会话还在旧前提下洋洋洒洒写分析；</span
+                ></p
+              ></li
+            >
+            <li
+              ><span class="pain-icon"
+                ><svg class="icon" aria-hidden="true"><use href="#i-FileSearch"></use></svg></span
+              ><p data-original="pain"
+                ><span
+                  data-en="AI hands you an elegant conclusion. You spend half an hour digging through directories to see whether the numbers are real."
+                  >AI 给出了一条漂亮的结论，你却要花半小时翻目录核对它是不是在编造数字。</span
+                ></p
+              ></li
+            >
+          </ul>
         </div>
-        <figure class="shot">
-          <img src="assets/shots/record.webp" width="1440" height="960" loading="lazy"
-            alt="研究记录界面：按时间排列的事件行，右侧为记录详情与证据链" data-i18n-alt="record.alt" />
-          <figcaption data-i18n="record.caption">研究记录</figcaption>
-        </figure>
       </section>
-
-      <section class="install" id="install">
-        <div class="install-copy">
-          <h2 data-i18n="install.title">在本机跑起来。</h2>
-          <p data-i18n="install.body">
-            需要 Node.js 22.13+（22 / 24 LTS）、npm 和 Git。打开 <code>http://127.0.0.1:5510</code>
-            后首次访问创建管理员账号，没有预设密码。Agent CLI 与模型服务需自行准备。
-          </p>
+      <section id="manifesto" class="manifesto" aria-labelledby="manifesto-title">
+        <div class="wrap manifesto-inner">
+          <h2 id="manifesto-title" data-original="thesis"
+            ><span
+              data-en="As agents take a deeper role in research, we need more than another closed, vertical research agent. We need "
+              >当 Agent 深度参与科研，我们需要的不是一个又一个封闭的“垂直科研
+              Agent”，而是一套专为「人机共研」打造的</span
+            ><em data-en="a state and review layer built for researchers and agents together.">状态层与审阅层。</em></h2
+          >
+          <p class="manifesto-body" data-original="bridge"
+            ><span
+              data-en="Software engineering had Git, tests and pull requests to handle concurrent changes long before coding agents arrived. Research now needs domain software that is "
+              >软件工程在 Coding Agent 到来之前，就已经拥有 Git、测试与 PR 来承接高并发变更；而在 Agent
+              深度介入科研的今天，研究工作缺少的正是这样一层</span
+            ><strong data-en="legible to general-purpose agents while keeping people in control of their judgment"
+              >既对通用 Agent 高度可读、又守住人类认知主权</strong
+            ><span
+              data-en=". Topolumia brings material scattered across chats, W&amp;B and TensorBoard curves and remote servers into local software. Research relationships become explicit interfaces, so a general-purpose agent can come and go with context. You have the final say."
+              >的领域软件。Topolumia 将分散在多个会话、W&B / TensorBoard
+              曲线与远程服务器里的科研材料收束进本地软件层，把科研关系变成清晰的接口契约，让任何一款通用 Agent
+              带着上下文自由进出，且绝不越权替你拍板：</span
+            ></p
+          >
         </div>
-        <pre class="terminal" aria-label="安装命令"><code>npm ci
+      </section>
+      <section class="principles wrap" aria-label="产品主张" data-en-aria="Product principles">
+        <article
+          ><div class="principle-icon"
+            ><svg class="icon" aria-hidden="true"><use href="#i-GitFork"></use></svg></div
+          ><h2><span data-en="Open by design">开放不绑定</span><span data-en="">：</span></h2
+          ><p data-original="benefit"
+            ><span
+              data-en="No wrapper subscription or closed loop. MIT-licensed and local-first, Topolumia connects directly to the Codex, Claude Code or OpenCode setup you already use. "
+              >不做套壳订阅，不自建私有循环。MIT 开源与本地优先存储，直接接入你已有的 Codex、Claude Code 或
+              OpenCode——</span
+            ><strong data-en="Zero switching cost, nothing extra to pay">零切换成本，无需再付费</strong
+            ><span data-en=", with the benefits of each new generation of general-purpose agents."
+              >，享受通用底座进化的红利；</span
+            ></p
+          ></article
+        >
+        <article
+          ><div class="principle-icon"
+            ><svg class="icon" aria-hidden="true"><use href="#i-Network"></use></svg></div
+          ><h2><span data-en="Continuity across sessions">接续不断线</span><span data-en="">：</span></h2
+          ><p data-original="benefit"
+            ><span
+              data-en="A research topology captures cross-session state and causal dependencies. Through MCP, a fresh session reads the research question, comparison design and raw data as needed. When a problem surfaces upstream, the affected runs and pending recalculations come into view."
+              >用科研拓扑沉淀跨会话状态与因果依赖，新会话通过 MCP
+              按需渐进式读取课题脉络、对照设计与原始数据；上游脚本或前提一旦发现问题，受影响的运行与待重算状态随之显形，不再各说各话；</span
+            ></p
+          ></article
+        >
+        <article
+          ><div class="principle-icon"
+            ><svg class="icon" aria-hidden="true"><use href="#i-Focus"></use></svg></div
+          ><h2><span data-en="Context on your terms">边界你来定</span><span data-en="">：</span></h2
+          ><p data-original="benefit"
+            ><span
+              data-en="Open the workspace to your agents and decide what they see. A new session can inherit the previous reasoning, or receive just the raw predictions and evaluation script for an independent blind review."
+              >科研现场对 Agent
+              开放，但信息投喂由你掌控——你可以让新会话继承前次推导，也可以剥离历史判断、只给原始预测与评测脚本做独立盲审；</span
+            ></p
+          ></article
+        >
+        <article
+          ><div class="principle-icon"
+            ><svg class="icon" aria-hidden="true"><use href="#i-NotebookPen"></use></svg></div
+          ><h2><span data-en="Human review">人机共审阅</span><span data-en="">：</span></h2
+          ><p data-original="benefit"
+            ><span
+              data-en="Agents execute. You decide what stands. Agent proposals can carry original citations and experiment snapshots. Follow the same path in the interface to check each metric for yourself."
+              >执行权归 Agent，定论权归你。Agent
+              的提交能附带原文引用与实验快照，每一个指标，你在界面上都能顺着同一路径一眼核实。</span
+            ></p
+          ></article
+        >
+      </section>
+      <section id="workbench" class="workbench" aria-labelledby="work-title">
+        <div class="wrap">
+          <div class="section-head"
+            ><h2 id="work-title"><span data-en="Follow a curve back to its source">沿着曲线，回到原始记录</span></h2
+            ><p
+              ><span data-en="How does validation accuracy change for two methods with the same random seed?"
+                >同一随机种子下，两种方法的验证准确率如何变化？</span
+              ></p
+            ></div
+          >
+          <div class="evidence">
+            <div class="evidence-side">
+              <div
+                ><h3><span data-en="Paired experiment">方法对照实验</span></h3
+                ><p class="sample-note"><span data-en="Synthetic example data">合成数据示例</span></p></div
+              >
+              <div class="seed-control"
+                ><label for="seed"><span data-en="Random seed">随机种子</span></label
+                ><div class="select-wrap"
+                  ><select id="seed" disabled
+                    ><option value="17">seed 17</option
+                    ><option value="29">seed 29</option
+                    ><option value="43">seed 43</option></select
+                  ><svg class="icon" aria-hidden="true"><use href="#i-ChevronDown"></use></svg></div
+              ></div>
+              <dl class="metric-summary"
+                ><div
+                  ><dt><i class="swatch baseline"></i><span data-en="Baseline">基线</span></dt
+                  ><dd id="base-value">83.2%</dd></div
+                ><div
+                  ><dt><i class="swatch method"></i><span data-en="New method">新方法</span></dt
+                  ><dd id="method-value">85.2%</dd></div
+                ></dl
+              >
+            </div>
+            <div class="evidence-reading">
+              <div class="reading-bar"
+                ><div class="reading-tabs" role="tablist" aria-label="实验数据视图" data-en-aria="Experiment data view"
+                  ><button
+                    type="button"
+                    id="tab-chart"
+                    role="tab"
+                    aria-controls="panel-chart"
+                    aria-selected="true"
+                    tabindex="0"
+                    data-tab="chart"
+                    ><svg class="icon" aria-hidden="true"><use href="#i-ChartNoAxesCombined"></use></svg
+                    ><span data-en="Curves">曲线</span></button
+                  ><button
+                    type="button"
+                    id="tab-table"
+                    role="tab"
+                    aria-controls="panel-table"
+                    aria-selected="false"
+                    tabindex="-1"
+                    data-tab="table"
+                    ><svg class="icon" aria-hidden="true"><use href="#i-Table2"></use></svg
+                    ><span data-en="Values">数值</span></button
+                  ><button
+                    type="button"
+                    id="tab-raw"
+                    role="tab"
+                    aria-controls="panel-raw"
+                    aria-selected="false"
+                    tabindex="-1"
+                    data-tab="raw"
+                    ><svg class="icon" aria-hidden="true"><use href="#i-Braces"></use></svg
+                    ><span data-en="Raw data">原始记录</span></button
+                  ></div
+                ></div
+              >
+              <div id="panel-chart" class="reading-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-chart">
+                <div class="plot-heading"
+                  ><span><span data-en="Validation accuracy">验证准确率</span> (%)</span><span>val/accuracy</span></div
+                >
+                <div id="plot" class="plot"
+                  ><svg viewBox="0 0 500 198" role="img" aria-label="随机种子 17 的基线与新方法验证准确率曲线">
+                    <g stroke="#d3dacb" stroke-dasharray="3 5">
+                      <path d="M30 172H483 M30 119.5H483 M30 67H483 M30 14.5H483" />
+                    </g>
+                    <g fill="#53675a">
+                      <text x="2" y="176">60</text>
+                      <text x="2" y="123">70</text>
+                      <text x="2" y="71">80</text>
+                      <text x="2" y="18">90</text>
+                      <text x="29" y="194">0</text>
+                      <text x="475" y="194">11</text>
+                    </g>
+                    <polyline
+                      fill="none"
+                      stroke="#975d38"
+                      stroke-width="2.7"
+                      stroke-dasharray="7 5"
+                      points="30.0,166.8 71.2,143.6 112.4,124.2 153.5,112.1 194.7,97.4 235.9,88.0 277.1,82.2 318.3,75.4 359.5,66.5 400.6,60.7 441.8,54.9 483.0,50.2"
+                    />
+                    <polyline
+                      fill="none"
+                      stroke="#236747"
+                      stroke-width="2.7"
+                      points="30.0,166.8 71.2,140.0 112.4,116.4 153.5,99.6 194.7,87.5 235.9,76.4 277.1,65.9 318.3,61.2 359.5,56.5 400.6,47.6 441.8,44.9 483.0,39.7"
+                    /></svg
+                ></div>
+                <div class="plot-caption"
+                  ><span><span data-en="Training step">训练步数</span></span
+                  ><span>step 0–11</span></div
+                >
+              </div>
+              <div
+                id="panel-table"
+                class="reading-panel"
+                role="tabpanel"
+                tabindex="0"
+                aria-labelledby="tab-table"
+                hidden
+                ><table class="values"
+                  ><caption><span data-en="Validation accuracy">验证准确率</span> (%)</caption
+                  ><thead
+                    ><tr><th scope="col">step</th><th scope="col">baseline</th><th scope="col">method</th></tr></thead
+                  ><tbody id="values"></tbody></table
+              ></div>
+              <div
+                id="panel-raw"
+                class="reading-panel raw-panel"
+                role="tabpanel"
+                tabindex="0"
+                aria-labelledby="tab-raw"
+                hidden
+                ><div class="file-label"
+                  ><svg class="icon" aria-hidden="true"><use href="#i-FileJson"></use></svg
+                  ><span id="raw-name">seed-17.jsonl</span></div
+                ><pre><code id="raw"></code></pre>
+              </div>
+            </div>
+          </div>
+          <noscript
+            ><p
+              ><span data-en="For seed 17, baseline finishes at 83.2% and the new method at 85.2%."
+                >示例中的基线最终准确率为 83.2%，新方法为 85.2%（seed 17）。</span
+              ></p
+            ></noscript
+          >
+        </div>
+      </section>
+      <section class="gallery wrap" id="screens" aria-labelledby="screen-title">
+        <div class="gallery-head"
+          ><h2 id="screen-title"><span data-en="Inside the workbench">走进工作台</span></h2>
+          <div class="gallery-tabs js-only" role="tablist" aria-label="工作台截图" data-en-aria="Workbench screenshots">
+            <button
+              type="button"
+              id="shot-tab-topology"
+              data-tab="topology"
+              role="tab"
+              aria-selected="true"
+              tabindex="0"
+              aria-controls="shot-topology"
+              ><span data-en="Topology">科研拓扑</span></button
+            ><button
+              type="button"
+              id="shot-tab-agents"
+              data-tab="agents"
+              role="tab"
+              aria-selected="false"
+              tabindex="-1"
+              aria-controls="shot-agents"
+              ><span data-en="Agent sessions">Agent 会话</span></button
+            ><button
+              type="button"
+              id="shot-tab-record"
+              data-tab="record"
+              role="tab"
+              aria-selected="false"
+              tabindex="-1"
+              aria-controls="shot-record"
+              ><span data-en="Research history">研究记录</span></button
+            >
+          </div></div
+        >
+        <div class="gallery-panel" id="shot-topology" role="tabpanel" aria-labelledby="shot-tab-topology" tabindex="0"
+          ><a
+            class="gallery-open"
+            href="assets/shots/topology.webp"
+            target="_blank"
+            rel="noopener"
+            aria-label="在新标签页查看原尺寸截图"
+            data-en-aria="Open the full-size screenshot in a new tab"
+            ><img
+              src="assets/shots/topology.webp"
+              width="1440"
+              height="960"
+              loading="lazy"
+              alt="科研拓扑画布和所选节点详情"
+              data-en-alt="Topology canvas and details of the selected node"
+            /><span class="gallery-zoom"
+              ><svg class="icon" aria-hidden="true"><use href="#i-ArrowUpRight"></use></svg
+              ><span data-en="Full size">查看原图</span></span
+            ></a
+          ></div
+        >
+        <div
+          class="gallery-panel"
+          id="shot-agents"
+          role="tabpanel"
+          aria-labelledby="shot-tab-agents"
+          tabindex="0"
+          hidden
+          ><a
+            class="gallery-open"
+            href="assets/shots/sessions.webp"
+            target="_blank"
+            rel="noopener"
+            aria-label="在新标签页查看原尺寸截图"
+            data-en-aria="Open the full-size screenshot in a new tab"
+            ><img
+              src="assets/shots/sessions.webp"
+              width="1440"
+              height="960"
+              loading="lazy"
+              alt="Agent 会话列表、对话和上下文"
+              data-en-alt="Agent session list, conversation and context"
+            /><span class="gallery-zoom"
+              ><svg class="icon" aria-hidden="true"><use href="#i-ArrowUpRight"></use></svg
+              ><span data-en="Full size">查看原图</span></span
+            ></a
+          ></div
+        >
+        <div
+          class="gallery-panel"
+          id="shot-record"
+          role="tabpanel"
+          aria-labelledby="shot-tab-record"
+          tabindex="0"
+          hidden
+          ><a
+            class="gallery-open"
+            href="assets/shots/record.webp"
+            target="_blank"
+            rel="noopener"
+            aria-label="在新标签页查看原尺寸截图"
+            data-en-aria="Open the full-size screenshot in a new tab"
+            ><img
+              src="assets/shots/record.webp"
+              width="1440"
+              height="960"
+              loading="lazy"
+              alt="按时间排列的研究记录和变更详情"
+              data-en-alt="Research history and change details in chronological order"
+            /><span class="gallery-zoom"
+              ><svg class="icon" aria-hidden="true"><use href="#i-ArrowUpRight"></use></svg
+              ><span data-en="Full size">查看原图</span></span
+            ></a
+          ></div
+        >
+      </section>
+      <section id="install" class="install" aria-labelledby="install-title">
+        <div class="wrap install-inner"
+          ><div
+            ><h2 id="install-title"><span data-en="Run Topolumia locally">在本机运行 Topolumia</span></h2
+            ><p
+              ><span
+                data-en="Use Node.js 22.13+ (22 or 24 LTS), npm and Git, together with an installed, authenticated agent CLI."
+                >准备好 Node.js 22.13+（22 / 24 LTS）、npm 和 Git。在已安装并认证的 Agent CLI 中选择你常用的一个。</span
+              ></p
+            >
+            <p class="localhost"
+              ><span data-en="After starting, open ">启动后打开 </span><code>http://127.0.0.1:5510</code
+              ><span data-en=" and create your administrator account on the first visit."
+                >，首次访问时创建管理员账号。</span
+              ></p
+            >
+            <div class="install-actions"
+              ><a
+                class="button lime"
+                href="https://github.com/Skydoge-zjm/Topolumia/blob/main/docs/playbooks/getting-started.md"
+                ><span data-en="Read the tutorial">阅读入门教程</span
+                ><svg class="icon" aria-hidden="true"><use href="#i-ArrowUpRight"></use></svg></a></div
+          ></div>
+          <div class="terminal"
+            ><div class="term-bar"
+              ><span
+                ><svg class="icon" aria-hidden="true"><use href="#i-Terminal"></use></svg> Terminal</span
+              ><button id="copy" class="copy js-only" type="button"
+                ><svg class="icon" aria-hidden="true"><use href="#i-Copy"></use></svg
+                ><span id="copy-label" aria-live="polite">复制</span></button
+              ></div
+            ><pre><code id="commands">git clone https://github.com/Skydoge-zjm/Topolumia.git
+cd Topolumia
+npm ci
 npm run build
 npm start</code></pre>
+          </div>
+        </div>
       </section>
     </main>
-
-    <footer class="foot">
-      <img class="foot-mark" src="assets/wordmark-white.png" alt="Topolumia" width="440" height="150" />
-      <nav class="foot-links" aria-label="更多">
-        <a href="https://github.com/Skydoge-zjm/Topolumia" data-i18n="foot.source">源码</a>
-        <a href="https://github.com/Skydoge-zjm/Topolumia/tree/main/docs" data-i18n="foot.docs">文档</a>
-        <a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/CONTRIBUTING.md" data-i18n="foot.contribute">参与贡献</a>
-        <a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/SECURITY.md" data-i18n="foot.security">安全报告</a>
-      </nav>
-      <p class="foot-note" data-i18n="foot.note">MIT 许可 · © 2026 Topolumia contributors</p>
+    <footer class="wrap footer"
+      ><a class="brand" href="#top" aria-label="Topolumia"
+        ><img src="assets/favicon.svg" width="38" height="38" alt="" /><span>Topolumia</span></a
+      >
+      <nav aria-label="更多资源" data-en-aria="More resources"
+        ><a href="https://github.com/Skydoge-zjm/Topolumia/tree/main/docs"><span data-en="Docs">文档</span></a
+        ><a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/CONTRIBUTING.md"
+          ><span data-en="Contribute">参与贡献</span></a
+        ><a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/SECURITY.md"
+          ><span data-en="Security">安全报告</span></a
+        ><a href="https://github.com/Skydoge-zjm/Topolumia/blob/main/LICENSE">MIT</a></nav
+      >
     </footer>
-
-    <script src="assets/site.js"></script>
   </body>
 </html>
