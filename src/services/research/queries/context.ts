@@ -30,7 +30,7 @@ export type QueryEnvelope<T> = {
   schemaVersion:string;kind:string;projectId:string;scope:{state:string;candidateId?:string;candidateRevision?:number};stateVersion:string;
   data:T;coverage:{complete:boolean;omissions:string[]};budget:{maxChars:number;returnedChars:number};readReceipts?:VisibleReceipt[];
 };
-type ReadDetails = {owner?:ResearchObjectRef;field?:string;source?:{ref:string;version:string|number|null|undefined};contentVersion?:string;blockId?:string;assetId?:string;checksum?:string;representationId?:string;sourceRefs?:StoredBlock["sourceRefs"];completeSourceAvailable?:boolean};
+type ReadDetails = {sourceRef?:{kind:"file";value:string};owner?:ResearchObjectRef;field?:string;source?:{ref:string;version:string|number|null|undefined};contentVersion?:string;blockId?:string;assetId?:string;checksum?:string;representationId?:string;sourceRefs?:StoredBlock["sourceRefs"];completeSourceAvailable?:boolean};
 const clip=(v:unknown,n:number)=>String(v??"").slice(0,n),size=(v:unknown)=>JSON.stringify(v).length;
 export class AgentResearchQueries {
   store;
@@ -137,7 +137,10 @@ export class AgentResearchQueries {
     const before=this.c.state.snapshot?.stateVersion;
     const source=s.ref.startsWith("file:")&&this.c.sourceReader?await this.c.sourceReader(s):{text:s.excerpt??null,complete:false};
     if(before!==this.c.state.snapshot?.stateVersion)fail("OBJECT_VERSION_CONFLICT","Source index changed during reading.",409);
-    if(typeof source.text==="string")return this.textResult("source",source.text,input,{kind:"source",id:s.ref},version,{source:{ref:s.ref,version},completeSourceAvailable:Boolean(source.complete)});
+    if (typeof source.text === "string") return this.textResult("source", source.text, input, { kind: "source", id: s.ref }, version, {
+      source: { ref: s.ref, version }, completeSourceAvailable: Boolean(source.complete),
+      ...(s.ref.startsWith("file:") ? { sourceRef: { kind: "file" as const, value: s.ref } } : {}),
+    });
     const roots=scientificFactKeys,facts:Record<string,unknown>={};for(const pointer of input.factPaths??[]){const keys=pointer.slice(1).split("/").map(k=>k.replace(/~1/g,"/").replace(/~0/g,"~"));if(!pointer.startsWith("/")||!roots.includes(keys[0])||keys.some(k=>/secret|token|credential|password|apikey/i.test(k)))fail("FACT_PATH_FORBIDDEN","Only scientific facts can be read.");let v:unknown=s;for(const k of keys){if(v===null||typeof v!=="object"||!Object.hasOwn(v,k))fail("FACT_PATH_NOT_FOUND","Unknown fact path.");v=(v as Record<string,unknown>)[k];}facts[pointer]=v;}
     if(!Object.keys(facts).length){const availability=sourceCapabilities(s);fail("NOT_INDEXED",availability.capabilities.valuesAvailable?"No text index; use the returned scientific fact paths.":availability.capabilities.originalAvailable?"No text index; read the original using native tools.":"No readable content is available for this source.",422,availability);}
     const receipt=this.receipt(input.actor,"source",s.ref,version,"structuredValues",{fields:Object.keys(facts)},input);return this.finish(this.envelope("source",{source:{ref:s.ref,version},facts},input),[receipt]);
