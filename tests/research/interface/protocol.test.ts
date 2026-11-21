@@ -8,6 +8,13 @@ import { FilesystemAdapter, isPathInside } from "../../../src/adapters/sources/f
 test("real MCP → CLI saves a paper hierarchy, incrementally revises it and preserves review boundaries",{timeout:60000},async t=>{
   const f=await fixture(t);
   const context=await f.data("get_context");
+  const example = await f.data("get_schema", { topic: "contentBlock", name: "metric", view: "example" });
+  assert.equal(example.data.example.type, "metric");
+  assert.equal(example.data.schema, undefined);
+  const { tool: schemaTool, ...schemaInput } = example.data.readHint;
+  const full = await f.data(schemaTool, schemaInput);
+  assert.ok(full.data.schema.properties.payload);
+  assert.ok(example.budget.returnedChars < full.budget.returnedChars / 2);
   const body="SOURCE_MARKER "+"synthetic evidence. ".repeat(80)+"result is not confirmed.";
   const input={reason:"Save reading",idempotencyKey:"paper-reading",nodes:[{kind:"paper",core:{nodeName:"Fixture paper",paperTitle:"Synthetic Paper"},blocks:[{title:"My understanding",type:"richText",payload:{format:"markdown",body}}]}]};
   const p=(await f.data("create_candidate",input)).data;

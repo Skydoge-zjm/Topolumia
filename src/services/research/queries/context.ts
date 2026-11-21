@@ -196,6 +196,10 @@ export class AgentResearchQueries {
       field: "name", actual: input.name, topic: input.topic, availableNames: names,
       recovery: { tool: "get_schema", input: { topic: input.topic, name: names[0] } },
     });
+    if (input.view === "example") return this.finish(this.envelope("schema", {
+      schemaId: input.topic + ":" + input.name, example: entry.example,
+      readHint: { tool: "get_schema", topic: input.topic, name: input.name, view: "schema" },
+    }, input));
     const json = compactSchemaOutput(z.toJSONSchema(entry.schema, { reused: "ref" })); delete json.$schema;
     return this.finish(this.envelope("schema", {
       schemaId: input.topic + ":" + input.name, schemaVersion: "2", schemaHash: versionHash(json),
