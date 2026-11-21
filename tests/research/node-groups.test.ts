@@ -20,6 +20,12 @@ test("groups share content, typed boundaries and the real MCP/CLI candidate path
   const block = await f.api("POST", `/api/research-objects/group/${encodeURIComponent(id)}/content-blocks`, { title: "Protocol", type: "richText", payload: { format: "markdown", body: "Keep evaluation and data split identical. " + "Detailed protocol. ".repeat(100) + "ONLY_IN_FULL_PROTOCOL" } });
   assert.equal(block.status, 201, JSON.stringify(block.body)); assert.deepEqual(block.body.contentBlock.owner, group(id));
   const shown = await f.data("read_groups", { mode: "show", groupId: id });
+  const members = await f.data("read_groups", { mode: "members", groupId: id });
+  assert.equal(members.kind, "groups");
+  assert.ok(members.data.items.some(item => item.object.id === a && item.memberships[0].role === "baseline"));
+  const impact = await f.data("read_groups", { mode: "show", groupId: id, section: "deleteImpact" });
+  assert.equal(impact.kind, "groups");
+  assert.equal(impact.data.counts.relations, 2);
   assert.equal(shown.data.counts.recursiveUniqueNodes, 2); assert.equal(shown.data.primaryRelations.outgoingRelationId, outgoing.id);
   const cli = await promisify(execFile)(process.execPath, [path.resolve("dist/src/cli.js"), "group", "show", id], { env: { ...process.env, ...f.binding.env } }); assert.equal(JSON.parse(cli.stdout).data.id, id);
   assert.doesNotMatch(JSON.stringify(shown), /ONLY_IN_FULL_PROTOCOL/);
