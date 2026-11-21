@@ -27,7 +27,7 @@ export function readGroups(q:AgentResearchQueries, input:QueryInput) {
   if (input.mode === "show") {
     const summary = groupSummary(q, group, view, input.candidateId);
     const receipts = [q.receipt(input.actor, "core", group.id, group.coreRevision, "summary", { fields: Object.keys(group.core) }, input, { owner }), q.receipt(input.actor, "object", group.id, group.revision, "summary", {}, input, { owner }), q.receipt(input.actor, "membership", group.id, group.membershipRevision, "summary", { parentId: group.parentId }, input, { owner }), q.receipt(input.actor, "relation", group.id, group.relationRevision, "summary", {}, input, { owner })];
-    const result = q.envelope("groups", summary, input); result.readReceipts = receipts;
+    const result = q.envelope("groups", summary, input); result.readReceipts = q.visibleReceipts(receipts);
     while (summary.blocks.length && JSON.stringify(result).length + 100 > result.budget.maxChars) { summary.blocks.pop(); summary.omittedBlocks++; }
     if (summary.omittedBlocks) result.coverage = { complete: false, omissions: ["blockDirectory"] };
     return q.finish(result, receipts);

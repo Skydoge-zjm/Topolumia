@@ -5,6 +5,7 @@ import { extractContentBlockText } from "../../../domain/research/content-blocks
 import { schemaRegistry } from "../../../domain/research/interfaces/schema-registry.js";
 import { candidateReceipt, readCandidates } from "./proposal-queries.js";
 import { scientificFactKeys, sourceCapabilities } from "./source-capabilities.js";
+import { omitFields } from "../../../domain/research/object-values.js";
 import { fail, principal } from "../../../domain/research/access.js";
 import { nodeRef, groupRef, objectKey, sameObject } from "../../../domain/research/object-ref.js";
 import { readGroups, groupSummary } from "./group-queries.js";
@@ -24,9 +25,10 @@ export type QueryInput = {
   titleQuery?:string; types?:string[]; review?:string; representationId?:string; selection?:QuerySelection;
   decision?:string; reason?:string; [field:string]:unknown;
 };
+type VisibleReceipt = Omit<ReadReceipt, "projectId" | "principalId" | "researchSessionId" | "at">;
 export type QueryEnvelope<T> = {
   schemaVersion:string;kind:string;projectId:string;scope:{state:string;candidateId?:string;candidateRevision?:number};stateVersion:string;
-  data:T;coverage:{complete:boolean;omissions:string[]};budget:{maxChars:number;returnedChars:number};readReceipts?:ReadReceipt[];
+  data:T;coverage:{complete:boolean;omissions:string[]};budget:{maxChars:number;returnedChars:number};readReceipts?:VisibleReceipt[];
 };
 type ReadDetails = {owner?:ResearchObjectRef;field?:string;source?:{ref:string;version:string|number|null|undefined};contentVersion?:string;blockId?:string;assetId?:string;checksum?:string;representationId?:string;sourceRefs?:StoredBlock["sourceRefs"];completeSourceAvailable?:boolean};
 const clip=(v:unknown,n:number)=>String(v??"").slice(0,n),size=(v:unknown)=>JSON.stringify(v).length;
@@ -39,8 +41,11 @@ export class AgentResearchQueries {
     const candidate=input.candidateId?this.c.changes.candidate(input.candidateId,input.actor??fail("AUTH_REQUIRED","A candidate read requires its actor.",401)):null;
     return {schemaVersion:"research-agent-result.v1",kind,projectId:this.c.projectId,scope:{state:candidate?"candidate":"formal",...(candidate?{candidateId:candidate.id,candidateRevision:candidate.revision}:{})},stateVersion:this.c.formalTopology().stateVersion,data,coverage:{complete:true,omissions:[]},...extra,budget:{maxChars,returnedChars:0}};
   }
+  visibleReceipts(receipts: ReadReceipt[]): VisibleReceipt[] {
+    return receipts.map(receipt => omitFields(receipt, ["projectId", "principalId", "researchSessionId", "at"]));
+  }
   finish<T,R extends QueryEnvelope<T>>(r:R,receipts:ReadReceipt[]=[]):R {
-    if(receipts.length)r.readReceipts=receipts;
+    if (receipts.length || r.readReceipts) r.readReceipts = this.visibleReceipts(receipts);
     for(let i=0;i<6;i++)r.budget.returnedChars=size(r);
     if(size(r)>r.budget.maxChars)fail("CONTEXT_ITEM_TOO_LARGE","Requested item exceeds budget; narrow the selection or increase maxChars.");
     for(const receipt of receipts)this.store.put("receipts",receipt.id,receipt);
@@ -55,7 +60,7 @@ export class AgentResearchQueries {
     const r=this.envelope(kind,{...data,items:[] as T[]},input,{page:{nextCursor:null as string|null,total:entries.length}}),limit=input.limit??10;
     const update=()=>{const next=offset+r.data.items.length;if(next<entries.length){const b=Buffer.from(JSON.stringify({binding:fingerprint,offset:next})).toString("base64url");r.page.nextCursor=b+"."+signature(b);r.coverage={complete:false,omissions:["moreItems"]};}else{r.page.nextCursor=null;r.coverage={complete:true,omissions:[]};}};
     const receipts=()=>receiptFactory?receiptFactory(r.data.items):[];
-    for(const item of entries.slice(offset,offset+limit)){r.data.items.push(item);update();r.readReceipts=receipts();if(size(r)+100>r.budget.maxChars){r.data.items.pop();break;}}
+    for(const item of entries.slice(offset,offset+limit)){r.data.items.push(item);update();r.readReceipts=this.visibleReceipts(receipts());if(size(r)+100>r.budget.maxChars){r.data.items.pop();break;}}
     if(!r.data.items.length&&entries.length>offset)fail("CONTEXT_ITEM_TOO_LARGE","A directory item exceeds the budget.");update();return this.finish(r,receipts());
   }
   coreRef(n:StoredResearchObject,field:string,owner:ResearchObjectRef=nodeRef(n.id)){return"core:"+Buffer.from(JSON.stringify({owner,field,version:n.coreRevision})).toString("base64url");}
@@ -117,7 +122,7 @@ export class AgentResearchQueries {
     const selection=input.selection??{offset:input.offset??0},start=selection.offset??0;
     if(!Number.isSafeInteger(start)||start<0||start>body.length||start>0&&/[\uDC00-\uDFFF]/.test(body[start]??""))fail("RANGE_INVALID","Invalid UTF-16 text boundary.");
     let end=Math.min(body.length,start+(selection.length??Math.max(1,(input.maxChars??6000)-1800)));const r=this.envelope(kind,{...details,text:"",range:{start,end,availableChars:body.length,nextOffset:null as number|null}},input);let receipt;
-    for(;;){if(end>start&&/[\uD800-\uDBFF]/.test(body[end-1]??""))end--;r.data.text=body.slice(start,end);r.data.range={start,end,availableChars:body.length,nextOffset:end<body.length?end:null};receipt=this.receipt(input.actor,object.kind,object.id,version,"content",{textRanges:[{start,end}],...(details.field?{fields:[details.field]}:{})},input,details.contentVersion?{contentVersion:details.contentVersion}:{});r.readReceipts=[receipt];if(size(r)+40<=r.budget.maxChars)break;if(end<=start+1)fail("CONTEXT_ITEM_TOO_LARGE","Text metadata exceeds budget.");end=start+Math.floor((end-start)*.75);}
+    for(;;){if(end>start&&/[\uD800-\uDBFF]/.test(body[end-1]??""))end--;r.data.text=body.slice(start,end);r.data.range={start,end,availableChars:body.length,nextOffset:end<body.length?end:null};receipt=this.receipt(input.actor,object.kind,object.id,version,"content",{textRanges:[{start,end}],...(details.field?{fields:[details.field]}:{})},input,details.contentVersion?{contentVersion:details.contentVersion}:{});r.readReceipts=this.visibleReceipts([receipt]);if(size(r)+40<=r.budget.maxChars)break;if(end<=start+1)fail("CONTEXT_ITEM_TOO_LARGE","Text metadata exceeds budget.");end=start+Math.floor((end-start)*.75);}
     r.coverage={complete:end>=Math.min(body.length,start+(selection.length??body.length)),omissions:end<body.length?["remainingText"]:[]};return this.finish(r,[receipt]);
   }
   async readSource(input:QueryInput){
@@ -174,7 +179,7 @@ export class AgentResearchQueries {
     }
     if(items.length*(fields.columns?.length??1)>2000)fail("RANGE_INVALID","Select at most 2000 cells.");
     const requestedCount=items.length,result=this.envelope(kind,{...details,...fields,items,range,nextSelection:null as QuerySelection|null},input);let receipt:ReadReceipt;
-    for(;;){range.end=range.start+result.data.items.length;receipt=this.receipt(input.actor,object.kind,object.id,version,"structuredValues",type==="metric"?{itemRanges:[{...range}]}:{tableRanges:[{...range,sheet:table?.sheetName,columns:fields.columns?.map(column=>column.key)??[]}]},input,details.contentVersion?{contentVersion:details.contentVersion}:{});result.readReceipts=[receipt];if(size(result)+50<=result.budget.maxChars)break;if(result.data.items.length<=1)fail("CONTEXT_ITEM_TOO_LARGE","One row exceeds budget; narrow columns.");result.data.items.pop();}
+    for(;;){range.end=range.start+result.data.items.length;receipt=this.receipt(input.actor,object.kind,object.id,version,"structuredValues",type==="metric"?{itemRanges:[{...range}]}:{tableRanges:[{...range,sheet:table?.sheetName,columns:fields.columns?.map(column=>column.key)??[]}]},input,details.contentVersion?{contentVersion:details.contentVersion}:{});result.readReceipts=this.visibleReceipts([receipt]);if(size(result)+50<=result.budget.maxChars)break;if(result.data.items.length<=1)fail("CONTEXT_ITEM_TOO_LARGE","One row exceeds budget; narrow columns.");result.data.items.pop();}
     const available=fields.totalItems??fields.availableRows??0;result.data.nextSelection=range.end<available?{...(type==="metric"?{itemOffset:range.end}:{rowOffset:range.end})}:null;result.coverage={complete:result.data.items.length===requestedCount,omissions:result.data.items.length<requestedCount?["remainingRows"]:[]};return this.finish(result,[receipt]);
   }
   async readAssets(input:QueryInput,block:{kind:string;id:string;version:ReadReceipt["version"];representationId?:string}|null=null){

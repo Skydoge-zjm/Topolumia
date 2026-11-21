@@ -24,6 +24,10 @@ test("real MCP → CLI saves a paper hierarchy, incrementally revises it and pre
   const nodeId=p.nodes[0].nodeId,blockId=p.nodes[0].blocks[0].blockId;
   const draft=await f.data("read_blocks",p.nodes[0].blocks[0].readHint);
   assert.equal(draft.data.text,body);assert.equal(draft.readReceipts[0].scope,"candidate");
+  assert.equal(draft.readReceipts[0].principalId, undefined);
+  const storedReceipt = f.runtime.researchCommands.store.get("receipts", draft.readReceipts[0].id);
+  assert.ok(storedReceipt.principalId && storedReceipt.researchSessionId && storedReceipt.at);
+  assert.deepEqual(draft.readReceipts[0].delivered, storedReceipt.delivered);
   const edit={candidateId:p.candidateId,expectedRevision:1,nodeChanges:[{nodeId,corePatch:{venue:"Updated venue"},addBlocks:[{title:"Limits",type:"richText",payload:{format:"markdown",body:"Partial coverage."}}]}]};
   const revised=(await f.data("edit_candidate",edit)).data;
   assert.equal(revised.candidateId,p.candidateId);assert.equal(revised.revision,2);assert.equal(revised.nodes[0].blockCount,2);
