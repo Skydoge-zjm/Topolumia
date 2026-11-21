@@ -20,7 +20,8 @@ export const schemaRegistry:Record<string,Record<string,{schema:z.ZodType;exampl
   }])),
   groupCore: { group: {schema:groupCoreSchema,example:{nodeName:"Ablation experiments"}} },
   contentBlock: Object.fromEntries(Object.entries(payloadSchemas).map(([type, payload]) => [type, {
-    schema: contentBlockInput.extend({ type: z.literal(type), payload: payload.optional() }),
+    schema: (type === "richText" ? contentBlockInput : contentBlockInput.omit({ role: true }))
+      .extend({ type: z.literal(type), payload: payload.optional() }),
     example: { title: "Example", type, payload: payloads[type as keyof typeof payloads], ...(["image", "document", "spreadsheet", "file", "experimentRecord"].includes(type) ? { representations: [{ kind: "asset", assetId: type === "experimentRecord" ? "asset:inspected-record" : "asset:uploaded-file", role: "source" }] } : {}) },
   }])),
   proposal: { create: { schema: createProposalSchema, example: proposalExamples.create }, edit: { schema: reviseProposalSchema, example: proposalExamples.edit } },

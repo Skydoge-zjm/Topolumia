@@ -27,7 +27,8 @@ export class ResearchObjectService {
     const parsed = contentBlockInput.safeParse(input);
     if (!parsed.success) fail("CONTENT_BLOCK_INVALID", "Invalid block.", 422, parsed.error.issues.slice(0, 6));
     const value: ValidatedBlock = {...parsed.data, payload:parsed.data.payload as ContentPayload | undefined};
-    if (value.role === "body" && value.type !== "richText") fail("CONTENT_BLOCK_INVALID", "A note body must be rich text.");
+    if (value.role === "body" && value.type !== "richText")
+      fail("CONTENT_BLOCK_INVALID", `Omit role on a ${value.type} block. Only a note's primary richText block accepts role="body".`);
     if (actor.isAgent && ["confirmed", "rejected"].includes(value.review)) fail("REVIEW_REQUIRES_USER", "Only humans confirm scientific content.", 403);
     if (value.payload !== undefined) { const checked = validateContentBlockPayload(value.type, value.payload); if (!checked.success) fail("CONTENT_BLOCK_PAYLOAD_INVALID", "Invalid content payload.", 422, checked.issues); value.payload = checked.data; }
     const representationOnly = ["table", "image", "document", "spreadsheet", "link", "file"].includes(value.type);
