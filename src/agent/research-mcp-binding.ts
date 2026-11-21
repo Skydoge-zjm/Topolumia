@@ -37,7 +37,10 @@ export function buildResearchMcpBinding({
     command: process.execPath,
     args: [path.join(bundledRoot, "src/mcp/research-stdio.js")],
     cwd,
-    instructions: [`Research file transfer directory: ${transferRoot}. Prepare uploads in out/; downloads arrive in in/.`, skillInstructions].filter(Boolean).join(" "),
+    instructions: [
+      `Research file transfer directory: ${transferRoot}. Prepare new files in out/. For an already staged out/ file, call transfer_asset directly with direction="upload", its relativePath and an idempotencyKey. The receipt supplies the assetId and checksum. Downloads arrive in in/.`,
+      skillInstructions,
+    ].filter(Boolean).join(" "),
     skillDelivery,
     env: {
       TOPOLUMIA_URL: baseUrl,
