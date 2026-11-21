@@ -28,19 +28,19 @@
 
 ## 让核心信息进入上下文
 
-get_context 提供小梗概，search 负责定位，read_nodes 返回核心和内容目录，read_blocks/read_assets/read_source 精确读取。摘要不冒充完整证据；正文范围、版本、分页、截断和不可用状态必须明确。
+get_context 提供项目梗概。带短查询时，它同时返回最多三个匹配对象或来源及读取提示。search 提供完整检索分页，read_nodes 返回核心与内容目录，read_blocks、read_assets、read_source 按范围读取证据。索引文件原文附带可写入候选的 sourceRef。读取回执向 Agent 提供 ID、对象、版本、范围与披露程度，服务端另行保留身份、会话与时间供审计。
 
 get_environment 只读缓存梗概，不枚举全部包。PDF 或图像未索引时，使用下载与原生读取提示，而不是重复尝试无法读取的文本接口。
 
 `read_experiment` 按 runs → metrics → series 逐级定位运行、指标与原始点；materials 返回配置、表格行和日志的版本化关联及可直接调用的读取提示。inspect 检查已上传的原生记录，compare 提供同名指标的临时比较。曲线绘图采样与精确点读取分别返回；来源已采样时明确标记。运行和材料的观察回执只覆盖实际交付的 ID，读取一页不能授权修改未读的运行。具体机制见 [实验模块](../modules/experiments-and-sources/README.md)。
 
-create_candidate/edit_candidate 接受节点、内容块与增量修改的业务表达，内部编译成操作；Agent 不应手写内部事务序列。候选编辑不重述未修改正文。
+create_candidate 和 edit_candidate 接受节点、内容块与增量修改的业务表达。候选回执中每个已列出的块均带有可执行的读取参数，包含候选 ID、所属对象、块版本与适合的视图。追加材料时只提交发生变化的字段。get_schema 的 example 视图给出简短可用输入，schema 视图提供完整字段约束。
 
 ### 实验持续数据读取
 
 Agent 从实验的内容目录定位具体记录块/集合/run，再经 read_experiment 读取指标和准确范围。只有结果表格的实验走普通块/资产接口。人和 Agent 使用同一目录、数据点、采样和固定快照，返回块/run 来源与原始数值类型；绘图采样不能替代完整点证据。
 
-read_experiment snapshot 创建或读取固定依据；后续 runs/metrics/series 携带 blockId 和 snapshotId。快照保留数据水位、科研块/材料版本、解释版本与运行目录，后续追加和归档不改变原依据；项目权限仍检查。笔记候选使用 sourceRefs 中 kind=experimentSnapshot、value=快照 ID，保存可再读引用，服务端验证引用。连续数据水位不参与节点版本，避免无关追加造成候选冲突。
+复核实验时先通过 read_experiment snapshot 固定依据，再沿返回的读取提示取得 runs、metrics 与 series。快照结果提供可直接写入笔记候选的 experimentSnapshot 引用，固定曲线结果回显 snapshotId。快照保留数据水位、科研块与材料版本、解释版本及运行目录，后续追加和归档后仍可按原依据复核。服务端验证引用与项目权限。连续数据水位独立于节点版本，避免无关追加造成候选冲突。
 
 read_experiment events 按水位与类型读取原始富记录；大记录目录明确预览截断，使用 eventWatermark、textOffset/textLength 分段取原文。返回的附件 downloadHint 使用 transfer_asset 的 recordAttachment 目标，经同一私有交接目录和校验传输完整原件，不传大段 base64。采集凭据不会进入研究上下文，也不能绕过科研候选审批。
 
@@ -52,7 +52,7 @@ read_experiment events 按水位与类型读取原始富记录；大记录目录
 
 ## 文件与会话绑定
 
-[research-mcp-binding.ts](../../../src/agent/research-mcp-binding.ts) 为运行实例绑定项目、会话凭据、文件交接根和可用 Skill 快照。transfer 使用根下 out/ 上传、in/ 下载的相对路径，不传绝对路径或 base64 大段正文。
+[research-mcp-binding.ts](../../../src/agent/research-mcp-binding.ts) 为运行实例绑定项目、会话凭据、文件交接根和可用 Skill 快照。transfer_asset 在工具根对象公开方向、相对路径和幂等键。已放入 out/ 的文件可直接上传，回执提供可用于候选附件的资产 ID 和校验和。下载目标位于 in/。
 
 应用启动端口用配置文件；这里的会话环境变量是进程间凭据和绑定传递，不能混同为要求用户通过环境变量配置端口。
 

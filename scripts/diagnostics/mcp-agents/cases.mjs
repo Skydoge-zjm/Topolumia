@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
+import { seedPaper, gradePaper } from "./paper-case.mjs";
 
 const stamp = "Calibration batch KESTREL-42; signed by station M4.\n";
 const checksum = createHash("sha256").update(stamp).digest("hex");
@@ -14,6 +15,7 @@ export const cases = {
 
 export async function seedCase(app, actor, key, root, binding) {
   const c = app.researchCommands;
+  if (key === "paper") return seedPaper(c, actor);
   const change = operations => c.changes.direct(operations, actor);
   const node = (ref, kind, name) => ({ op: "addNode", clientRef: ref, kind, core: { nodeName: name } });
   if (key === "dossier") {
@@ -47,13 +49,14 @@ export async function seedCase(app, actor, key, root, binding) {
 }
 
 export function grade(key, oracle, calls, candidates, answer, formalIntact) {
+  if (key === "paper") return gradePaper(oracle, calls, candidates, answer, formalIntact);
   const done = calls.filter(call => !call.failed);
   const saw = (name, condition = () => true) => done.some(call => call.tool === name && condition(call));
   const c = candidates[0];
   const ops = c?.operations ?? [];
   const note = ops.find(op => op.op === "addNode" && op.kind === "note");
   const blocks = ops.filter(op => op.op === "addBlock");
-  const body = JSON.stringify([note?.core, ...blocks.map(b => b.payload)]);
+  const body = JSON.stringify([note?.core, ...blocks.map(b => b.payload)]).replaceAll("*", "");
   const common = {
     pendingNote: candidates.length === 1 && c.status === "pending" && Boolean(note),
     formalIntact: Boolean(c) && formalIntact,
@@ -63,30 +66,37 @@ export function grade(key, oracle, calls, candidates, answer, formalIntact) {
     const reads = c?.evidenceReads ?? [];
     const upload = done.find(call => call.tool === "transfer_asset" && call.args.direction === "upload")?.result.data;
     return { ...common,
-      groupAndEdge: /Quartz control/i.test(body) && /Meridian review/i.test(body) && saw("read_groups") && saw("neighbors"),
+      groupAndEdge: /Quartz control/i.test(body) && /Meridian review/i.test(body) &&
+        saw("read_groups", call => call.args.mode === "members" && call.args.groupId === oracle.group) &&
+        saw("neighbors", call => call.args.object?.id === oracle.group),
       threshold: /0\.0375\s*mV/i.test(body),
       protocolFacts: ["17", "31", "59", "E7-r3"].every(f => body.includes(f)),
       evidence: Boolean(oracle.protocol && reads.some(r => r.object.kind === "source" && r.object.id === oracle.protocol && r.disclosure === "content") && reads.some(r => r.object.kind === "block" && r.object.id === oracle.block && r.disclosure === "content")),
-      source: Boolean(note?.sourceRefs?.some(r => r.value.includes("kestrel-protocol.md"))),
-      attachment: Boolean(upload?.assetId && blocks.some(b => b.representations?.some(r => r.assetId === upload.assetId))),
+      source: [note, ...blocks].some(op => op?.sourceRefs?.some(r => r.kind === "file" && [oracle.protocol, "kestrel-protocol.md"].includes(r.value))),
+      attachment: Boolean(upload?.assetId && (blocks.some(b => b.representations?.some(r => r.assetId === upload.assetId)) ||
+        [note, ...blocks].some(op => op?.sourceRefs?.some(r => r.assetId === upload.assetId)))),
       checksum: answer.toLowerCase().includes(checksum) && saw("read_assets", call => call.args.assetId === upload?.assetId),
       incremental: c?.revision >= 2 && blocks.some(b => /limit|局限|限制/i.test(b.title)) && saw("edit_candidate"),
-      verified: saw("read_candidates", call => call.args.candidateId === c?.id && call.args.mode === "show"),
+      verified: done.some((call, index) => call.tool === "read_candidates" && call.args.candidateId === c?.id && call.args.mode === "show" &&
+        done.slice(0, index).some(prior => prior.tool === "edit_candidate" && prior.args.candidateId === c?.id)),
     };
   }
-  const pinned = note?.sourceRefs?.find(r => r.kind === "experimentSnapshot")?.value;
-  const series = done.filter(call => call.tool === "read_experiment" && call.args.mode === "series" && call.args.snapshotId === pinned && call.args.blockId === oracle.block && call.args.metric === "validation/loss" && call.result.data.points?.some(p => p.x === 3));
+  const frozen = done.filter(call => call.tool === "read_experiment" && call.args.mode === "snapshot" &&
+    call.result.data.snapshot?.blockId === oracle.block).map(call => call.result.data.snapshot.id);
+  const series = done.filter(call => call.tool === "read_experiment" && call.args.mode === "series" &&
+    call.args.metric === "validation/loss" && call.result.data.points?.some(p => p.x === 3));
   const items = blocks.find(b => b.type === "metric")?.payload?.items ?? [];
   const value = (re, target) => items.some(item => re.test([item.name, item.condition, item.split].join(" ")) && typeof item.value === "number" && Math.abs(item.value - target) < 1e-7);
   return { ...common,
     environment: saw("get_environment"),
-    snapshot: Boolean(pinned && saw("read_experiment", call => call.args.mode === "snapshot" && call.result.data.snapshot?.id === pinned)),
-    exactPair: new Set(series.map(call => call.args.runId)).size === 2,
+    snapshot: Boolean(note?.sourceRefs?.some(r => r.kind === "experimentSnapshot" && frozen.includes(r.value))),
+    exactPair: frozen.some(id => new Set(series.filter(call => call.args.snapshotId === id).map(call => call.args.runId)).size === 2),
     baseline: value(/baseline|基线/i, 0.438),
     variant: value(/variant|变体|变种/i, 0.312),
     difference: value(/differ|improv|delta|reduction|gain|差|改善|改进|降低/i, 0.126),
-    uncertainty: /significan|replicat|single.run|statistic|显著|重复|统计/i.test(body),
+    uncertainty: /(?:no|not|cannot|insufficient|lack|unable|without|preclud|do not|doesn.t|can.t)[^.!。]{0,100}(?:significan|statistic|infer)|(?:significan|statistic)[^.!。]{0,70}(?:not|unknown|undetermined)|(?:need|require|more|additional|repeat)[^.!。]{0,55}(?:replicat|runs)|(?:不能|无法|不足|未能)[^。]{0,50}(?:显著|统计)/i.test(body),
     reportedValues: ["0.438", "0.312", "0.126"].every(f => answer.includes(f)),
-    verified: saw("read_blocks", call => call.args.candidateId === c?.id && call.args.mode === "read" && call.result.data),
+    verified: saw("read_blocks", call => call.args.candidateId === c?.id && call.args.mode === "read" && call.args.view === "values" &&
+      [0.438, 0.312, 0.126].every(target => call.result.data.items?.some(item => typeof item.value === "number" && Math.abs(item.value - target) < 1e-7))),
   };
 }

@@ -25,6 +25,11 @@ export async function meteredGateway(upstream, key) {
       const body = Buffer.concat(chunks);
       const parsed = JSON.parse(body);
       entry.requested = parsed.model;
+      const transfer = parsed.tools?.find(t => (t.name ?? t.function?.name ?? "").endsWith("transfer_asset"));
+      if (transfer && !requests.some(r => r.transferSchema)) {
+        const shape = transfer.input_schema ?? transfer.parameters ?? transfer.function?.parameters ?? {};
+        entry.transferSchema = { keys: Object.keys(shape), fields: Object.keys(shape.properties ?? {}) };
+      }
       requests.push(entry);
       if (parsed.model !== model) {
         res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "Evaluation requires " + model } }));

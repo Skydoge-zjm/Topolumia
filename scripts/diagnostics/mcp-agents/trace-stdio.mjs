@@ -24,4 +24,10 @@ process.stdin.pipe(child.stdin);
 child.stdout.pipe(process.stdout);
 child.stdin.on("error", () => {});
 process.on("exit", () => child.kill());
-child.on("exit", code => process.exit(code ?? 1));
+child.on("close", code => {
+  for (const call of pending.values()) {
+    appendFileSync(file, JSON.stringify({ ...call, ms: Date.now() - call.at, failed: true,
+      result: { error: { code: "TRANSPORT_CLOSED", message: "The server closed before a result was delivered." } } }) + "\n");
+  }
+  process.exit(code ?? 1);
+});

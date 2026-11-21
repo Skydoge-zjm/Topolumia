@@ -5,24 +5,26 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cases, grade, seedCase } from "./cases.mjs";
+import { paperPrompt } from "./paper-case.mjs";
 import { meteredGateway, model, providerTokens } from "./gateway.mjs";
 
 const build = path.resolve(process.env.TOPOLUMIA_EVAL_BUILD || "dist");
 const product = file => import(pathToFileURL(path.join(build, "src", file)).href);
 const [{ startMvpServer }, { CodexAgentAdapter }, { ClaudeCodeAgentAdapter }, { OpenCodeV2AgentAdapter },
-  { buildResearchMcpBinding }, { MCP_SESSION_HINT, MCP_INSTRUCTIONS }, { toolDefinitions }] = await Promise.all([
+  { buildResearchMcpBinding }, { MCP_SESSION_HINT, MCP_INSTRUCTIONS }, { toolDefinitions }, { initialOpenCodeV2Config }] = await Promise.all([
   "server.js", "adapters/agents/codex/codex-agent-adapter.js", "adapters/agents/claude/claude-code-agent-adapter.js",
   "adapters/agents/opencode/v2/opencode-agent-adapter.js", "agent/research-mcp-binding.js", "domain/research/research-interface.js",
-  "domain/research/research-mcp-contract.js",
+  "domain/research/research-mcp-contract.js", "adapters/agents/opencode/v2/opencode-native-config.js",
 ].map(product));
 
 const adapters = { codex: CodexAgentAdapter, claude: ClaudeCodeAgentAdapter, opencode2: OpenCodeV2AgentAdapter };
 const [output, selectedRuntime = "all", selectedCase = "all"] = process.argv.slice(2);
-if (!output || !["all", ...Object.keys(adapters)].includes(selectedRuntime) || !["all", "probe", ...Object.keys(cases)].includes(selectedCase))
-  throw new Error("Usage: node scripts/diagnostics/mcp-agents/run.mjs NEW_OUTPUT_DIR [all|codex|claude|opencode2] [all|dossier|curves|probe]");
+if (!output || !["all", ...Object.keys(adapters)].includes(selectedRuntime) || !["all", "probe", "paper", ...Object.keys(cases)].includes(selectedCase))
+  throw new Error("Usage: node scripts/diagnostics/mcp-agents/run.mjs NEW_OUTPUT_DIR [all|codex|claude|opencode2] [all|dossier|curves|paper|probe]");
 const directory = path.resolve(output);
 const runtimes = selectedRuntime === "all" ? Object.keys(adapters) : [selectedRuntime];
 const scenarios = selectedCase === "all" ? Object.keys(cases) : [selectedCase];
+const prompts = selectedCase === "paper" ? { paper: paperPrompt } : cases;
 for (const runtime of runtimes) {
   const api = runtime === "claude" ? "ANTHROPIC" : "OPENAI";
   for (const suffix of ["URL", "KEY"]) if (!process.env["TOPOLUMIA_EVAL_" + api + "_" + suffix]) throw new Error("Missing TOPOLUMIA_EVAL_" + api + "_" + suffix);
@@ -31,10 +33,15 @@ await mkdir(path.dirname(directory), { recursive: true });
 await mkdir(directory); // An existing round, including a failed one, is immutable.
 const hash = text => createHash("sha256").update(text).digest("hex");
 const contract = toolDefinitions();
+const evaluatorFiles = ["run.mjs", "gateway.mjs", "trace-stdio.mjs", "cases.mjs", "paper-case.mjs"];
+const evaluatorHashes = Object.fromEntries(await Promise.all(evaluatorFiles.map(async name =>
+  [name, hash(await readFile(new URL(name, import.meta.url)))])));
 await writeFile(path.join(directory, "manifest.json"), JSON.stringify({
   model, started: new Date().toISOString(), head: process.env.TOPOLUMIA_EVAL_REVISION || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   contractHash: hash(JSON.stringify(contract) + MCP_INSTRUCTIONS), caseHash: hash(await readFile(new URL("cases.mjs", import.meta.url))),
-  prompts: cases, tools: contract.map(t => t.name), definitionChars: JSON.stringify(contract).length,
+  promptHash: hash(JSON.stringify(prompts)), evaluatorHashes,
+  prompts, tools: contract.map(t => t.name), definitionChars: JSON.stringify(contract).length,
+  nativeReadPolicy: "Isolated workspace reads allowed via native clients. Other permission prompts are declined.",
 }, null, 2));
 
 async function run(runtime, key) {
@@ -58,8 +65,9 @@ async function run(runtime, key) {
     const session = randomUUID();
     const credential = app.collaboration.issueAgentCredential(actor, projectId, session, { researchSessionId: session });
     binding = buildResearchMcpBinding({ baseUrl: app.url, projectId, sessionToken: credential, cwd: workspace, runtimeInstanceId: session, dataRoot: path.join(workspace, ".topolumia") });
+    report.skill = { delivery: binding.skillDelivery, nativeReadObserved: false };
     binding.args = [fileURLToPath(new URL("trace-stdio.mjs", import.meta.url)), trace, ...binding.args];
-    if (cases[key]) oracle = await seedCase(app, actor, key, workspace, binding);
+    if (prompts[key]) oracle = await seedCase(app, actor, key, workspace, binding);
     before = app.researchCommands.formalTopology().stateVersion;
     await writeFile(trace, "", { flag: "wx" });
     const native = path.join(root, "native");
@@ -83,21 +91,29 @@ async function run(runtime, key) {
       profile.model = "metered/" + model;
       profile.nativeConfig = { model: profile.model, providers: { metered: { name: "Metered", package: "@opencode/ai/providers/openai-compatible",
         settings: { baseURL: gateway.url + "/v1", apiKey: gateway.secret }, models: { [model]: { name: model, modelID: model, capabilities: { input: ["text"], output: ["text"], tools: true }, limit: { context: 200000, output: 8192 } } } } },
-        permissions: [{ action: "*", resource: "*", effect: "ask" }], agents: { title: { disabled: true } }, compaction: { auto: false } };
+        permissions: initialOpenCodeV2Config({ ...profile, approvalPolicy: "on-request" }).permissions,
+        agents: { title: { disabled: true } }, compaction: { auto: false } };
     }
-    const messages = new Map();
+    const messages = new Map(), toolNames = new Map(), skillReads = new Set();
     adapter = new adapters[runtime](profile, { env, requestTimeoutMs: 60000, onEvent(event) {
       const p = event.payload ?? {};
-      if (event.type === "assistant.message.completed" && p.text) messages.set(p.nativeItemId ?? p.itemId ?? messages.size, p.text);
+      if (event.type === "tool.started" && p.toolCallId) toolNames.set(p.toolCallId, p.toolName ?? p.item?.tool ?? p.name ?? p.kind);
+      if (event.type.startsWith("tool.")) {
+        const id = p.toolCallId ?? p.nativeItemId ?? p.item?.id;
+        const input = p.rawInput ?? p.item?.input ?? p.item?.arguments ?? p.item?.command;
+        if (id && input && /SKILL\.md/i.test(JSON.stringify(input))) skillReads.add(id);
+        if (event.type === "tool.completed" && skillReads.has(id)) report.skill.nativeReadObserved = true;
+      }
+      if (event.type === "assistant.message.completed" && p.text) messages.set(p.nativeItemId ?? p.messageId ?? p.itemId ?? messages.size, p.text);
       if (["usage.updated", "tool.failed", "turn.retrying", "approval.requested", "turn.failed"].includes(event.type)) {
-        report.events.push({ type: event.type, id: p.nativeItemId ?? p.toolCallId, tool: p.item?.tool ?? p.toolName,
+        report.events.push({ type: event.type, id: p.nativeItemId ?? p.toolCallId, tool: p.item?.tool ?? p.toolName ?? toolNames.get(p.toolCallId),
           error: p.item?.error?.message ?? p.message, usage: p.tokenUsage, nativeModelUsage: p.nativeModelUsage });
       }
       if (event.type === "approval.requested") void adapter.resolvePermission(p.requestId, "reject").catch(() => {});
     } });
     const ready = await adapter.start({ cwd: workspace, researchMcp: binding, developerInstructions: MCP_SESSION_HINT + " " + binding.instructions });
     report.native = ready.agentInfo;
-    const text = cases[key] ?? "Use Topolumia MCP get_context once and reply READY.";
+    const text = prompts[key] ?? "Use Topolumia MCP get_context once and reply READY.";
     console.log(prefix + " started");
     const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Benchmark case deadline")), 600000); });
     const result = await Promise.race([adapter.prompt({ turnId: randomUUID(), content: [{ type: "text", text }] }), timeout]);
@@ -110,6 +126,10 @@ async function run(runtime, key) {
     await adapter?.close().catch(() => {});
     const calls = (await readFile(trace, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map(s => JSON.parse(s));
     const candidates = app?.researchCommands?.store.all("candidates") ?? [];
+    if (key === "paper" && oracle) {
+      const original = await readFile(path.join(binding.env.TOPOLUMIA_TRANSFER_ROOT, "in", "washout-study.md")).catch(() => null);
+      oracle.downloadedChecksum = original ? hash(original) : null;
+    }
     report.candidates = candidates.map(({ id, revision, status, operations, evidenceReads, provenance }) => ({ id, revision, status, operations, evidenceReads, origin: provenance?.kind }));
     report.oracle = oracle;
     report.formalIntact = before !== undefined && before === app.researchCommands.formalTopology().stateVersion;
