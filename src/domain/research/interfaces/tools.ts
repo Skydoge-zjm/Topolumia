@@ -54,15 +54,20 @@ function conditions(name:string, input:ConditionInput) {
   const reject = (message:string) => { throw Object.assign(new Error(message), { code: "INPUT_INVALID", status: 422 }); };
   if (name === "read_experiment") {
     if (["snapshot", "events"].includes(input.mode??"") && !input.blockId && !input.snapshotId) reject("record blockId is required");
-    if (input.mode === "inspect" && (!input.provider || !input.assetIds)) reject("inspect requires provider and assetIds");
+    if (input.mode === "inspect" && (!input.provider || !input.assetIds)) reject("inspect takes provider and uploaded assetIds. For an existing record block, use mode=snapshot or runs with its nodeId and blockId.");
     if (input.mode === "compare" && Boolean(input.selections) === Boolean(input.nodeIds)) reject("compare requires either selections or nodeIds");
     if (["runs", "materials", "metrics", "series", "snapshot", "events"].includes(input.mode??"") && !input.nodeId && !input.snapshotId) reject("nodeId or snapshotId is required");
-    if (input.mode === "metrics" && !input.runId) reject("metrics requires runId");
+    if (input.mode === "metrics" && !input.runId) reject("Use mode=runs with the same record block or snapshot. Copy a returned run's readHint to request its metrics.");
     if (input.mode === "series" && (!input.runId || !input.metric)) reject("series requires runId and exact metric name");
     if (input.xKey !== undefined && input.mode !== "series") reject("xKey requires series mode");
   }
   if (name === "search" && input.owner && input.target !== "blocks") reject("owner requires target=blocks");
-  if (name === "read_groups") { if(input.mode!=="list"&&!input.groupId)reject("groupId is required");if(input.mode==="list"&&(input.groupId||input.scope||input.section))reject("list excludes group details");if(input.mode!=="members"&&input.scope)reject("scope requires members");if(input.mode!=="show"&&input.section)reject("section requires show"); }
+  if (name === "read_groups") {
+    if (input.mode !== "list" && !input.groupId) reject("Find the group with mode=list and query, then pass its groupId.");
+    if (input.mode === "list" && (input.groupId || input.scope || input.section)) reject("List takes query and pagination. For a known groupId use show or members.");
+    if (input.mode !== "members" && input.scope) reject("Omit scope for a group overview. To read roles, use mode=members with groupId and optional scope.");
+    if (input.mode !== "show" && input.section) reject("Omit section for member lists. Use mode=show with section=deleteImpact for a deletion review.");
+  }
   if(name==="neighbors"&&input.scope==="groupBoundary"&&input.object?.kind!=="group")reject("groupBoundary requires a group");
   if (name === "read_blocks") {
     if (input.mode === "list" && ["blockId","view","selection","representationId","revision","expectedRevision","expectedContentVersion"].some(k => input[k] !== undefined)) reject("list excludes block content parameters");
