@@ -720,7 +720,11 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
     }
     if (input.mode === "snapshot") {
       const snapshot = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : this.c.ingestion.snapshot(input.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。", 422), actor);
-      return q.finish(q.envelope("experiment", { snapshot: { id: snapshot.id, blockId: snapshot.blockId, nodeId: snapshot.nodeId, watermark: snapshot.watermark, blockRevision: snapshot.blockRevision, createdAt: snapshot.createdAt }, readHint: { tool: "read_experiment", mode: "runs", nodeId: snapshot.nodeId, blockId: snapshot.blockId, snapshotId: snapshot.id } }, params));
+      return q.finish(q.envelope("experiment", {
+        snapshot: { id: snapshot.id, blockId: snapshot.blockId, nodeId: snapshot.nodeId, watermark: snapshot.watermark, blockRevision: snapshot.blockRevision, createdAt: snapshot.createdAt },
+        sourceRef: { kind: "experimentSnapshot", value: snapshot.id },
+        readHint: { tool: "read_experiment", mode: "runs", nodeId: snapshot.nodeId, blockId: snapshot.blockId, snapshotId: snapshot.id },
+      }, params));
     }
     if (input.mode === "events") {
       const nodeId = input.nodeId ?? fail("INPUT_INVALID", "实验身份缺失。", 422), blockId = input.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。", 422);
@@ -912,6 +916,7 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
           metric: line.key,
           xKey: line.xKey,
           contentVersion,
+          ...(input.snapshotId ? { snapshotId: input.snapshotId } : {}),
           sources: line.sources,
           points,
           pointCount: line.pointCount,
