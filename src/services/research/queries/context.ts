@@ -87,7 +87,17 @@ export class AgentResearchQueries {
     const edges=this.c.objects.relations(owner,input.scope??"direct",view);
     const range=owner.kind==="group"&&input.scope==="groupBoundary"?this.c.groups.range(owner.id,view):null;
     const inside=(r:ResearchObjectRef)=>range?range.nodeIds.includes(r.id)&&r.kind==="node"||range.groupIds.includes(r.id)&&r.kind==="group":sameObject(r,owner);
-    const entries=edges.filter(e=>(direction!=="in"&&inside(e.from)||direction!=="out"&&inside(e.to))&&(!input.relationTypes?.length||input.relationTypes.includes(e.type))).map(e=>({relation:e,neighbor:inside(e.from)?e.to:e.from}));
+    const labels = new Map([
+      ...view.nodes.map(node => [objectKey(nodeRef(node.id)), node.core.nodeName] as const),
+      ...view.groups.map(group => [objectKey(groupRef(group.id)), group.core.nodeName] as const),
+    ]);
+    const entries = edges.filter(edge =>
+      (direction !== "in" && inside(edge.from) || direction !== "out" && inside(edge.to)) &&
+      (!input.relationTypes?.length || input.relationTypes.includes(edge.type))
+    ).map(relation => {
+      const neighbor = inside(relation.from) ? relation.to : relation.from;
+      return { relation, neighbor, neighborLabel: clip(labels.get(objectKey(neighbor)), 160) };
+    });
     const object=this.c.objects.from(view,owner);
     return this.page("neighbors",entries,input,{owner,direction,scope:input.scope,relations:input.relationTypes,version:versionHash(entries),candidate:input.candidateId},items=>[this.receipt(input.actor,"relation",owner.id,object.relationRevision,"directory",{relationIds:items.map(item=>item.relation.id)},input,{owner})]);
   }

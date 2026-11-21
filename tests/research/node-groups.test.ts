@@ -26,6 +26,8 @@ test("groups share content, typed boundaries and the real MCP/CLI candidate path
   const impact = await f.data("read_groups", { mode: "show", groupId: id, section: "deleteImpact" });
   assert.equal(impact.kind, "groups");
   assert.equal(impact.data.counts.relations, 2);
+  const neighbors = await f.data("neighbors", { object: group(id), direction: "out" });
+  assert.deepEqual(neighbors.data.items.map(item => [item.neighbor.id, item.neighborLabel]), [[summary, "Summary"]]);
   assert.equal(shown.data.counts.recursiveUniqueNodes, 2); assert.equal(shown.data.primaryRelations.outgoingRelationId, outgoing.id);
   const cli = await promisify(execFile)(process.execPath, [path.resolve("dist/src/cli.js"), "group", "show", id], { env: { ...process.env, ...f.binding.env } }); assert.equal(JSON.parse(cli.stdout).data.id, id);
   assert.doesNotMatch(JSON.stringify(shown), /ONLY_IN_FULL_PROTOCOL/);
