@@ -21,7 +21,7 @@ Viewing a figure or reading a table does not save it. For a substantial paper re
 
 ## Saving to Topolumia
 
-Use `search`, `read_nodes`, `read_blocks` and `read_assets` progressively; summaries and directories are discovery, not full evidence. `get_schema` is optional for advanced formats; omit `name` to discover valid names for a topic. Basic paper and Markdown inputs are already in the tool definitions.
+Search for the paper, then read the source ranges that support the requested findings. For an unfamiliar block, `get_schema` with `topic="contentBlock"`, the block type as `name` and `view="example"` returns a short usable example. Each inline table column has a key and a label. Put units in the labels and preserve numeric cells as numbers in the rows. Use the candidate block's read hint and follow any next selection to verify the requested values.
 
 Use `transfer_asset` for files. Put uploads in the session `out/` directory and download native-reading material to `in/`. Do not send bytes as Base64, expose credentials, or touch Topolumia's private storage. On SSH, copy selected remote files to the local transfer directory with your own tools first.
 
