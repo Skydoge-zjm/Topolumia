@@ -20,6 +20,9 @@ test("groups share content, typed boundaries and the real MCP/CLI candidate path
   const block = await f.api("POST", `/api/research-objects/group/${encodeURIComponent(id)}/content-blocks`, { title: "Protocol", type: "richText", payload: { format: "markdown", body: "Keep evaluation and data split identical. " + "Detailed protocol. ".repeat(100) + "ONLY_IN_FULL_PROTOCOL" } });
   assert.equal(block.status, 201, JSON.stringify(block.body)); assert.deepEqual(block.body.contentBlock.owner, group(id));
   const shown = await f.data("read_groups", { mode: "show", groupId: id });
+  const brief = await f.data("get_context", { query: "Ablation", maxChars: 2000 });
+  assert.ok(brief.data.matches.items.some(item => item.objectType === "group" && item.id === id));
+  assert.ok(brief.budget.returnedChars <= 2000);
   const members = await f.data("read_groups", { mode: "members", groupId: id });
   assert.equal(members.kind, "groups");
   assert.ok(members.data.items.some(item => item.object.id === a && item.memberships[0].role === "baseline"));

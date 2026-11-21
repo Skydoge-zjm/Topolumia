@@ -79,7 +79,28 @@ export class AgentResearchQueries {
       readHint: this.blockReadHint(block, candidateId) };
   }
   nodeSummary(n:StoredNode,view:ResearchView,candidateId?:string){const blocks=view.blocks.filter(b=>sameObject(b.owner,nodeRef(n.id))&&b.lifecycle!=="archived").sort((a,b)=>a.order-b.order);const core:ResearchCore & {authorCount?:number;[field:string]:unknown}={...n.core};if(core.authors){core.authorCount=core.authors.length;core.authors=core.authors.slice(0,3);}if(core.tags)core.tags=core.tags.slice(0,5);for(const[k,v]of Object.entries(core))if(typeof v==="string")core[k]=clip(v,k==="abstract"?240:500);return{id:n.id,kind:n.kind,label:n.core.nodeName,status:n.status,nodeRevision:n.revision,coreRevision:n.coreRevision,blockCollectionRevision:n.blockCollectionRevision,...(n.kind==="experiment"?{recordCollections:blocks.filter(b=>b.type==="experimentRecord").slice(0,6).map(b=>({blockId:b.id,title:b.title,revision:b.recordCollection?.revision??1,runCount:this.c.records.collectionRunCount(b)})),experimentReadHint:{tool:"read_experiment",mode:"runs",nodeId:n.id}}:{}),coreSummary:core,coreRefs:Object.fromEntries(Object.keys(n.core).map(k=>[k,{ref:this.coreRef(n,k),expectedVersion:String(n.coreRevision)}])),blockCount:blocks.length,blocks:blocks.slice(0,6).map(b=>this.blockSummary(b,candidateId)),omittedBlocks:Math.max(0,blocks.length-6),groups:(view.groups??[]).filter(g=>g.members.some(m=>m.nodeId===n.id)).slice(0,5).map(g=>({id:g.id,label:clip(g.core.nodeName,80),readHint:{mode:"show",groupId:g.id}})),readHint:{mode:"list",owner:nodeRef(n.id)}};}
-  brief(input:QueryInput){this.c.check(input.actor,"research.view");const graph=this.c.formalTopology(),nodes=this.c.nodes.nodes(),counts:Record<string,number>={};for(const n of nodes)counts[n.kind]=(counts[n.kind]??0)+1;return this.finish(this.envelope("context",{project:{id:this.c.projectId,name:this.c.projectName},counts:{nodes:nodes.length,groups:this.c.groups.list().length,relations:graph.edges.length,byKind:counts,pendingCandidates:this.store.all("candidates").filter(c=>c.status==="pending").length},retrieval:{method:"lexical",fullGraphIncluded:false,flow:"search → node overview → exact block/source range"}},input));}
+  brief(input: QueryInput) {
+    this.c.check(input.actor, "research.view");
+    const graph = this.c.formalTopology(), nodes = this.c.nodes.nodes(), byKind: Record<string, number> = {};
+    for (const node of nodes) byKind[node.kind] = (byKind[node.kind] ?? 0) + 1;
+    const brief = {
+      project: { id: this.c.projectId, name: this.c.projectName },
+      counts: { nodes: nodes.length, groups: this.c.groups.list().length, relations: graph.edges.length, byKind,
+        pendingCandidates: this.store.all("candidates").filter(candidate => candidate.status === "pending" && this.c.visibleCandidate(candidate, input.actor)).length },
+      retrieval: { method: "lexical", fullGraphIncluded: false, flow: "search → overview → exact block/source range" },
+    };
+    const query = input.query?.trim();
+    if (!query) return this.finish(this.envelope("context", brief, input));
+    const result = this.search({ actor: input.actor, query, target: "all", limit: 3, maxChars: 6000 });
+    const items = result.data.items.map(hit => ({
+      objectType: hit.objectType, label: hit.label, ...("ref" in hit ? { ref: hit.ref } : { id: hit.id }),
+      ...(hit.readHint ? { readHint: hit.readHint } : {}),
+    }));
+    const envelope = this.envelope("context", { ...brief, matches: { items, total: result.page.total } }, input);
+    while (items.length && size(envelope) + 80 > envelope.budget.maxChars) items.pop();
+    if (items.length < result.page.total) envelope.coverage = { complete: false, omissions: ["moreMatches"] };
+    return this.finish(envelope);
+  }
   search(input:QueryInput){
     this.c.check(input.actor,"research.view");const q=String(input.query??"").normalize("NFKC").toLowerCase(),terms=[...new Set(q.match(/[\p{L}\p{N}_.:-]+/gu)??[])],entries=[],target=input.target??"all";
     const rank=(fields:string[])=>{const body=fields.join(" ").normalize("NFKC").toLowerCase();return terms.reduce((s,t)=>s+(body.includes(t)?1:0),0)+(body.includes(q)?3:0);};
