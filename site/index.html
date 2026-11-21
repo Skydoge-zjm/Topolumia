@@ -16,11 +16,13 @@
     <meta property="og:image" content="https://skydoge-zjm.github.io/Topolumia/assets/social-preview.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Topolumia 宣传页首屏与科研拓扑地形图" />
+    <meta property="og:image:alt" content="Topolumia 宣传页首屏，Agent 的配对实验、数据曲线与研究者的描图纸" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="assets/style.css" />
+    <link rel="stylesheet" href="assets/tracing-sheets.css" />
     <script src="assets/site.js" defer></script>
+    <script src="assets/tracing-sheets.js" defer></script>
   </head>
   <body id="top">
     <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" class="symbols">
@@ -102,13 +104,6 @@
         <rect x="9" y="2" width="6" height="6" rx="1"></rect>
         <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path>
         <path d="M12 12V8"></path>
-      </symbol>
-      <symbol id="i-Layers" viewBox="0 0 24 24">
-        <path
-          d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"
-        ></path>
-        <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"></path>
-        <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"></path>
       </symbol>
       <symbol id="i-ChartNoAxesCombined" viewBox="0 0 24 24">
         <path d="M12 16v5"></path>
@@ -214,35 +209,291 @@
             ></div
           >
         </div>
-        <figure class="atlas" aria-labelledby="atlas-caption">
-          <figcaption id="atlas-caption"
-            ><span
-              ><svg class="icon" aria-hidden="true"><use href="#i-Network"></use></svg
-              ><span data-en="Research topology">科研拓扑</span></span
-            ><span class="plate-kind"><span data-en="Concept drawing">概念图</span></span></figcaption
-          >
-          <div class="atlas-field">
-            <img
-              src="assets/atlas-relief.webp"
-              width="1520"
-              height="908"
-              fetchpriority="high"
-              alt="三处研究节点由同一条路径连接，等高线逐层展开。"
-              data-en-alt="A route connects three research sites across a layered relief map."
-            />
-            <svg class="atlas-leaders" viewBox="0 0 760 454" aria-hidden="true">
-              <path d="M186 154 L146 118 H113 M394 23 H433 L446 13 H466 M548 143 L589 110 H622" />
+        <figure id="research-tracing-sheets" data-phase="idle" aria-labelledby="rts-title">
+          <div class="rts-art">
+            <svg
+              class="rts-scene"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="3 -10 687 395"
+              role="img"
+              aria-labelledby="rts-title rts-description"
+            >
+              <title id="rts-title" data-en="Agent experiments on three tracing sheets">
+                Agent 的两次实验与研究者的描图纸
+              </title>
+              <desc
+                id="rts-description"
+                data-en="An agent runs the baseline and the new method with the same seed. Observations appear on the bottom sheet, comparison curves on the middle sheet, and a pencil marks the same point on the top sheet. The sheets separate and align again."
+              >
+                Agent
+                用同一随机种子依次运行基线和新方法。底纸记录观测，中层绘出曲线，铅笔标出对应的数据点，三张描图纸展开后重新对齐。
+              </desc>
+              <defs>
+                <path
+                  id="rts-page"
+                  d="M4 1 Q1 1 1 5 L.6 191 Q.7 195 4 195 L312 195.4 Q316 195.4 317 192 L317.5 5 Q317 1 314 1 Z"
+                />
+                <clipPath id="rts-trim"><use href="#rts-page" /></clipPath>
+                <clipPath id="rts-live-curve" clipPathUnits="userSpaceOnUse">
+                  <rect class="rts-curve-window" x="0" y="0" width="318" height="196" />
+                </clipPath>
+                <pattern id="rts-graph-paper" patternUnits="userSpaceOnUse" x="24" y="19" width="13" height="13">
+                  <path d="M0 13 V0 H13" fill="none" stroke="#84a88c" stroke-width=".55" />
+                </pattern>
+                <pattern id="rts-fibre" patternUnits="userSpaceOnUse" width="16" height="13">
+                  <path
+                    d="M1.5 6.6 l.9 -.28 M8.6 11 l1.3 -.26 M12.3 3.3 l.65 -.17"
+                    fill="none"
+                    stroke="#627e62"
+                    stroke-opacity=".2"
+                    stroke-width=".52"
+                  />
+                </pattern>
+                <path
+                  id="rts-method-line"
+                  d="M35 150 C47 149 52 139 63 138 S80 124 88 126 S101 135 111 125 S130 103 141 104 S156 112 166 101 S181 88 190 90 S199 95 205 85 S220 66 228 64 S241 69 249 58 S269 46 279 50 S290 44 298 39"
+                />
+                <path
+                  id="rts-base-line"
+                  d="M35 150 C47 150 54 145 64 144 S79 136 89 137 S103 144 115 136 S131 122 143 124 S158 130 170 119 S183 111 194 112 S207 111 217 104 S235 99 245 101 S262 89 271 90 S288 84 298 85"
+                />
+                <g id="rts-sample"><circle r="2.05" fill="#f6f8eb" stroke="#668363" stroke-width=".95" /></g>
+                <g id="rts-measure"><circle r="1.65" fill="#567654" /></g>
+                <g id="rts-registration" fill="none" stroke-linecap="round">
+                  <circle r="2.8" stroke="#2e674e" stroke-width="1.1" />
+                  <path d="M-5 0h2 M3 0h2 M0 -5v2 M0 3v2" stroke="#47694b" stroke-width=".7" />
+                </g>
+              </defs>
+
+              <g class="rts-cable" aria-hidden="true" fill="none">
+                <path class="rts-cable-line" stroke="#95aa93" stroke-width="1.3" stroke-linecap="round" />
+                <circle class="rts-signal" r="3.1" fill="#367758" stroke="#fcfbf4" stroke-width="1" />
+              </g>
+              <g class="rts-bottom">
+                <g transform="rotate(4.6 410.56 156.36)">
+                  <g transform="matrix(1.04 -.26 .46 .76 144 167)">
+                    <use href="#rts-page" transform="translate(0 2)" fill="#c3ccb2" stroke="#96a586" stroke-width="1" />
+                    <use href="#rts-page" fill="#e5edd8" stroke="#91a384" stroke-width="1.1" />
+                    <path d="M286 17h38q3 0 3 3v19q0 3-3 3h-38Z" fill="#a9c29e" stroke="#749375" stroke-width=".65" />
+                    <path d="M319 21v17m2-17v17" fill="none" stroke="#66876c" stroke-width=".7" />
+                    <g clip-path="url(#rts-trim)">
+                      <rect x="18" y="15" width="282" height="159" fill="url(#rts-graph-paper)" />
+                      <use href="#rts-page" fill="url(#rts-fibre)" opacity=".58" />
+                      <path d="M28 156V37 M28 156H300" fill="none" stroke="#799171" stroke-width="1" />
+                      <path
+                        d="M51 155v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3m26-3v3"
+                        fill="none"
+                        stroke="#799171"
+                        stroke-width=".8"
+                      />
+                      <g class="rts-observations">
+                        <use href="#rts-sample" x="35" y="150" />
+                        <use href="#rts-sample" x="47" y="147" />
+                        <use href="#rts-sample" x="63" y="144" />
+                        <use href="#rts-sample" x="78" y="139" />
+                        <use href="#rts-sample" x="89" y="137" />
+                        <use href="#rts-sample" x="102" y="139" />
+                        <use href="#rts-sample" x="115" y="136" />
+                        <use href="#rts-sample" x="131" y="127" />
+                        <use href="#rts-sample" x="143" y="124" />
+                        <use href="#rts-sample" x="157" y="124" />
+                        <use href="#rts-sample" x="170" y="119" />
+                        <use href="#rts-sample" x="184" y="113" />
+                        <use href="#rts-sample" x="194" y="112" />
+                        <use href="#rts-sample" x="217" y="104" />
+                        <use href="#rts-sample" x="228" y="101" />
+                        <use href="#rts-sample" x="245" y="101" />
+                        <use href="#rts-sample" x="271" y="90" />
+                        <use href="#rts-sample" x="298" y="85" />
+                        <use href="#rts-measure" x="35" y="150" />
+                        <use href="#rts-measure" x="47" y="146" />
+                        <use href="#rts-measure" x="63" y="138" />
+                        <use href="#rts-measure" x="78" y="130" />
+                        <use href="#rts-measure" x="88" y="126" />
+                        <use href="#rts-measure" x="101" y="130" />
+                        <use href="#rts-measure" x="111" y="125" />
+                        <use href="#rts-measure" x="126" y="109" />
+                        <use href="#rts-measure" x="141" y="104" />
+                        <use href="#rts-measure" x="154" y="106" />
+                        <use href="#rts-measure" x="166" y="101" />
+                        <use href="#rts-measure" x="181" y="91" />
+                        <use href="#rts-measure" x="190" y="90" />
+                        <use href="#rts-measure" x="205" y="85" />
+                        <use href="#rts-measure" x="216" y="71" />
+                        <use href="#rts-measure" x="228" y="64" />
+                        <use href="#rts-measure" x="249" y="58" />
+                        <use href="#rts-measure" x="279" y="50" />
+                        <use href="#rts-measure" x="298" y="39" />
+                      </g>
+                    </g>
+                    <g class="rts-registered-sample" transform="translate(228 64)"><use href="#rts-registration" /></g>
+                    <circle
+                      class="rts-paper-port"
+                      cx="1.5"
+                      cy="112"
+                      r="2.6"
+                      fill="#f7f6e9"
+                      stroke="#69856a"
+                      stroke-width="1.05"
+                    />
+                  </g>
+                </g>
+              </g>
+
+              <g class="rts-middle">
+                <g transform="matrix(1.04 -.26 .46 .76 144 167)">
+                  <path
+                    d="M1 191 Q1 196 5 197 L313 197 Q317 197 317 192"
+                    fill="#c2cdb6"
+                    stroke="#a0b197"
+                    stroke-width=".7"
+                  />
+                  <use href="#rts-page" fill="#f6f8e8" fill-opacity=".56" stroke="#91aa91" stroke-width="1.05" />
+                  <path d="M10 1h29v6H10Z" fill="#acc1a4" opacity=".8" />
+                  <g fill="none" stroke="#849a83" stroke-opacity=".66" stroke-width=".65">
+                    <path d="M34 158h264 M34 121h264 M34 82h264 M34 43h264" stroke-dasharray=".8 4.2" />
+                    <path d="M28 40v120h270" />
+                    <path d="M35 160v3m52-3v3m53-3v3m53-3v3m53-3v3m51-3v3" />
+                  </g>
+                  <g clip-path="url(#rts-live-curve)">
+                    <path
+                      d="M35 150 C47 149 52 139 63 138 S80 124 88 126 S101 135 111 125 S130 103 141 104 S156 112 166 101 S181 88 190 90 S199 95 205 85 S220 66 228 64 S241 69 249 58 S269 46 279 50 S290 44 298 39 L298 85 C288 84 281 89 271 90 S255 102 245 101 S226 98 217 104 S205 113 194 112 S180 111 170 119 S154 126 143 124 S125 131 115 136 S99 137 89 137 S75 140 64 144 S45 150 35 150Z"
+                      fill="#96b798"
+                      fill-opacity=".22"
+                    />
+                    <use
+                      href="#rts-base-line"
+                      fill="none"
+                      stroke="#627d64"
+                      stroke-width="1.8"
+                      stroke-dasharray="5 3.8"
+                      stroke-linecap="round"
+                    />
+                    <use
+                      href="#rts-method-line"
+                      fill="none"
+                      stroke="#245f48"
+                      stroke-width="2.65"
+                      stroke-linecap="round"
+                    />
+                    <circle cx="228" cy="64" r="3.6" fill="#f8f8e9" stroke="#245f48" stroke-width="1.55" />
+                  </g>
+                  <path
+                    d="M52 181h23m8 0h17"
+                    stroke="#739072"
+                    stroke-width="1.25"
+                    stroke-linecap="round"
+                    stroke-dasharray="3 2"
+                  />
+                  <path d="M113 181h27" stroke="#386b50" stroke-width="1.9" stroke-linecap="round" />
+                </g>
+              </g>
+
+              <g class="rts-top">
+                <g transform="rotate(-4.6 410.56 156.36)">
+                  <g transform="matrix(1.04 -.26 .46 .76 144 167)">
+                    <use href="#rts-page" fill="#fffaf0" fill-opacity=".29" stroke="#a5ad96" stroke-width=".98" />
+                    <use href="#rts-page" fill="url(#rts-fibre)" opacity=".38" />
+                    <path d="M291 1h23q3 0 3.5 4v19Z" fill="#f0edda" stroke="#b1b59f" stroke-width=".7" />
+                    <path d="M290 1q12 11 27.5 23" stroke="#9ea78e" fill="none" stroke-width=".7" />
+                    <g class="rts-ink" fill="none" stroke="#ae5b3e" stroke-linecap="round" stroke-linejoin="round">
+                      <path
+                        class="rts-circle-stroke"
+                        pathLength="1"
+                        d="M246 54c-5-8-19-11-31-6-15 6-18 20-8 28 9 8 30 7 41-2 9-8 6-18-4-23-7-4-15-5-22-3"
+                        stroke-width="2.1"
+                      />
+                      <path d="M210 77c7 5 19 6 28 3m-30-28c4-4 10-6 16-7" stroke-width=".85" opacity=".8" />
+                      <path d="M249 76c9 7 20 7 31 5" stroke-width="1.25" />
+                      <path d="M72 152c14 0 26-1 38-5m-34 8c10 0 18-1 24-2" stroke-width="1.45" opacity=".78" />
+                    </g>
+                    <g fill="none" stroke="#a5ac97" stroke-width=".8" stroke-linecap="round">
+                      <path d="M11 30v-9h8m274 154h9v-8" />
+                    </g>
+                  </g>
+                </g>
+              </g>
+
+              <g class="rts-register" aria-hidden="true">
+                <path
+                  d="M370.56 206.36 L410.56 156.36"
+                  fill="none"
+                  stroke="#71876b"
+                  stroke-width="1.05"
+                  stroke-dasharray="2 4"
+                />
+                <path
+                  class="rts-upper-guide"
+                  d="M410.56 156.36 L453.56 99.36"
+                  fill="none"
+                  stroke="#ad6c4f"
+                  stroke-width="1.05"
+                  stroke-dasharray="2 4"
+                />
+                <circle cx="370.56" cy="206.36" r="2.4" fill="#fbfaf1" stroke="#779375" stroke-width="1.2" />
+                <circle cx="410.56" cy="156.36" r="2.5" fill="#fbfaf1" stroke="#2a6249" stroke-width="1.2" />
+                <circle
+                  class="rts-upper-guide"
+                  cx="453.56"
+                  cy="99.36"
+                  r="2.2"
+                  fill="#fbfaf1"
+                  stroke="#ab6548"
+                  stroke-width="1.2"
+                />
+              </g>
+
+              <g class="rts-pencil">
+                <g class="rts-pen-shift">
+                  <g transform="translate(429 150) rotate(-22)">
+                    <path
+                      d="M0 0 21-4.4 181-4.4 185-2.8 185 3 181 4.4 21 4.4Z"
+                      fill="#456b56"
+                      stroke="#41634d"
+                      stroke-width=".7"
+                      stroke-linejoin="round"
+                    />
+                    <path d="M20-4.4h156v2.15H18Z" fill="#88a188" />
+                    <path d="M18-2.25h160v3.7H18Z" fill="#5d8168" />
+                    <path d="M17 1.45h161v2.9H21Z" fill="#3c624d" />
+                    <path
+                      d="M0 0 22-4.4 19-2.4 22-.6 19 1.1 21.5 4.4Z"
+                      fill="#dbbc91"
+                      stroke="#b09775"
+                      stroke-width=".5"
+                      stroke-linejoin="round"
+                    />
+                    <path d="m0 0 5.3-1 .4 1.9Z" fill="#65544a" />
+                    <path d="M174-4.4h3.3v8.8H174Z" fill="#ddd7b8" />
+                    <path d="M177.3-4.4h3.7q5.7.2 5.7 4.4t-5.7 4.4h-3.7Z" fill="#b47156" />
+                    <path d="M180.8-3.6q4.1.1 4.4 2" fill="none" stroke="#d49b7d" stroke-width=".8" />
+                  </g>
+                </g>
+              </g>
             </svg>
-            <span class="terrain-note tn-paper"><span data-en="Paper">文献</span></span
-            ><span class="terrain-note tn-question"><span data-en="Question">问题</span></span
-            ><span class="terrain-note tn-run"><span data-en="Experiment">实验</span></span>
           </div>
-          <div class="atlas-foot"
-            ><span
-              ><svg class="icon" aria-hidden="true"><use href="#i-Layers"></use></svg
-              ><span data-en="Research links and evidence">研究关系与证据</span></span
-            ><span class="scale" aria-hidden="true"></span
-          ></div>
+          <div class="rts-terminal" aria-hidden="true">
+            <span class="rts-term-head"
+              ><span class="rts-agent-name"
+                ><svg class="icon" aria-hidden="true"><use href="#i-Terminal"></use></svg>Agent</span
+              ></span
+            >
+            <span class="rts-command" data-cmd="baseline"
+              ><span>run baseline</span><span class="rts-state">✓</span></span
+            >
+            <span class="rts-command" data-cmd="method"><span>run method</span><span class="rts-state">✓</span></span>
+            <span class="rts-seed"><span>seed 17</span><span class="rts-count">2/2</span></span>
+            <span class="rts-socket" aria-hidden="true"></span>
+          </div>
+          <button
+            type="button"
+            class="rts-surface"
+            hidden
+            aria-label="播放或暂停科研过程动画"
+            data-en-aria="Play or pause the research animation"
+            aria-describedby="rts-description"
+            aria-pressed="false"
+          ></button>
         </figure>
       </section>
       <section class="story" id="story" aria-labelledby="story-title">
