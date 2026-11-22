@@ -150,6 +150,14 @@ test("research discovery excludes application files and returns actionable schem
   const invalid=await f.call("get_schema",{topic:"nodeCore",name:"PaperCore"});assert.equal(invalid.isError,true);assert.ok(JSON.stringify(invalid.structuredContent).includes("availableNames"));
   const invalidCore=await f.call("create_candidate",{reason:"Actual metadata error recovery",nodes:[{kind:"paper",core:{nodeName:"Example",arxivId:"2502.14321"}}]});
   assert.equal(invalidCore.isError,true);assert.ok(invalidCore.structuredContent.error.detail[0].allowedFields.includes("identifiers"));
+  const wrongBlock = await f.call("create_candidate", { reason: "Package observations", nodes: [{ kind: "note", core: { nodeName: "Field" }, blocks: [
+    { type: "richText", title: "Context", payload: { body: "Observations" } },
+    { type: "table", title: "Signed offsets", payload: { columns: [{ key: "v", label: "Value", type: "number" }], rows: [{ v: 3 }] } },
+  ] }] });
+  const issue = wrongBlock.structuredContent.error.detail[0];
+  assert.equal(issue.blockTitle, "Signed offsets");
+  assert.deepEqual(issue.path, ["payload", "columns", 0]);
+  assert.equal(issue.example.type, "table");
   await f.data("get_schema",{topic:"nodeCore",name:"paper"});
   const project=f.app.collaboration.createProject({id:"separate-workspace",name:"Separate scientific workspace"},f.actor);
   const projectRuntime=await f.app.getRuntime(project.id);
