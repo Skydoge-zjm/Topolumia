@@ -719,12 +719,21 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       return q.page("experiment", data.items, params, { mode: "available", offset: input.recordOffset ?? 0, records: data.items.map(item => item.projectSource) }, null, { total: data.total, nextOffset: data.nextOffset });
     }
     if (input.mode === "snapshot") {
-      const snapshot = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : this.c.ingestion.snapshot(input.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。", 422), actor);
-      return q.finish(q.envelope("experiment", {
+      const snapshot = input.snapshotId ? this.c.ingestion.getSnapshot(input.snapshotId, actor) : this.c.ingestion.snapshot(input.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。", 422), actor, input.nodeId);
+      const query = input.query?.trim().toLowerCase();
+      const runs = query ? this.collectionRuns({ id: snapshot.blockId, recordCollection: snapshot.recordCollection }, snapshot.runs, false)
+        .filter(run => run.label.toLowerCase().includes(query) || run.id.toLowerCase().includes(query)) : [];
+      const matches = runs.slice(0, 3).map(run => ({ id: run.id, label: run.label,
+        readHint: { tool: "read_experiment", mode: "metrics", snapshotId: snapshot.id, runId: run.id } }));
+      const result = q.envelope("experiment", {
         snapshot: { id: snapshot.id, blockId: snapshot.blockId, nodeId: snapshot.nodeId, watermark: snapshot.watermark, blockRevision: snapshot.blockRevision, createdAt: snapshot.createdAt },
         sourceRef: { kind: "experimentSnapshot", value: snapshot.id },
-        readHint: { tool: "read_experiment", mode: "runs", nodeId: snapshot.nodeId, blockId: snapshot.blockId, snapshotId: snapshot.id },
-      }, params));
+        readHint: { tool: "read_experiment", mode: "runs", nodeId: snapshot.nodeId, blockId: snapshot.blockId, snapshotId: snapshot.id, ...(query ? { query: input.query } : {}) },
+        ...(query ? { matchedRuns: { total: runs.length, items: matches } } : {}),
+      }, params);
+      while (matches.length && JSON.stringify(result).length + 96 > result.budget.maxChars) matches.pop();
+      if (matches.length < runs.length) result.coverage = { complete: false, omissions: ["moreRuns"] };
+      return q.finish(result);
     }
     if (input.mode === "events") {
       const nodeId = input.nodeId ?? fail("INPUT_INVALID", "实验身份缺失。", 422), blockId = input.blockId ?? fail("INPUT_INVALID", "记录块身份缺失。", 422);
@@ -814,15 +823,17 @@ export class ExperimentRecordService extends ExperimentRecordImporter {
       input.expectedRevision !== view.revision
     )
       fail("OBJECT_VERSION_CONFLICT", "实验执行记录已更新，请重新读取。", 409);
-    if (input.mode === "runs")
+    if (input.mode === "runs") {
+      const query = input.query?.trim().toLowerCase();
       return q.page(
         "experiment",
-        view.runs,
+        query ? view.runs.filter(run => run.label.toLowerCase().includes(query) || run.id.toLowerCase().includes(query)) : view.runs,
         params,
-        { nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
+        { nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, query, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
         receipts,
         { nodeId, blockId: input.blockId, snapshotId: input.snapshotId, revision: view.revision, watermark: pinnedDirectory?.watermark ?? (input.blockId ? this.c.ingestion.version(input.blockId, actor).durableWatermark : undefined) },
       );
+    }
     if (input.mode === "materials")
       return q.page(
         "experiment",

@@ -98,6 +98,15 @@ test("split JSON exports retain metadata, wall times and run identity through in
   const node = create("experiment", "Split JSON history");
   const block = add(node.id, { title: "Training records", type: "experimentRecord", payload: { provider: "wandb", runs: inspected.runs.map(({ metrics, ...run }) => run) }, representations: assets.map(assetId => ({ kind: "asset", assetId, role: "source" })) });
   const input = { nodeId: node.id, blockId: block.id, runId: block.payload.runs[0].runId, maxChars: 16000 };
+  await assert.rejects(c.records.read({ mode: "snapshot", nodeId: "another-experiment", blockId: block.id }, actor), { code: "INGESTION_SCOPE_MISMATCH" });
+  const frozen = await c.records.read({ mode: "snapshot", nodeId: node.id, blockId: block.id, query: "train", maxChars: 2000 }, actor);
+  assert.equal(frozen.data.matchedRuns.items[0].id, input.runId);
+  const { tool, ...lookup } = frozen.data.matchedRuns.items[0].readHint;
+  assert.equal(lookup.snapshotId, frozen.data.snapshot.id);
+  const directory = await executeResearchTool({ researchCommands: c }, tool, lookup, actor);
+  assert.ok(directory.data.items.some(line => line.key === "loss"));
+  const absent = await c.records.read({ mode: "runs", snapshotId: lookup.snapshotId, query: "unknown-run" }, actor);
+  assert.equal(absent.data.items.length, 0);
   const exact = () => c.records.read({ ...input, mode: "series", metric: "loss", xKey: "step" }, actor);
   const expected = [{ x: 0, y: 1, timestamp: 1234 }, { x: 1, y: 0.25, timestamp: 2345 }];
   assert.deepEqual((await exact()).data.points, expected);
