@@ -32,7 +32,12 @@ export function simulateChange(c:ResearchCommandService, operations:ResearchOper
   const touch = (owner:ResearchObjectRef, part?:Set<string>) => { const key = objectKey(owner); touched.set(key, owner); part?.add(key); };
   const cas = (actual:unknown, expected:unknown, id:string) => { if (actual !== expected) fail("OBJECT_VERSION_CONFLICT", "Research object changed. Reload and review.", 409, { id, expected, current: actual }); };
   const reads = c.store.all("receipts").filter(read => read.principalId === principal(actor) && read.researchSessionId === (actor.sessionId ?? null));
-  if (evidenceIds?.some(id => !reads.some(read => read.id === id))) fail("READ_RECEIPT_INVALID", "Unknown or foreign reading receipt.");
+  if (evidenceIds?.length) {
+    const known = new Set(reads.map(r => r.id));
+    const invalidIndices = evidenceIds.flatMap((id, i) => known.has(id) ? [] : [i]);
+    if (invalidIndices.length) fail("READ_RECEIPT_INVALID", "Use the id from the exact read's readReceipts array at the indicated positions.", 422,
+      { field: "evidenceReadIds", invalidIndices, recovery: "Source references, snapshot IDs and transfer delivery receipts have separate fields." });
+  }
   const permitted = evidenceIds === undefined ? reads : reads.filter(read => evidenceIds.includes(read.id));
   for (const read of evidenceIds ? permitted : []) {
     if (read.scope === "candidate" && read.candidateId !== candidateId) fail("READ_RECEIPT_INVALID", "Candidate evidence belongs to another proposal.");
