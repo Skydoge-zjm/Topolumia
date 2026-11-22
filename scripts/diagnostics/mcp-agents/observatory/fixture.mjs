@@ -30,7 +30,6 @@ const ruleText = (s, amended) => [
   amended ? "Apply the newly signed station-ledger offset to Reed only (corrected error = raw Reed error + offset). Preserve both original snapshots." :
     "Use raw blind-run values for this preliminary decision. Report single-site scope; a city-wide performance claim requires independent stations.",
 ].join("\n");
-const fileSource = (value, id) => ({ kind: "file", value, ...(id ? { assetId: id } : {}) });
 const rep = id => ({ kind: "asset", assetId: id, role: "source" });
 const nodeSpecs = [
   ["paper", "paper", "Radiation shield intercomparison", { paperTitle: "A synthetic intercomparison of passive urban radiation shields", authors: ["Rina Vale"], year: 2023 }],
@@ -121,7 +120,7 @@ export async function seedObservatory(runtime, actor, workspace, variant = "plaz
     note("draft","draft","Obsolete policy","Unofficial cutoff 0.025 °C. The Municipal instrument review did not sign this memo."),
     note("board","board","Decision vocabulary","The review register records DEPLOY or HOLD for one station. Route evidence packets to this board."),
   ]).allocation;
-  direct([add("chart", nodeRef(nodes.ledger), "chart", "Field offsets by station", { chartType: "bar", dataBlockId: blocks["block:ledger"] })]);
+  const chart = direct([add("chart", nodeRef(nodes.ledger), "chart", "Field offsets by station", { chartType: "bar", dataBlockId: blocks["block:ledger"] })]).allocation["block:chart"];
   const atlas = await recordBlock(c, actor, nodes.atlas, "atlas", site.atlas, site);
   const reed = await recordBlock(c, actor, nodes.reed, "reed", site.reed, site);
   const source = files.find(f => f.ref === "file:" + ruleFile);
@@ -131,6 +130,8 @@ export async function seedObservatory(runtime, actor, workspace, variant = "plaz
     indexedFiles: files.map(f => ({ ref: f.ref, version: f.version })), recordRuns: 4, groupDepth: 3 };
   return { variant, site, nodes, groups, ledger: blocks["block:ledger"], register: blocks["block:register"], atlas, reed,
     rule: source.ref, initialVersion: source.version, basisAsset: basis.id, basisChecksum: sha256(csv), inventory,
+    materials: { chart, code: blocks["block:code"], quote: blocks["block:quote"], image: blocks["block:map"], document: blocks["block:source"],
+      link: blocks["block:url"], file: blocks["block:notesFile"], imageAsset: image.id, imageChecksum: image.checksum.replace(/^sha256:/, ""), manual: manual.id },
     initialGain: number(site.atlas - site.reed), corrected: number(site.reed + site.offset), finalGain: number(site.atlas - site.reed - site.offset) };
 }
 

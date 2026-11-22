@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { issueCorrection } from "./fixture.mjs";
 
-export const observatoryTasks = ["panel", "packet"];
+export const observatoryCore = ["panel", "packet"];
+export const observatoryTasks = [...observatoryCore, "appendix"];
 export function observatoryPrompts(site) {
   return {
     panel: [
@@ -11,6 +12,9 @@ export function observatoryPrompts(site) {
     ],
     packet: [
       `Prepare a reviewable evidence packet for station ${site.station} with exactly one new group called Field evidence packet nested under the existing Observatory operations group. Identify the current protocol note, the signed calibration ledger and the sealed challenger experiment. Use exactly those three formal nodes as members with roles protocol, calibration and challenger. Leave archived pilots out. On the group put a structured table with the numeric signed Reed offsets for ${site.station} and ${site.other}, and a short provenance paragraph explaining why the daylight pilot cannot substitute for blind validation. Pin the exact signed-ledger block read. Preserve the registered instrument-register.csv original as a group attachment, also deliver its byte-identical original to in/instrument-register.csv. Link the group to its formal municipal review board with an outgoing informs relation. Read back the pending membership and table, and return the single candidate ID and the register checksum. Use Topolumia MCP for research operations.`,
+    ],
+    appendix: [
+      `The independent reproducibility editor needs a methods appendix for ${site.station}. Trace the Field offsets by station chart to its declared data table and find the signed value for ${site.other}. Verify whether the handover register's file block and the calibration ledger's spreadsheet refer to the same registered original. Recover the actual blind split filter from the code, the paper's external-validity quotation and catalogue URL, and the rule from the metrology original. Read the recorded alternative text of the layout image and deliver its original to in/layout.png. Create one pending note with a structured evidence crosswalk containing those findings, including the chart type, backing table ID, numeric offset and shared register asset ID. Attach the same layout asset and cite the code, quotation and metrology text reads. Check the pending crosswalk and report the candidate ID and the image checksum. Use Topolumia for research operations.`,
     ],
   };
 }

@@ -8,7 +8,7 @@ import { cases, grade, seedCase } from "./cases.mjs";
 import { paperPrompt } from "./paper-case.mjs";
 import { meteredGateway, model, providerTokens } from "./gateway.mjs";
 import { seedObservatory, sites } from "./observatory/fixture.mjs";
-import { observatoryTasks, observatoryPrompts, runObservatoryTurns, reviewInSandbox } from "./observatory/tasks.mjs";
+import { observatoryCore, observatoryTasks, observatoryPrompts, runObservatoryTurns, reviewInSandbox } from "./observatory/tasks.mjs";
 import { gradeObservatory } from "./observatory/score.mjs";
 
 const build = path.resolve(process.env.TOPOLUMIA_EVAL_BUILD || "dist");
@@ -23,14 +23,14 @@ const [{ startMvpServer }, { CodexAgentAdapter }, { ClaudeCodeAgentAdapter }, { 
 const adapters = { codex: CodexAgentAdapter, claude: ClaudeCodeAgentAdapter, opencode2: OpenCodeV2AgentAdapter };
 const [output, selectedRuntime = "all", selectedCase = "all"] = process.argv.slice(2);
 if (!output || !["all", ...Object.keys(adapters)].includes(selectedRuntime) || !["all", "probe", "paper", "observatory", ...observatoryTasks, ...Object.keys(cases)].includes(selectedCase))
-  throw new Error("Usage: node scripts/diagnostics/mcp-agents/run.mjs NEW_OUTPUT_DIR [all|codex|claude|opencode2] [all|dossier|curves|paper|probe|observatory|panel|packet]");
+  throw new Error("Usage: node scripts/diagnostics/mcp-agents/run.mjs NEW_OUTPUT_DIR [all|codex|claude|opencode2] [all|dossier|curves|paper|probe|observatory|panel|packet|appendix]");
 const directory = path.resolve(output);
 const runtimes = selectedRuntime === "all" ? Object.keys(adapters) : [selectedRuntime];
-const scenarios = selectedCase === "all" ? Object.keys(cases) : selectedCase === "observatory" ? observatoryTasks : [selectedCase];
+const scenarios = selectedCase === "all" ? Object.keys(cases) : selectedCase === "observatory" ? observatoryCore : [selectedCase];
 const observatory = scenarios.some(key => observatoryTasks.includes(key));
 const variant = process.env.TOPOLUMIA_EVAL_SITE ?? "plaza";
 if (observatory && !Object.hasOwn(sites, variant)) throw new Error("Unknown TOPOLUMIA_EVAL_SITE");
-const prompts = observatory ? observatoryPrompts(sites[variant]) : selectedCase === "paper" ? { paper: paperPrompt } : cases;
+const prompts = observatory ? Object.fromEntries(scenarios.map(key => [key, observatoryPrompts(sites[variant])[key]])) : selectedCase === "paper" ? { paper: paperPrompt } : cases;
 for (const runtime of runtimes) {
   const api = runtime === "claude" ? "ANTHROPIC" : "OPENAI";
   for (const suffix of ["URL", "KEY"]) if (!process.env["TOPOLUMIA_EVAL_" + api + "_" + suffix]) throw new Error("Missing TOPOLUMIA_EVAL_" + api + "_" + suffix);
@@ -47,7 +47,7 @@ await writeFile(path.join(directory, "manifest.json"), JSON.stringify({
   model, started: new Date().toISOString(), head: process.env.TOPOLUMIA_EVAL_REVISION || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   contractHash: hash(JSON.stringify(contract) + MCP_INSTRUCTIONS), caseHash: hash(await readFile(new URL("cases.mjs", import.meta.url))),
   promptHash: hash(JSON.stringify(prompts)), evaluatorHashes,
-  prompts, ...(observatory ? { suite: "observatory", variant } : {}), tools: contract.map(t => t.name), definitionChars: JSON.stringify(contract).length,
+  prompts, ...(observatory ? { suite: "observatory", variant, scenarios, runtimes } : {}), tools: contract.map(t => t.name), definitionChars: JSON.stringify(contract).length,
   nativeReadPolicy: "Isolated workspace reads allowed via native clients. Other permission prompts are declined.",
 }, null, 2));
 
@@ -150,8 +150,8 @@ async function run(runtime, key) {
     if (observatory && oracle) {
       const stages = report.stages ?? [];
       report.formalIntact = stages.length > 0 && stages.every(s => s.formalBefore === s.formalAfter);
-      if (key === "packet") {
-        const bytes = await readFile(path.join(binding.env.TOPOLUMIA_TRANSFER_ROOT, "in", "instrument-register.csv")).catch(() => null);
+      if (key === "packet" || key === "appendix") {
+        const bytes = await readFile(path.join(binding.env.TOPOLUMIA_TRANSFER_ROOT, "in", key === "packet" ? "instrument-register.csv" : "layout.png")).catch(() => null);
         report.downloadedChecksum = bytes ? hash(bytes) : null;
       }
       report.review = reviewInSandbox(app.researchCommands, actor, stages.at(-1)?.candidates ?? []);

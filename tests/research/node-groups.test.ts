@@ -27,8 +27,8 @@ test("a missing parent receipt can be recovered without broadening the explicit 
 
 test("inferred relationship revisions are bound to actual observations and survive into approval", async t => {
   const f = await fixture(t), c = f.runtime.researchCommands;
-  const make = name => c.researchNodes.createNode("note", { nodeName: name }, f.actor).node;
-  const a = make("Field report"), b = make("Review board");
+  const make = async name => (await f.api("POST", "/api/research-nodes", { kind: "note", core: { nodeName: name } })).body.node;
+  const a = await make("Field report"), b = await make("Review board");
   const input = { reason: "Route review", relations: [{ from: node(a.id), to: node(b.id), type: "informs" }] };
   assert.equal((await f.call("create_candidate", input)).isError, true);
   const seen = await f.data("read_nodes", { nodeIds: [a.id, b.id] });

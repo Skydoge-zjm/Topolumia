@@ -38,6 +38,33 @@ export function gradeObservatory(report, trace) {
     candidateReported: Boolean(last && stages.at(-1)?.answer?.includes(last.id)),
     humanApplied: Boolean(review?.applied),
   };
+  if (report.case === "appendix") {
+    const m = o.materials;
+    const crosswalk = last?.blocks.find(block => block.type === "table");
+    const cells = (crosswalk?.payload?.rows ?? []).flatMap(row => Object.values(row));
+    const body = cells.join(" ") + " " + prose(last);
+    const readBlock = (id, view) => calls.some(c => c.tool === "read_blocks" && c.args.blockId === id && c.args.view === view);
+    const exact = id => last?.evidence?.some(r => r.object.id === id && r.disclosure === "content");
+    const alt = "Reference and shield locations on the field transect";
+    const imageMetadata = calls.some(c => c.tool === "read_blocks" && c.args.blockId === m.image && JSON.stringify(c.result.data).includes(alt));
+    return { ...common,
+      chartSource: body.includes(o.ledger) && /\bbar\b/i.test(body) && calls.some(c => c.tool === "read_blocks" && c.args.blockId === m.chart && JSON.stringify(c.result.data).includes(o.ledger)),
+      offset: cells.some(v => sameNumber(v,site.otherOffset)) && cells.includes(site.other) && readBlock(o.ledger,"values"),
+      sharedOriginal: body.includes(o.basisAsset) && readBlock(o.register,"manifest") && readBlock(m.file,"manifest"),
+      code: body.includes("blind") && /split/.test(body) && readBlock(m.code,"text"),
+      primaryClaim: /single site cannot establish a city.wide effect/i.test(body) && readBlock(m.quote,"text"),
+      catalogue: body.includes("https://example.org/alder/field-study") && readBlock(m.link,"text"),
+      metrology: /offset/i.test(body) && /shield/i.test(body) && /station/i.test(body) && (readBlock(m.document,"text") ||
+        calls.some(c => c.tool === "read_assets" && c.args.assetId === m.manual && c.args.view === "text")),
+      alt: imageMetadata && body.toLowerCase().includes(alt.toLowerCase()),
+      pinnedEvidence: Boolean(exact(m.code) && exact(m.quote) && (exact(m.document) || exact(m.manual))),
+      downloaded: report.downloadedChecksum === m.imageChecksum && calls.some(c => c.tool === "transfer_asset" && c.args.direction === "download"),
+      attached: assetAttached(last,m.imageAsset),
+      reportedDigest: Boolean(a?.answer?.includes(m.imageChecksum)),
+      verifiedTable: Boolean(crosswalk && calls.some(c => c.tool === "read_blocks" && c.args.candidateId === last.id && c.args.blockId === crosswalk.id && c.args.view === "values" && c.result.data.items?.length)),
+      persisted: Boolean(review?.applied && review.blocks.some(bl => bl.id === crosswalk?.id) && assetAttached(review,m.imageAsset)),
+    };
+  }
   if (report.case === "packet") {
     const group = last?.groups?.[0];
     const expected = [[o.nodes.protocol,"protocol"],[o.nodes.ledger,"calibration"],[o.nodes.reed,"challenger"]];
