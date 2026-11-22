@@ -8,6 +8,23 @@ import path from "node:path";
 const node = (id: string) => ({ kind: "node", id });
 const group = (id: string) => ({ kind: "group", id });
 
+test("a missing parent receipt can be recovered without broadening the explicit evidence scope", async t => {
+  const f = await fixture(t);
+  const parent = (await f.api("POST", "/api/research-groups", { core: { nodeName: "Operations" } })).body.group;
+  const input = { reason: "New packet", evidenceReadIds: [], groups: [{ core: { nodeName: "Evidence packet" },
+    parentId: parent.id, expectedParentRevision: parent.membershipRevision }] };
+  const unseen = (await f.call("create_candidate", input)).structuredContent.error;
+  assert.equal(unseen.code, "EVIDENCE_SCOPE_INSUFFICIENT");
+  assert.equal(unseen.detail.includeEvidenceReadId, undefined);
+  const { tool, ...args } = unseen.detail.readHint;
+  const page = await f.data(tool, args);
+  const observed = page.readReceipts.find(r => r.object.kind === "membership");
+  const omitted = (await f.call("create_candidate", input)).structuredContent.error;
+  assert.equal(omitted.detail.includeEvidenceReadId, observed.id);
+  const saved = await f.data("create_candidate", { ...input, evidenceReadIds: [observed.id] });
+  assert.equal(saved.data.status, "pending");
+});
+
 test("groups share content, typed boundaries and the real MCP/CLI candidate path", async t => {
   const f = await fixture(t), c = f.runtime.researchCommands;
   const createNode = async (name: string) => { const result = await f.api("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: name } }); assert.equal(result.status, 201, JSON.stringify(result.body)); return result.body.node.id; };

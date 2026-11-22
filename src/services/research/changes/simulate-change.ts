@@ -46,7 +46,19 @@ export function simulateChange(c:ResearchCommandService, operations:ResearchOper
   }
   const evidence = (kind:string, id:string, version:ReadReceipt["version"], owner:ResearchObjectRef, content = false) => {
     if (!checkEvidence || !actor.isAgent || newObjects.has(objectKey(owner))) return;
-    if (!permitted.some(read => read.scope === "formal" && read.object.kind === kind && read.object.id === id && sameObject(read.owner, owner) && read.version === version && (!content || read.disclosure !== "summary"))) fail("EVIDENCE_SCOPE_INSUFFICIENT", "Read this object at its current version before changing it.", 422, { kind, id, version, owner });
+    const matches = (read: ReadReceipt) => read.scope === "formal" && read.object.kind === kind && read.object.id === id &&
+      sameObject(read.owner, owner) && read.version === version && (!content || read.disclosure !== "summary");
+    if (permitted.some(matches)) return;
+    const observed = reads.find(matches);
+    if (observed) fail("EVIDENCE_SCOPE_INSUFFICIENT", "Include this session's matching receipt in evidenceReadIds along with the scientific citations.", 422,
+      { kind, id, version, owner, includeEvidenceReadId: observed.id });
+    const block = kind === "block" ? originalBlocks.get(id) : undefined;
+    const readHint = block ? { tool: "read_blocks", ...c.queries.blockReadHint(block) } :
+      kind === "collection" ? { tool: "read_blocks", mode: "list", owner } :
+      kind === "relation" ? { tool: "neighbors", object: owner } :
+      owner.kind === "group" ? { tool: "read_groups", mode: "show", groupId: owner.id, ...(kind === "impact" ? { section: "deleteImpact" } : {}) } :
+      { tool: "read_nodes", nodeIds: [owner.id] };
+    fail("EVIDENCE_SCOPE_INSUFFICIENT", "Read the formal object and include the matching returned receipt in evidenceReadIds.", 422, { kind, id, version, owner, readHint });
   };
   const checkObject = (owner:ResearchObjectRef, field:VersionField, expected:number|undefined, kind = "core", content = false) => { if (newObjects.has(objectKey(owner))) return; const base = original.get(objectKey(owner)), version=objectVersion(base,field); cas(version, expected, owner.id); evidence(kind, owner.id, version, owner, content); };
   const localize = <T extends {sourceRefs?:SourceReference[];representations?:Representation[]}>(input:T, key:string) => { const value = structuredClone(input); value.sourceRefs = (value.sourceRefs ?? []).map((source, i) => { const rest=omitFields(source,["delivery"]); return { ...rest, id: source.id ?? allocate("source", key + ":" + (source.clientRef ?? i)) }; }); value.representations = (value.representations ?? []).map((rep, i) => ({ ...rep, id: rep.id ?? allocate("representation", key + ":" + (rep.clientRef ?? i)) })); return value; };
