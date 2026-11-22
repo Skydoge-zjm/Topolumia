@@ -20,7 +20,7 @@ export type QueryInput = {
   actor:ResearchActor; maxChars?:number; limit?:number; cursor?:string; locale?:string;
   candidateId?:string; patchId?:string; nodeId?:string; nodeIds?:string[]; groupId?:string; blockId?:string; assetId?:string;
   owner?:ResearchObjectRef; object?:ResearchObjectRef; mode?:string; view?:string; section?:string; scope?:string;
-  query?:string; target?:string; kinds?:string[]; status?:string; idempotencyKey?:string; direction?:string; relationTypes?:string[];
+  query?:string; queries?:string[]; target?:string; kinds?:string[]; status?:string; idempotencyKey?:string; direction?:string; relationTypes?:string[];
   expectedRevision?:number; revision?:number; expectedVersion?:string; expectedContentVersion?:string; expectedChecksum?:string;
   ref?:string; offset?:number; factPaths?:string[]; name?:string; topic?:string;
   titleQuery?:string; types?:string[]; review?:string; representationId?:string; selection?:QuerySelection;
@@ -103,10 +103,32 @@ export class AgentResearchQueries {
     if (items.length < result.page.total) envelope.coverage = { complete: false, omissions: ["moreMatches"] };
     return this.finish(envelope);
   }
-  search(input:QueryInput){
+  searchBatch(input: QueryInput) {
+    this.c.check(input.actor, "research.view");
+    const view = this.searchView(input);
+    const pages = (input.queries ?? []).map(query => this.search({ ...input, query, limit: input.limit ?? 2, maxChars: 16000 }, view));
+    type Hit = (typeof pages)[number]["data"]["items"][number];
+    const groups = pages.map((page, index) => ({ queryIndex: index, query: clip(input.queries?.[index], 100), total: page.page.total, hits: [] as Hit[] }));
+    const result = this.envelope("search", { groups }, input);
+    for (let rank = 0; rank < (input.limit ?? 2); rank++) {
+      for (const [i, group] of groups.entries()) {
+        const hit = pages[i].data.items[rank];
+        if (!hit || group.hits.length !== rank) continue;
+        group.hits.push(hit);
+        if (size(result) + 80 > result.budget.maxChars) group.hits.pop();
+      }
+    }
+    if (groups.some(group => group.hits.length < group.total)) result.coverage = { complete: false, omissions: ["moreHits"] };
+    return this.finish(result);
+  }
+  private searchView(input: QueryInput) {
+    return this.c.snapshot(null, input.actor, { includeBlocks: !input.target || ["all", "blocks"].includes(input.target),
+      owners: input.owner ? [input.owner] : undefined });
+  }
+  search(input:QueryInput, prepared?: ResearchView){
     this.c.check(input.actor,"research.view");const q=String(input.query??"").normalize("NFKC").toLowerCase(),terms=[...new Set(q.match(/[\p{L}\p{N}_.:-]+/gu)??[])],entries=[],target=input.target??"all";
     const rank=(fields:string[])=>{const body=fields.join(" ").normalize("NFKC").toLowerCase();return terms.reduce((s,t)=>s+(body.includes(t)?1:0),0)+(body.includes(q)?3:0);};
-    const view=this.c.snapshot(null,input.actor,{includeBlocks:target==="all"||target==="blocks",owners:input.owner?[input.owner]:undefined}),objectMap=new Map<string,StoredResearchObject>([...view.nodes.map(n=>[objectKey(nodeRef(n.id)),n] as const),...view.groups.map(g=>[objectKey(groupRef(g.id)),g] as const)]);
+    const view=prepared??this.searchView(input),objectMap=new Map<string,StoredResearchObject>([...view.nodes.map(n=>[objectKey(nodeRef(n.id)),n] as const),...view.groups.map(g=>[objectKey(groupRef(g.id)),g] as const)]);
     if(target==="all"||target==="nodes")for(const n of view.nodes){if(input.kinds?.length&&!input.kinds.includes(n.kind)||input.status&&n.status!==input.status)continue;const score=rank([n.id,JSON.stringify(n.core)]);if(score)entries.push({objectType:"node",id:n.id,nodeId:n.id,kind:n.kind,label:clip(n.core.nodeName,160),version:n.coreRevision,score,readHint:{nodeIds:[n.id]}});}
     if(target==="all"||target==="groups")for(const g of view.groups){const score=rank([g.id,JSON.stringify(g.core)]);if(score)entries.push({objectType:"group",id:g.id,object:groupRef(g.id),label:clip(g.core.nodeName,160),version:g.revision,score,readHint:{mode:"show",groupId:g.id}});}
     if(target==="all"||target==="blocks")for(const b of view.blocks){const n=objectMap.get(objectKey(b.owner));if(!n||b.lifecycle==="archived"||input.owner&&!sameObject(b.owner,input.owner)||input.kinds?.length&&!input.kinds.includes(b.type)||input.status&&b.review!==input.status)continue;const content=extractContentBlockText(b.type,b.payload),score=rank([b.title,content]);if(score){const at=Math.max(0,content.toLowerCase().indexOf(terms[0]??q));entries.push({objectType:"block",id:b.id,owner:b.owner,label:clip(b.title,160),version:b.revision,snippet:content.slice(Math.max(0,at-60),at+180),score,readHint:this.blockSummary(b).readHint});}}

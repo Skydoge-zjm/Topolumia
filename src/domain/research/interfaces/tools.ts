@@ -34,7 +34,7 @@ export const definitions = {
   },
   get_context: { description: "Read project counts and a brief. Supply a short query to include up to three matching objects or sources and their read hints. Follow a hint for exact evidence.", schema: z.strictObject({ ...budget, query: z.string().max(500).optional() }), kind: "context", defaultBudget: 3000, command: "context" },
   get_environment: { description: "Read the selected local/SSH research environment cached brief. Use your own tools to inspect and execute there.", schema: z.strictObject({ locale: budget.locale }), kind: "environment", defaultBudget: 4000, command: "environment" },
-  search: { description: "Find research nodes, blocks, registered assets or sources. Results exclude full content. Follow readHint only for indexed content; otherwise use nativeReadHint/downloadHint. Application runtime files are excluded.", schema: z.strictObject({ ...page, query: z.string().min(1).max(500), target: z.enum(["all","nodes","groups","blocks","sources","assets"]).optional(), owner: objectRefSchema.optional(), kinds: z.array(id).max(12).optional(), status: id.optional() }), kind: "search", defaultBudget: 4000, command: "search" },
+  search: { description: "Locate nodes, groups, blocks, assets or sources. For several names, pass queries (2–6 strings) to get ranked hits per name in one response. Use query for a single paginated search. Follow each hit’s read or transfer hint.", schema: z.strictObject({ ...page, query: z.string().trim().min(1).max(500).optional(), queries: z.array(z.string().trim().min(1).max(500)).min(2).max(6).optional(), target: z.enum(["all","nodes","groups","blocks","sources","assets"]).optional(), owner: objectRefSchema.optional(), kinds: z.array(id).max(12).optional(), status: id.optional() }), kind: "search", defaultBudget: 4000, command: "search" },
   read_nodes: { description: "Read 1–8 node overviews with type core, block directory and precise read hints. Not full block evidence.", schema: z.strictObject({ ...budget, cursor: page.cursor, nodeIds: z.array(id).min(1).max(8), candidateId: id.optional() }), kind: "nodes", defaultBudget: 6000, command: "node" },
   read_groups: { description: 'Read a group directory, one compact overview, or paginated members. Use mode=show,section=deleteImpact before proposing group deletion. No member bodies are loaded automatically.', schema:z.strictObject({...page,mode:z.enum(["list","show","members"]),groupId:id.optional(),scope:z.enum(["direct","recursive"]).optional(),section:z.enum(["overview","deleteImpact"]).optional(),query:z.string().max(500).optional(),candidateId:id.optional()}),kind:"groups",defaultBudget:6000,command:"group" },
   neighbors: { description: "Explore one-hop logical relations without loading neighbor content.", schema: z.strictObject({ ...page, object: objectRefSchema, scope:z.enum(["direct","groupBoundary"]).optional(),candidateId:id.optional(), direction: z.enum(["in","out","both"]).optional(), relationTypes: z.array(id).max(12).optional() }), kind: "neighbors", defaultBudget: 6000, command: "neighbors" },
@@ -61,7 +61,11 @@ function conditions(name:string, input:ConditionInput) {
     if (input.mode === "series" && (!input.runId || !input.metric)) reject("series requires runId and exact metric name");
     if (input.xKey !== undefined && input.mode !== "series") reject("xKey requires series mode");
   }
-  if (name === "search" && input.owner && input.target !== "blocks") reject("owner requires target=blocks");
+  if (name === "search") {
+    if (Boolean(input.query) === Boolean(input.queries)) reject("Supply one query or a batch of queries.");
+    if (input.queries && (input.cursor || (input.limit ?? 0) > 5)) reject("Batch lookup accepts up to five hits per query. Continue a single query for further pages.");
+    if (input.owner && input.target !== "blocks") reject("owner requires target=blocks");
+  }
   if (name === "read_groups") {
     if (input.mode !== "list" && !input.groupId) reject("Find the group with mode=list and query, then pass its groupId.");
     if (input.mode === "list" && (input.groupId || input.scope || input.section)) reject("List takes query and pagination. For a known groupId use show or members.");
