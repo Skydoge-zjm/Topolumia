@@ -74,7 +74,13 @@ function conditions(name:string, input:ConditionInput) {
     if (input.mode === "read" && (!input.blockId || !input.view || ["cursor","limit","titleQuery","types","review"].some(k => input[k] !== undefined))) reject("read requires blockId/view and excludes list parameters");
     if (input.view === "manifest" && input.selection) reject("manifest excludes selection");
   }
-  if (name === "read_candidates" && (input.mode === "show" ? !input.candidateId || input.status || input.cursor || input.limit : input.candidateId || input.section)) reject("Invalid candidate mode parameters");
+  if (name === "read_candidates") {
+    if (input.mode === "list" && (input.candidateId || input.section)) reject("Use show with a candidateId to read its sections.");
+    if (input.mode === "show" && (!input.candidateId || input.status || input.idempotencyKey))
+      reject("Show requires candidateId; status and idempotencyKey filter the candidate list.");
+    if (input.mode === "show" && (!input.section || input.section === "summary") && (input.cursor || input.limit))
+      reject("The candidate summary is a single item. Use section=nodes, groups or evidence for pagination.");
+  }
   if (["read_blocks","read_assets"].includes(name) && input.selection) {
     const keys = Object.keys(input.selection);
     const allowed = input.view === "text" ? ["offset","length"] : input.view === "values" ? ["sheet","rowOffset","rowLimit","columnKeys","itemOffset","itemLimit","names"] : [];

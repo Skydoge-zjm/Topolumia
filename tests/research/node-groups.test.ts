@@ -36,7 +36,7 @@ test("inferred relationship revisions are bound to actual observations and survi
   const saved = c.store.get("candidates", created.data.candidateId);
   assert.deepEqual(saved.operations[0].expectedEndpointRevisions,
     seen.data.items.map(item => ({ object: node(item.id), revision: item.nodeRevision })));
-  c.changes.direct([{ op: "updateCore", owner: node(b.id), expectedCoreRevision: b.coreRevision, patch: { summary: "Board changed" } }], f.actor);
+  c.changes.direct([{ op: "updateCore", owner: node(b.id), expectedCoreRevision: c.nodes.node(b.id).coreRevision, patch: { summary: "Board changed" } }], f.actor);
   assert.throws(() => c.reviewCandidate({ actor: f.actor, candidateId: saved.id, expectedRevision: 1, decision: "accept" }), { code: "OBJECT_VERSION_CONFLICT" });
   assert.equal((await f.call("create_candidate", input)).structuredContent.error.code, "OBJECT_VERSION_CONFLICT");
 });

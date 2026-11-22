@@ -14,7 +14,7 @@ test("chart and image manifests point to the actual table and the complete autho
   const allocation = c.changes.direct([{ op: "addNode", kind: "note", clientRef: "n", core: { nodeName: "Field" } },
     { op: "addBlock", clientRef: "data", owner: { kind: "node", id: "@n" }, title: "Measurements", type: "table",
       payload: { columns: [{ key: "v", label: "Value" }], rows: [{ v: 7 }] } }], f.actor).allocation;
-  const owner = { kind: "node", id: allocation["node:n"] }, description = "Authored alt ".repeat(44);
+  const owner = { kind: "node", id: allocation["node:n"] }, description = "Authored alt ".repeat(32);
   const ids = c.changes.direct([
     { op: "addBlock", clientRef: "plot", owner, title: "Chart", type: "chart", payload: { chartType: "bar", dataBlockId: allocation["block:data"] } },
     { op: "addBlock", clientRef: "photo", owner, title: "Map", type: "image", payload: { alt: description, caption: "Station" },
@@ -53,6 +53,11 @@ test("an amendment can re-pin a revised source while keeping historical and same
   assert.throws(() => c.reviewCandidate({ actor: f.actor, candidateId: created.candidateId, expectedRevision: 1, decision: "accept" }), { code: "OBJECT_VERSION_CONFLICT" });
   const b2 = (await f.data("read_source", { ref: "file:rule.md", offset: 2 })).readReceipts[0];
   await f.data("edit_candidate", { ...change, evidenceReadIds: [b.id, b2.id] });
+  const evidence = { mode: "show", section: "evidence", candidateId: created.candidateId, limit: 1 };
+  const firstPage = await f.data("read_candidates", evidence);
+  assert.ok(firstPage.page.nextCursor);
+  const secondPage = await f.data("read_candidates", { ...evidence, cursor: firstPage.page.nextCursor });
+  assert.deepEqual(new Set([firstPage.data.items[0].id, secondPage.data.items[0].id]), new Set([b.id, b2.id]));
   const saved = c.store.get("candidates", created.candidateId);
   assert.deepEqual(saved.evidenceReadIds, [b.id, b2.id]);
   assert.deepEqual(saved.revisions[0].evidenceReads.map(r => r.id), [a.id]);
