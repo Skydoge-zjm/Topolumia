@@ -35,7 +35,13 @@ export function simulateChange(c:ResearchCommandService, operations:ResearchOper
   const permitted = evidenceIds === undefined ? reads : reads.filter(read => evidenceIds.includes(read.id));
   for (const read of evidenceIds ? permitted : []) {
     if (read.scope === "candidate" && read.candidateId !== candidateId) fail("READ_RECEIPT_INVALID", "Candidate evidence belongs to another proposal.");
-    if (read.object.kind === "source") { const source = c.sources().find(item => item.ref === read.object.id); if (!source || (source.version ?? (source.hash ? "sha256:" + source.hash : null)) !== read.version) fail("OBJECT_VERSION_CONFLICT", "Evidence source changed.", 409); }
+    if (read.object.kind === "source") {
+      const source = c.sources().find(item => item.ref === read.object.id);
+      const current = source?.version ?? (source?.hash ? "sha256:" + source.hash : null);
+      if (!source || current !== read.version) fail("OBJECT_VERSION_CONFLICT", "The cited source changed. Read its current text and supply the new receipt in the candidate edit.", 409,
+        { ref: read.object.id, observedVersion: read.version, currentVersion: current,
+          ...(source ? { readHint: { tool: "read_source", ref: read.object.id, ...(current ? { expectedVersion: current } : {}) } } : {}) });
+    }
     if (read.object.kind === "asset") { const asset = c.assets.assert(read.object.id, actor); if (asset.checksum !== read.version || read.contentVersion && asset.contentVersion && read.contentVersion !== asset.contentVersion) fail("OBJECT_VERSION_CONFLICT", "Asset evidence changed.", 409); }
   }
   const evidence = (kind:string, id:string, version:ReadReceipt["version"], owner:ResearchObjectRef, content = false) => {

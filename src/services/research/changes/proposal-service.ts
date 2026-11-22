@@ -6,7 +6,7 @@ import { nodeRef, groupRef, sameObject, objectKey } from "../../../domain/resear
 import type * as z from "zod/v4";
 import type { nodeChange, groupChange, proposalBlock } from "../../../domain/research/changes/proposals.js";
 import type { ResearchCommandService } from "../research-command-service.js";
-import type { ResearchActor, ResearchOperationInput, StoredCandidate } from "../../../domain/research/types.js";
+import type { ReadReceipt, ResearchActor, ResearchOperationInput, StoredCandidate } from "../../../domain/research/types.js";
 import type { ResearchObjectRef } from "../../../domain/research/object-ref.js";
 const merge = <T extends object>(old:T, patch:object):T => { const value = { ...old } as Record<string,unknown>; for (const [key, item] of Object.entries(patch)) { if(item===null)delete value[key];else value[key]=item; } return value as T; };
 type ProposalInput = z.infer<typeof createProposalSchema> | z.infer<typeof reviseProposalSchema>;
@@ -29,8 +29,26 @@ export class ResearchProposalService {
     const fingerprint = versionHash(value);
     if (!["pending", "deferred"].includes(candidate.status)) fail("CANDIDATE_TERMINAL", "Candidate has already been reviewed.", 409);
     if (candidate.revision !== value.expectedRevision) { if (candidate.proposalEditFingerprint === fingerprint) return { ...candidate, idempotent: true }; fail("CANDIDATE_REVISION_CONFLICT", "Read the latest candidate.", 409, { current: candidate.revision }); }
-    const evidenceReadIds = candidate.evidenceReadIds === undefined && value.evidenceReadIds === undefined ? undefined : [...new Set([...(candidate.evidenceReadIds ?? []), ...(value.evidenceReadIds ?? [])])];
+    const evidenceReadIds = this.revisedEvidence(candidate, value.evidenceReadIds, actor);
     return this.c.changes.editCompiled({ candidateId: candidate.id, expectedRevision: value.expectedRevision, reason: value.reason ?? candidate.reason, operations: this.compile(value, actor, candidate), evidenceReadIds }, actor, fingerprint);
+  }
+  private revisedEvidence(candidate: StoredCandidate, supplied: string[] | undefined, actor: ResearchActor) {
+    if (supplied === undefined) return candidate.evidenceReadIds;
+    const observed = new Map<string, ReadReceipt["version"]>();
+    for (const id of supplied) {
+      const receipt = this.c.store.get("receipts", id);
+      if (receipt?.scope === "formal" && receipt.object.kind === "source" &&
+        receipt.principalId === principal(actor) && receipt.researchSessionId === (actor.sessionId ?? null)) {
+        observed.set(receipt.object.id, receipt.version);
+      }
+    }
+    // The simulator validates all supplied IDs and their current source versions before committing.
+    // Prior revisions keep their original receipts. Ranges from the same version remain pinned.
+    const superseded = new Set(candidate.evidenceReads.filter(read =>
+      read.scope === "formal" && read.object.kind === "source" && observed.has(read.object.id) &&
+      observed.get(read.object.id) !== read.version
+    ).map(read => read.id));
+    return [...new Set([...(candidate.evidenceReadIds ?? []).filter(id => !superseded.has(id)), ...supplied])];
   }
   compile(input:ProposalInput, actor:ResearchActor, candidate:StoredCandidate|null = null):ResearchOperationInput[] {
     if ((input.nodes?.length ?? 0) + (input.groups?.length ?? 0) > 8) fail("INPUT_INVALID", "Create at most eight research objects per request.");

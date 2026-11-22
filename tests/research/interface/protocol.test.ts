@@ -5,6 +5,30 @@ import path from "node:path";
 import { fixture } from "./helpers.js";
 import { exportXlsxTable } from "../../../src/services/topology/table-importers.js";
 import { FilesystemAdapter, isPathInside } from "../../../src/adapters/sources/filesystem-adapter.js";
+test("an amendment can re-pin a revised source while keeping historical and same-version evidence", async t => {
+  const f = await fixture(t), c = f.runtime.researchCommands;
+  const file = path.join(f.app.config.project.root, "rule.md");
+  async function publish(text) {
+    await writeFile(file, text);
+    f.runtime.state.setSnapshot({ stateVersion: text, files: await f.runtime.registry.filesystem.snapshot() });
+    return (await f.data("read_source", { ref: "file:rule.md" })).readReceipts[0];
+  }
+  const a = await publish("Rule A");
+  const created = (await f.data("create_candidate", { reason: "Preliminary", evidenceReadIds: [a.id],
+    nodes: [{ kind: "note", core: { nodeName: "Decision" } }] })).data;
+  const b = await publish("Rule B");
+  const change = { candidateId: created.candidateId, expectedRevision: 1, nodeChanges: [{ nodeId: created.nodes[0].nodeId, corePatch: { summary: "Amendment B" } }] };
+  const stale = await f.call("edit_candidate", change);
+  assert.equal(stale.structuredContent.error.code, "OBJECT_VERSION_CONFLICT");
+  assert.equal(stale.structuredContent.error.detail.readHint.expectedVersion, b.version);
+  assert.throws(() => c.reviewCandidate({ actor: f.actor, candidateId: created.candidateId, expectedRevision: 1, decision: "accept" }), { code: "OBJECT_VERSION_CONFLICT" });
+  const b2 = (await f.data("read_source", { ref: "file:rule.md", offset: 2 })).readReceipts[0];
+  await f.data("edit_candidate", { ...change, evidenceReadIds: [b.id, b2.id] });
+  const saved = c.store.get("candidates", created.candidateId);
+  assert.deepEqual(saved.evidenceReadIds, [b.id, b2.id]);
+  assert.deepEqual(saved.revisions[0].evidenceReads.map(r => r.id), [a.id]);
+  assert.equal(c.reviewCandidate({ actor: f.actor, candidateId: saved.id, expectedRevision: 2, decision: "accept" }).status, "applied");
+});
 test("real MCP → CLI saves a paper hierarchy, incrementally revises it and preserves review boundaries",{timeout:60000},async t=>{
   const f=await fixture(t);
   const context=await f.data("get_context");
