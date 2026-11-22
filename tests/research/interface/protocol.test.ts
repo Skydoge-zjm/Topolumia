@@ -2,9 +2,34 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
+import sharp from "sharp";
 import { fixture } from "./helpers.js";
 import { exportXlsxTable } from "../../../src/services/topology/table-importers.js";
 import { FilesystemAdapter, isPathInside } from "../../../src/adapters/sources/filesystem-adapter.js";
+test("chart and image manifests point to the actual table and the complete authored description", async t => {
+  const f = await fixture(t), c = f.runtime.researchCommands;
+  const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: "white" } }).png().toBuffer();
+  const asset = await c.assets.upload(Readable.from([png]), { originalName: "map.png", mediaType: "image/png", idempotencyKey: "map" }, f.actor);
+  const allocation = c.changes.direct([{ op: "addNode", kind: "note", clientRef: "n", core: { nodeName: "Field" } },
+    { op: "addBlock", clientRef: "data", owner: { kind: "node", id: "@n" }, title: "Measurements", type: "table",
+      payload: { columns: [{ key: "v", label: "Value" }], rows: [{ v: 7 }] } }], f.actor).allocation;
+  const owner = { kind: "node", id: allocation["node:n"] }, description = "Authored alt ".repeat(44);
+  const ids = c.changes.direct([
+    { op: "addBlock", clientRef: "plot", owner, title: "Chart", type: "chart", payload: { chartType: "bar", dataBlockId: allocation["block:data"] } },
+    { op: "addBlock", clientRef: "photo", owner, title: "Map", type: "image", payload: { alt: description, caption: "Station" },
+      representations: [{ kind: "asset", assetId: asset.id, role: "source" }] },
+  ], f.actor).allocation;
+  const manifest = id => f.data("read_blocks", { owner, blockId: id, mode: "read", view: "manifest" });
+  const chart = await manifest(ids["block:plot"]);
+  const { tool, ...args } = chart.data.chart.readHint;
+  assert.equal(chart.data.chart.chartType, "bar");
+  assert.ok((await f.data(tool, args)).data.items.some(row => row.values.v === 7));
+  const image = await manifest(ids["block:photo"]);
+  assert.equal(image.coverage.complete, false);
+  const { tool: reader, ...hint } = image.data.image.descriptionReadHint;
+  assert.equal((await f.data(reader, hint)).data.text, description + "\nStation");
+});
 test("an amendment can re-pin a revised source while keeping historical and same-version evidence", async t => {
   const f = await fixture(t), c = f.runtime.researchCommands;
   const file = path.join(f.app.config.project.root, "rule.md");

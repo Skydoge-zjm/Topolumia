@@ -173,7 +173,35 @@ export class AgentResearchQueries {
     const siblings=view.blocks.filter(b=>sameObject(b.owner,input.owner)&&b.lifecycle!=="archived").sort((a,b)=>a.order-b.order);
     if(input.mode==="list"){const items=siblings.filter(b=>(!input.titleQuery||b.title.toLowerCase().includes(input.titleQuery.toLowerCase()))&&(!input.types?.length||input.types.includes(b.type))&&(!input.review||b.review===input.review)).map(b=>this.blockSummary(b,input.candidateId));return this.page("blocks",items,{...input,maxChars:input.maxChars??4000},{owner:input.owner!,query:input.titleQuery,types:input.types,review:input.review,version:node.blockCollectionRevision,blockVersions:items.map(b=>b.revision),candidate:input.candidateId},()=>[this.receipt(input.actor,"collection",input.owner!.id,node.blockCollectionRevision,"directory",{},input,{owner:input.owner})]);}
     const current=siblings.find(b=>b.id===input.blockId),b=input.revision!==undefined&&current?.revision!==input.revision?this.c.objects.blockVersion(input.owner!,input.blockId!,input.revision):current;if(!b)fail("CONTENT_BLOCK_NOT_FOUND","Block unavailable.",404);this.checkVersion(input.expectedRevision,b.revision);
-    if(input.view==="manifest"){const receipt=this.receipt(input.actor,"block",b.id,b.revision,"summary",{fields:["title","type","representations","sourceRefs"]},input);return this.finish(this.envelope("blocks",{block:this.blockSummary(b,input.candidateId),representations:b.representations,sourceRefs:b.sourceRefs,...(b.type==="experimentRecord"?{provider:b.payload?.provider,recordCollectionId:b.id,runCount:this.c.records.collectionRunCount(b),readHint:{tool:"read_experiment",mode:"runs",nodeId:input.owner!.id,blockId:b.id}}:{})},input),[receipt]);}
+    if (input.view === "manifest") {
+      const fields = ["title", "type", "representations", "sourceRefs"];
+      const data = { block: this.blockSummary(b, input.candidateId), representations: b.representations, sourceRefs: b.sourceRefs };
+      const extra: Record<string, unknown> = {};
+      const omissions: string[] = [];
+      if (b.type === "chart") {
+        const sourceId = b.payload?.dataBlockId;
+        const source = sourceId ? view.blocks.find(block => block.id === sourceId) ?? this.store.get("blocks", sourceId) : undefined;
+        const readable = source && source.lifecycle !== "archived" && ["metric", "table", "spreadsheet"].includes(source.type);
+        extra.chart = { chartType: b.payload?.chartType, dataBlockId: sourceId,
+          ...(readable ? { readHint: { tool: "read_blocks", ...this.blockReadHint(source, input.candidateId) } } : {}) };
+        fields.push("chartType", "dataBlockId");
+      } else if (b.type === "image") {
+        const alt = b.payload?.alt ?? "", caption = b.payload?.caption ?? "";
+        extra.image = { alt: clip(alt, 320), caption: clip(caption, 240), locator: b.payload?.locator,
+          descriptionReadHint: { tool: "read_blocks", ...this.blockReadHint(b, input.candidateId), view: "text", representationId: "inline" } };
+        if (alt.length > 320 || caption.length > 240) omissions.push("imageDescription");
+        fields.push("alt", "caption");
+      } else if (b.type === "experimentRecord") {
+        Object.assign(extra, { provider: b.payload?.provider, recordCollectionId: b.id, runCount: this.c.records.collectionRunCount(b),
+          readHint: { tool: "read_experiment", mode: "runs", nodeId: input.owner!.id, blockId: b.id, ...(input.candidateId ? { candidateId: input.candidateId } : {}) } });
+      }
+      const receipt = this.receipt(input.actor, "block", b.id, b.revision, "summary", { fields }, input);
+      return this.finish(this.envelope("blocks", { ...data, ...extra }, input, omissions.length ? { coverage: { complete: false, omissions } } : {}), [receipt]);
+    }
+    if (b.type === "image" && input.view === "text" && input.representationId === "inline") {
+      const description = [b.payload?.alt, b.payload?.caption].filter(Boolean).join("\n");
+      return this.textResult("blocks", description, input, { kind: "block", id: b.id }, b.revision, { field: "imageDescription", blockId: b.id });
+    }
     const rep=input.representationId==="inline"?null:input.representationId?b.representations.find(r=>r.id===input.representationId):b.primaryRepresentationId?b.representations.find(r=>r.id===b.primaryRepresentationId):b.payload&&(["richText","metric","link","quote","code","chart"].includes(b.type)||b.type==="table"&&b.payload.columns)?null:b.representations[0];
     if(input.representationId&&input.representationId!=="inline"&&!rep)fail("VIEW_UNAVAILABLE","Representation unavailable.");
     if(rep){if(rep.kind!=="asset")fail("VIEW_UNAVAILABLE","Link representation is not indexed content.");return this.readAssets({...input,assetId:rep.assetId,view:input.view}, {kind:"block",id:b.id,version:b.revision,representationId:rep.id});}
