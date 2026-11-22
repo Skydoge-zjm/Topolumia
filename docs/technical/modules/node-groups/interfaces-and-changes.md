@@ -53,6 +53,8 @@ PATCH 省略字段表示保留，允许的 null 表示清除；不得给编辑�
 
 read_groups 各模式统一返回 groups 类型的结果。list 返回组摘要，show 使用 groupId 读取概览或 deleteImpact 删除影响，members 使用 groupId 与 direct/recursive 范围分页交付成员及角色。neighbors 同时返回带类型的邻居端点及其有界名称，便于说明关系的另一端。
 
+Agent 新建子组或正式对象间的关系时，省略的父组成员集合版本、关系端点总修订号可从当前主体在本会话实际获得的正式读取回执中提取。提交时把这些版本写入候选操作。后续正式修改仍会触发版本冲突。显式证据列表缺少必要回执时，接口返回本会话内匹配的回执 ID 或取得观察依据所需的正式读取参数。
+
 CLI 对应 `group list`、`group show`、`group members`；`group show --section deleteImpact` 对应删除影响读取。现有 `block`、`neighbors`、候选和资产命令使用同一个类型化对象输入，帮助输出最短可运行示例。CLI 仍只调用 HTTP，不直接打开数据库。
 
 scope=direct 的 neighbors 只查直接连接对象的正式边。groupBoundary 仅适用于组：令 R 为其后代组和递归成员节点，查询恰好一端在 R、另一端在 R 与当前组之外的正式逻辑边，保留真实端点和范围依据；它不重复返回当前组的直接关系。成员/父子包含关系不混入 neighbors。范围与方向过滤在分页前执行，返回范围版本和覆盖说明。

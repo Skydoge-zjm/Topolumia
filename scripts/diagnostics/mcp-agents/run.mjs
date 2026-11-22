@@ -28,6 +28,9 @@ const directory = path.resolve(output);
 const runtimes = selectedRuntime === "all" ? Object.keys(adapters) : [selectedRuntime];
 const scenarios = selectedCase === "all" ? Object.keys(cases) : selectedCase === "observatory" ? observatoryCore : [selectedCase];
 const observatory = scenarios.some(key => observatoryTasks.includes(key));
+const exportProject = process.env.TOPOLUMIA_EVAL_EXPORT_PROJECT;
+if (exportProject && (!observatory || scenarios.length !== 1 || runtimes.length !== 1))
+  throw new Error("A persistent observatory project requires one specific case and client.");
 const variant = process.env.TOPOLUMIA_EVAL_SITE ?? "plaza";
 if (observatory && !Object.hasOwn(sites, variant)) throw new Error("Unknown TOPOLUMIA_EVAL_SITE");
 const prompts = observatory ? Object.fromEntries(scenarios.map(key => [key, observatoryPrompts(sites[variant])[key]])) : selectedCase === "paper" ? { paper: paperPrompt } : cases;
@@ -65,9 +68,19 @@ async function run(runtime, key) {
     app = await startMvpServer({ port: 0, host: "127.0.0.1", testMode: false,
       collaborationFile: path.join(root, "account.sqlite"), userSettingsFile: path.join(root, "settings.json"), sshRoot: path.join(root, "ssh"),
       config: { project: { workspacesRoot: workspaces }, sourceRefresh: { enabled: false }, curator: { enabled: false, automation: { enabled: false } } } });
+    const user = app.collaboration.bootstrapAdmin({ username: "reviewer", password: randomUUID() + "aA!2" });
+    if (exportProject) {
+      const destination = path.resolve(exportProject);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await mkdir(destination);
+      const manager = app.collaboration.actorForUser(user.id, app.config.project.id);
+      const project = app.collaboration.createProject({ name: "Alder 部署评审交付", workspace: { kind: "local", directory: destination } }, manager);
+      const runtime = await app.getRuntime(project.id);
+      app = { ...app, ...runtime, close: app.close };
+      report.exportedProject = { id: project.id, directory: destination };
+    }
     const projectId = app.config.project.id;
     const workspace = app.config.project.root;
-    const user = app.collaboration.bootstrapAdmin({ username: "reviewer", password: randomUUID() + "aA!2" });
     actor = app.collaboration.actorForUser(user.id, projectId);
     const session = randomUUID();
     const credential = app.collaboration.issueAgentCredential(actor, projectId, session, { researchSessionId: session });

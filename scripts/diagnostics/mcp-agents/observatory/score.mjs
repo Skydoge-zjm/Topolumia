@@ -15,8 +15,11 @@ function tableMatches(doc, site, a, b) {
   return (doc?.blocks ?? []).some(block => block.type === "table" && [ [site.station, a], [site.other, b] ].every(([station, value]) =>
     block.payload.rows?.some(row => Object.values(row).includes(station) && Object.values(row).some(v => sameNumber(v, value)))));
 }
-function pinnedReading(calls, record, note, site, expected) {
-  const sources = new Set((note?.sourceRefs ?? []).filter(r => r.kind === "experimentSnapshot").map(r => r.value));
+function snapshotCitations(doc, note) {
+  return new Set([note, ...(doc?.blocks ?? []).filter(b => b.owner.id === note?.id)].flatMap(item => item?.sourceRefs ?? [])
+    .filter(r => r.kind === "experimentSnapshot").map(r => r.value));
+}
+function pinnedReading(calls, record, sources, site, expected) {
   const snapshots = calls.filter(c => c.tool === "read_experiment" && c.args.mode === "snapshot" && c.result.data.snapshot?.blockId === record.block)
     .map(c => c.result.data.snapshot.id).filter(id => sources.has(id));
   return calls.some(c => c.tool === "read_experiment" && c.args.mode === "series" && snapshots.includes(c.args.snapshotId) &&
@@ -40,8 +43,10 @@ export function gradeObservatory(report, trace) {
   };
   if (report.case === "appendix") {
     const m = o.materials;
-    const crosswalk = last?.blocks.find(block => block.type === "table");
-    const cells = (crosswalk?.payload?.rows ?? []).flatMap(row => Object.values(row));
+    const crosswalk = last?.blocks.find(block => block.type === "table") ??
+      last?.blocks.find(block => block.type === "richText" && /\|[^\n]+\|\s*\n\s*\|?\s*:?-{3}/.test(block.payload?.body ?? ""));
+    const cells = crosswalk?.type === "richText" ? crosswalk.payload.body.split(/\r?\n/).flatMap(line =>
+      line.split("|").map(cell => cell.replaceAll("*", "").trim()).filter(Boolean)) : (crosswalk?.payload?.rows ?? []).flatMap(row => Object.values(row));
     const body = cells.join(" ") + " " + prose(last);
     const readBlock = (id, view) => calls.some(c => c.tool === "read_blocks" && c.args.blockId === id && c.args.view === view);
     const exact = id => last?.evidence?.some(r => r.object.id === id && r.disclosure === "content");
@@ -49,7 +54,8 @@ export function gradeObservatory(report, trace) {
     const imageMetadata = calls.some(c => c.tool === "read_blocks" && c.args.blockId === m.image && JSON.stringify(c.result.data).includes(alt));
     return { ...common,
       chartSource: body.includes(o.ledger) && /\bbar\b/i.test(body) && calls.some(c => c.tool === "read_blocks" && c.args.blockId === m.chart && JSON.stringify(c.result.data).includes(o.ledger)),
-      offset: cells.some(v => sameNumber(v,site.otherOffset)) && cells.includes(site.other) && readBlock(o.ledger,"values"),
+      offset: cells.some(v => typeof v === "number" ? sameNumber(v,site.otherOffset) :
+        String(v).includes(String(site.otherOffset))) && body.includes(site.other) && readBlock(o.ledger,"values"),
       sharedOriginal: body.includes(o.basisAsset) && readBlock(o.register,"manifest") && readBlock(m.file,"manifest"),
       code: body.includes("blind") && /split/.test(body) && readBlock(m.code,"text"),
       primaryClaim: /single site cannot establish a city.wide effect/i.test(body) && readBlock(m.quote,"text"),
@@ -61,7 +67,8 @@ export function gradeObservatory(report, trace) {
       downloaded: report.downloadedChecksum === m.imageChecksum && calls.some(c => c.tool === "transfer_asset" && c.args.direction === "download"),
       attached: assetAttached(last,m.imageAsset),
       reportedDigest: Boolean(a?.answer?.includes(m.imageChecksum)),
-      verifiedTable: Boolean(crosswalk && calls.some(c => c.tool === "read_blocks" && c.args.candidateId === last.id && c.args.blockId === crosswalk.id && c.args.view === "values" && c.result.data.items?.length)),
+      verifiedTable: Boolean(crosswalk && calls.some(c => c.tool === "read_blocks" && c.args.candidateId === last.id && c.args.blockId === crosswalk.id &&
+        (c.args.view === "values" && c.result.data.items?.length || c.args.view === "text" && c.result.data.text?.includes("|")))),
       persisted: Boolean(review?.applied && review.blocks.some(bl => bl.id === crosswalk?.id) && assetAttached(review,m.imageAsset)),
     };
   }
@@ -94,21 +101,22 @@ export function gradeObservatory(report, trace) {
   const preliminary = items(first,"Preliminary"), amended = items(last,"Amended"), note = first?.nodes[0], finalNote = last?.nodes[0];
   const decisionA = outcome(o.initialGain,site.threshold), decisionB = outcome(o.finalGain,site.threshold);
   const file = secondCalls.find(c => c.tool === "transfer_asset" && c.args.direction === "upload" && c.result.data.checksum?.endsWith(o.certificateChecksum ?? "missing"));
-  const oldPins = (note?.sourceRefs ?? []).filter(r => r.kind === "experimentSnapshot").map(r => r.value);
+  const oldPins = snapshotCitations(first,note), finalPins = snapshotCitations(last,finalNote);
   return { ...common,
-    twoTurns: Boolean(b && a?.stop === "end_turn" && b.stop === "end_turn" && report.nativeSession),
+    twoTurns: Boolean(b && a?.stop === "end_turn" && b.stop === "end_turn" && report.nativeSession &&
+      a.nativeSessionId === report.nativeSession && b.nativeSessionId === report.nativeSession),
     preliminaryIdentity: Boolean(first?.nodes?.length === 1 && note.kind === "note" && first?.id && a?.answer?.includes(first.id)),
     environment: firstCalls.some(c => c.tool === "get_environment"),
     originalRule: read(first,"source",o.rule,o.initialVersion),
-    atlasSnapshot: pinnedReading(firstCalls,o.atlas,note,site,site.atlas),
-    reedSnapshot: pinnedReading(firstCalls,o.reed,note,site,site.reed),
+    atlasSnapshot: pinnedReading(firstCalls,o.atlas,oldPins,site,site.atlas),
+    reedSnapshot: pinnedReading(firstCalls,o.reed,oldPins,site,site.reed),
     rawPair: named(preliminary,/atlas/i,site.atlas) && named(preliminary,/reed/i,site.reed),
     preliminaryGain: named(preliminary,/gain|improv|differ|delta/i,o.initialGain),
     preliminaryDisposition: named(preliminary,/disposition|decision|verdict/i,decisionA),
     scopeAndExclusion: /pilot|daylight/i.test(prose(first)) && /train|overlap/i.test(prose(first)) && /single.site|one station|independent station|city.wide|one site/i.test(prose(first)),
     sameCandidate: Boolean(first && last && first.id === last.id && last.revision > first.revision && finalNote?.id === note?.id),
     retainedBaseline: Boolean(first && last && preliminary.length && JSON.stringify(items(last,"Preliminary")) === JSON.stringify(preliminary) &&
-      oldPins.length === 2 && oldPins.every(id => finalNote?.sourceRefs.some(r => r.value === id))),
+      oldPins.size >= 2 && [...oldPins].every(id => finalPins.has(id))),
     amendedEvidence: Boolean(o.initialVersion !== o.revisedVersion && read(last,"source",o.rule,o.revisedVersion) && read(last,"block",o.ledger,o.ledgerRevision)),
     reacquiredEvidence: Boolean(b && secondCalls.some(c => c.tool === "read_source" && c.result.data.source?.version === o.revisedVersion) &&
       secondCalls.some(c => c.tool === "read_blocks" && c.args.blockId === o.ledger && c.result.readReceipts?.some(r => r.version === o.ledgerRevision))),

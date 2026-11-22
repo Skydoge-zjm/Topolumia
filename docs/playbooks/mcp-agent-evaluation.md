@@ -9,6 +9,26 @@
 
 [留出的论文归档用例](../../scripts/diagnostics/mcp-agents/paper-case.mjs)单独使用 `paper` 参数运行。它从已登记的原稿提取书目、数值表和证据局限，检查候选附件、精确资产回执，以及下载到交接目录的实际文件摘要。
 
+## 多节点连续研究
+
+Alder 城市微气候项目把文献、盲测实验、校准台账、作废试点和市政评审组放在同一正式拓扑中。项目含 16 个节点、5 个组、三层组层级、12 条关系、25 个块和七份原始资产。两个站点使用不同的实验运行、判定步骤、阈值与校准数值。科研材料均由本机生成。[场景构造](../../scripts/diagnostics/mcp-agents/observatory/fixture.mjs)
+
+| 用例参数 | 评审工作 |
+| --- | --- |
+| `panel` | 在同一原生会话内分别冻结 Atlas 与 Reed 实验，读取规定数据点并保存初审。两次提示之间，由独立的合成研究者签发新版文件、修改正式台账、交付新的校准证书。Agent 需修订原候选，保留初判、证据与快照，写入更正值和新结论，并建立通向正式评审节点的关系。 |
+| `packet` | 在既有父组下提出证据包。按正式组角色选择三个成员，读取台账，保存数值和原始附件，下载并核对字节，建立有向关系并回读候选。 |
+| `appendix` | 从图表找到其数据表，读取图像作者说明、代码、引用、方法文档与目录链接，核对两个内容块引用的原件，形成可复核的方法附录。 |
+
+`observatory` 同时执行 panel 和 packet。每次运行从独立项目开始，单个原生回合的评测时限为 15 分钟。每回合保存正式内容指纹、候选预览、原生会话标识、调用与模型请求边界。Agent 返回后，独立审阅主体在该合成项目中实际接受候选，并检查提交后的字段、关系和资产。报告分别记录技术提交成功和科学验收结果。指定 `TOPOLUMIA_EVAL_SITE=quay` 可运行第二站点，默认站点为 plaza。[任务](../../scripts/diagnostics/mcp-agents/observatory/tasks.mjs) · [评分](../../scripts/diagnostics/mcp-agents/observatory/score.mjs)
+
+```sh
+node scripts/diagnostics/mcp-agents/observatory/project.mjs artifacts/alder-workspaces/plaza plaza
+node scripts/diagnostics/mcp-agents/observatory/inspect-project.mjs artifacts/alder-workspaces/plaza
+node scripts/diagnostics/mcp-agents/run.mjs artifacts/alder-evaluation/round-00 all observatory
+```
+
+第一个命令创建全新的可携带项目，可以在工作台中关联已有项目目录。第二个命令以只读方式核对 SQLite 中的节点、组、成员、关系、表格绑定及资产原件校验和。若需保留某个 Agent 的实际交付，给单客户端、单用例运行设置 `TOPOLUMIA_EVAL_EXPORT_PROJECT`，指向尚不存在的目录。评测账号、原生配置和模型网关均使用临时运行目录。
+
 ## 运行
 
 先运行 `npm run build:backend`。选择安装好的 Codex、Claude Code 和项目支持的 OpenCode 2 可执行文件。评测使用现有模型网关。向启动评测的进程提供以下设置。
