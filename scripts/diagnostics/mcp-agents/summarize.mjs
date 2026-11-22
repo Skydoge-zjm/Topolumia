@@ -2,6 +2,8 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cases, grade } from "./cases.mjs";
 import { providerTokens } from "./gateway.mjs";
+import { observatoryTasks } from "./observatory/tasks.mjs";
+import { gradeObservatory } from "./observatory/score.mjs";
 
 const directory = path.resolve(process.argv[2] || "artifacts/mcp-optimization");
 const rounds = (await readdir(directory, { withFileTypes: true })).filter(d => d.isDirectory() &&
@@ -10,10 +12,11 @@ const rows = [];
 for (const round of rounds) {
   const dir = path.join(directory, round);
   const manifest = JSON.parse(await readFile(path.join(dir, "manifest.json"), "utf8"));
-  for (const file of (await readdir(dir)).filter(n => /^(codex|claude|opencode2)-.+\.json$/.test(n))) {
+  for (const file of (await readdir(dir)).filter(n => /^(codex|claude|opencode2)-[a-z][a-z0-9-]*\.json$/.test(n))) {
     const r = JSON.parse(await readFile(path.join(dir, file), "utf8"));
     const trace = (await readFile(path.join(dir, file.replace(/\.json$/, ".calls.jsonl")), "utf8")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
-    const checks = (cases[r.case] || r.case === "paper") && r.oracle ? grade(r.case, r.oracle, trace, r.candidates, r.answer ?? "", r.formalIntact) : {};
+    const checks = observatoryTasks.includes(r.case) && r.oracle ? gradeObservatory(r, trace) :
+      (cases[r.case] || r.case === "paper") && r.oracle ? grade(r.case, r.oracle, trace, r.candidates, r.answer ?? "", r.formalIntact) : {};
     const passed = Object.values(checks).filter(Boolean).length, possible = Object.keys(checks).length;
     const failedNative = new Set(r.events.filter(e => e.type === "tool.failed" && e.tool && !manifest.tools.includes(e.tool) &&
       !/topolumia|mcpToolCall/i.test(e.tool)).map(e => e.id ?? JSON.stringify(e))).size;

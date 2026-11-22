@@ -7,6 +7,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { cases, grade, seedCase } from "./cases.mjs";
 import { paperPrompt } from "./paper-case.mjs";
 import { meteredGateway, model, providerTokens } from "./gateway.mjs";
+import { seedObservatory, sites } from "./observatory/fixture.mjs";
+import { observatoryTasks, observatoryPrompts, runObservatoryTurns, reviewInSandbox } from "./observatory/tasks.mjs";
+import { gradeObservatory } from "./observatory/score.mjs";
 
 const build = path.resolve(process.env.TOPOLUMIA_EVAL_BUILD || "dist");
 const product = file => import(pathToFileURL(path.join(build, "src", file)).href);
@@ -19,12 +22,15 @@ const [{ startMvpServer }, { CodexAgentAdapter }, { ClaudeCodeAgentAdapter }, { 
 
 const adapters = { codex: CodexAgentAdapter, claude: ClaudeCodeAgentAdapter, opencode2: OpenCodeV2AgentAdapter };
 const [output, selectedRuntime = "all", selectedCase = "all"] = process.argv.slice(2);
-if (!output || !["all", ...Object.keys(adapters)].includes(selectedRuntime) || !["all", "probe", "paper", ...Object.keys(cases)].includes(selectedCase))
-  throw new Error("Usage: node scripts/diagnostics/mcp-agents/run.mjs NEW_OUTPUT_DIR [all|codex|claude|opencode2] [all|dossier|curves|paper|probe]");
+if (!output || !["all", ...Object.keys(adapters)].includes(selectedRuntime) || !["all", "probe", "paper", "observatory", ...observatoryTasks, ...Object.keys(cases)].includes(selectedCase))
+  throw new Error("Usage: node scripts/diagnostics/mcp-agents/run.mjs NEW_OUTPUT_DIR [all|codex|claude|opencode2] [all|dossier|curves|paper|probe|observatory|panel|packet]");
 const directory = path.resolve(output);
 const runtimes = selectedRuntime === "all" ? Object.keys(adapters) : [selectedRuntime];
-const scenarios = selectedCase === "all" ? Object.keys(cases) : [selectedCase];
-const prompts = selectedCase === "paper" ? { paper: paperPrompt } : cases;
+const scenarios = selectedCase === "all" ? Object.keys(cases) : selectedCase === "observatory" ? observatoryTasks : [selectedCase];
+const observatory = scenarios.some(key => observatoryTasks.includes(key));
+const variant = process.env.TOPOLUMIA_EVAL_SITE ?? "plaza";
+if (observatory && !Object.hasOwn(sites, variant)) throw new Error("Unknown TOPOLUMIA_EVAL_SITE");
+const prompts = observatory ? observatoryPrompts(sites[variant]) : selectedCase === "paper" ? { paper: paperPrompt } : cases;
 for (const runtime of runtimes) {
   const api = runtime === "claude" ? "ANTHROPIC" : "OPENAI";
   for (const suffix of ["URL", "KEY"]) if (!process.env["TOPOLUMIA_EVAL_" + api + "_" + suffix]) throw new Error("Missing TOPOLUMIA_EVAL_" + api + "_" + suffix);
@@ -34,13 +40,14 @@ await mkdir(directory); // An existing round, including a failed one, is immutab
 const hash = text => createHash("sha256").update(text).digest("hex");
 const contract = toolDefinitions();
 const evaluatorFiles = ["run.mjs", "gateway.mjs", "trace-stdio.mjs", "cases.mjs", "paper-case.mjs"];
+if (observatory) evaluatorFiles.push("observatory/fixture.mjs", "observatory/tasks.mjs", "observatory/score.mjs");
 const evaluatorHashes = Object.fromEntries(await Promise.all(evaluatorFiles.map(async name =>
   [name, hash(await readFile(new URL(name, import.meta.url)))])));
 await writeFile(path.join(directory, "manifest.json"), JSON.stringify({
   model, started: new Date().toISOString(), head: process.env.TOPOLUMIA_EVAL_REVISION || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   contractHash: hash(JSON.stringify(contract) + MCP_INSTRUCTIONS), caseHash: hash(await readFile(new URL("cases.mjs", import.meta.url))),
   promptHash: hash(JSON.stringify(prompts)), evaluatorHashes,
-  prompts, tools: contract.map(t => t.name), definitionChars: JSON.stringify(contract).length,
+  prompts, ...(observatory ? { suite: "observatory", variant } : {}), tools: contract.map(t => t.name), definitionChars: JSON.stringify(contract).length,
   nativeReadPolicy: "Isolated workspace reads allowed via native clients. Other permission prompts are declined.",
 }, null, 2));
 
@@ -52,7 +59,7 @@ async function run(runtime, key) {
   const api = runtime === "claude" ? "ANTHROPIC" : "OPENAI";
   const gateway = await meteredGateway(process.env["TOPOLUMIA_EVAL_" + api + "_URL"], process.env["TOPOLUMIA_EVAL_" + api + "_KEY"]);
   const report = { runtime, case: key, model, started: new Date().toISOString(), events: [] };
-  let app, adapter, binding, oracle, before, timer;
+  let app, actor, adapter, binding, oracle, before, timer;
   const start = Date.now();
   try {
     app = await startMvpServer({ port: 0, host: "127.0.0.1", testMode: false,
@@ -61,13 +68,14 @@ async function run(runtime, key) {
     const projectId = app.config.project.id;
     const workspace = app.config.project.root;
     const user = app.collaboration.bootstrapAdmin({ username: "reviewer", password: randomUUID() + "aA!2" });
-    const actor = app.collaboration.actorForUser(user.id, projectId);
+    actor = app.collaboration.actorForUser(user.id, projectId);
     const session = randomUUID();
     const credential = app.collaboration.issueAgentCredential(actor, projectId, session, { researchSessionId: session });
     binding = buildResearchMcpBinding({ baseUrl: app.url, projectId, sessionToken: credential, cwd: workspace, runtimeInstanceId: session, dataRoot: path.join(workspace, ".topolumia") });
     report.skill = { delivery: binding.skillDelivery, nativeReadObserved: false };
     binding.args = [fileURLToPath(new URL("trace-stdio.mjs", import.meta.url)), trace, ...binding.args];
-    if (prompts[key]) oracle = await seedCase(app, actor, key, workspace, binding);
+    if (observatory) oracle = await seedObservatory(app, actor, workspace, variant);
+    else if (prompts[key]) oracle = await seedCase(app, actor, key, workspace, binding);
     before = app.researchCommands.formalTopology().stateVersion;
     await writeFile(trace, "", { flag: "wx" });
     const native = path.join(root, "native");
@@ -85,7 +93,7 @@ async function run(runtime, key) {
         ANTHROPIC_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1" };
       profile.permissionMode = "dontAsk";
-      profile.extraArgs = ["--strict-mcp-config", "--setting-sources", "project", "--no-session-persistence"];
+      profile.extraArgs = ["--strict-mcp-config", "--setting-sources", "project", ...(key === "panel" ? [] : ["--no-session-persistence"])];
     } else {
       env = { XDG_DATA_HOME: native, XDG_CONFIG_HOME: native, XDG_CACHE_HOME: native, OPENCODE_DISABLE_MODELS_FETCH: "true" };
       profile.model = "metered/" + model;
@@ -113,12 +121,18 @@ async function run(runtime, key) {
     } });
     const ready = await adapter.start({ cwd: workspace, researchMcp: binding, developerInstructions: MCP_SESSION_HINT + " " + binding.instructions });
     report.native = ready.agentInfo;
+    report.nativeSession = ready.nativeSessionId;
     const text = prompts[key] ?? "Use Topolumia MCP get_context once and reply READY.";
     console.log(prefix + " started");
-    const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Benchmark case deadline")), 600000); });
-    const result = await Promise.race([adapter.prompt({ turnId: randomUUID(), content: [{ type: "text", text }] }), timeout]);
-    report.stop = result.stopReason;
-    report.answer = [...messages.values()].join("\n");
+    if (observatory) {
+      await runObservatoryTurns({ app, actor, adapter, report, workspace, binding, oracle, trace, prompts: text, messages, gateway, hash,
+        checkpoint: () => writeFile(path.join(directory, prefix + ".stages.json"), JSON.stringify({ stages: report.stages, oracle }, null, 2)) });
+    } else {
+      const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Benchmark case deadline")), 600000); });
+      const result = await Promise.race([adapter.prompt({ turnId: randomUUID(), content: [{ type: "text", text }] }), timeout]);
+      report.stop = result.stopReason;
+      report.answer = [...messages.values()].join("\n");
+    }
   } catch (error) {
     report.error = { code: error.code, message: error.message, detail: typeof error.detail?.stderr === "string" ? error.detail.stderr.slice(-500) : undefined };
   } finally {
@@ -133,7 +147,16 @@ async function run(runtime, key) {
     report.candidates = candidates.map(({ id, revision, status, operations, evidenceReads, provenance }) => ({ id, revision, status, operations, evidenceReads, origin: provenance?.kind }));
     report.oracle = oracle;
     report.formalIntact = before !== undefined && before === app.researchCommands.formalTopology().stateVersion;
-    report.checks = oracle ? grade(key, oracle, calls, candidates, report.answer ?? "", report.formalIntact) : {};
+    if (observatory && oracle) {
+      const stages = report.stages ?? [];
+      report.formalIntact = stages.length > 0 && stages.every(s => s.formalBefore === s.formalAfter);
+      if (key === "packet") {
+        const bytes = await readFile(path.join(binding.env.TOPOLUMIA_TRANSFER_ROOT, "in", "instrument-register.csv")).catch(() => null);
+        report.downloadedChecksum = bytes ? hash(bytes) : null;
+      }
+      report.review = reviewInSandbox(app.researchCommands, actor, stages.at(-1)?.candidates ?? []);
+    }
+    report.checks = oracle ? (observatory ? gradeObservatory(report, calls) : grade(key, oracle, calls, candidates, report.answer ?? "", report.formalIntact)) : {};
     report.passed = Object.values(report.checks).filter(Boolean).length;
     report.possible = Object.keys(report.checks).length;
     report.calls = calls.length;
