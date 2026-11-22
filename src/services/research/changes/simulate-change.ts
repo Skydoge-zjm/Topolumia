@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { fail, principal, actorIdentity } from "../../../domain/research/access.js";
 import { objectKey, sameObject, nodeRef, groupRef } from "../../../domain/research/object-ref.js";
 import { applyExperimentPatch, registerRecordRuns } from "./experiment-mutations.js";
+import { changedSourceEvidence } from "./source-evidence.js";
 
 import { storedResearchNodeKind } from "../../../domain/research/node-kinds.js";
 import type { ResearchCommandService } from "../research-command-service.js";
@@ -17,7 +18,7 @@ type VersionField = "revision"|"coreRevision"|"blockCollectionRevision"|"members
 const objectVersion = (value:StoredResearchObject|undefined,field:VersionField) => field === "membershipRevision" ? value && "members" in value ? value.membershipRevision : undefined : value?.[field];
 
 /** Pure simulation; all persistent writes are performed by the shared transaction. */
-export function simulateChange(c:ResearchCommandService, operations:ResearchOperation[], actor:ResearchActor, allocation:Record<string,string> = {}, candidateId = "direct", evidenceIds?:string[], checkEvidence = false):ChangeSimulation {
+export function simulateChange(c:ResearchCommandService, operations:ResearchOperation[], actor:ResearchActor, allocation:Record<string,string> = {}, candidateId = "direct", evidenceIds?:string[], checkEvidence = false, purpose: "write" | "preview" = "write"):ChangeSimulation {
   const graph = c.formalTopology(), nodeValues = structuredClone(c.nodes.nodes()), groupValues = structuredClone(c.groups.list());
   const objects = new Map<string,StoredResearchObject>([...nodeValues.map(value => [objectKey(nodeRef(value.id)), value] as const), ...groupValues.map(value => [objectKey(groupRef(value.id)), value] as const)]);
   const original = structuredClone(objects), blocks = new Map(c.store.all("blocks").map(block => [block.id, structuredClone(block)])), originalBlocks = structuredClone(blocks);
@@ -35,14 +36,11 @@ export function simulateChange(c:ResearchCommandService, operations:ResearchOper
   const permitted = evidenceIds === undefined ? reads : reads.filter(read => evidenceIds.includes(read.id));
   for (const read of evidenceIds ? permitted : []) {
     if (read.scope === "candidate" && read.candidateId !== candidateId) fail("READ_RECEIPT_INVALID", "Candidate evidence belongs to another proposal.");
-    if (read.object.kind === "source") {
-      const source = c.sources().find(item => item.ref === read.object.id);
-      const current = source?.version ?? (source?.hash ? "sha256:" + source.hash : null);
-      if (!source || current !== read.version) fail("OBJECT_VERSION_CONFLICT", "The cited source changed. Read its current text and supply the new receipt in the candidate edit.", 409,
-        { ref: read.object.id, observedVersion: read.version, currentVersion: current,
-          ...(source ? { readHint: { tool: "read_source", ref: read.object.id, ...(current ? { expectedVersion: current } : {}) } } : {}) });
-    }
     if (read.object.kind === "asset") { const asset = c.assets.assert(read.object.id, actor); if (asset.checksum !== read.version || read.contentVersion && asset.contentVersion && read.contentVersion !== asset.contentVersion) fail("OBJECT_VERSION_CONFLICT", "Asset evidence changed.", 409); }
+  }
+  if (evidenceIds && purpose === "write") {
+    const changed = changedSourceEvidence(c, permitted)[0];
+    if (changed) fail("OBJECT_VERSION_CONFLICT", "The cited source changed. Read its current text and supply the new receipt in the candidate edit.", 409, changed);
   }
   const evidence = (kind:string, id:string, version:ReadReceipt["version"], owner:ResearchObjectRef, content = false) => {
     if (!checkEvidence || !actor.isAgent || newObjects.has(objectKey(owner))) return;

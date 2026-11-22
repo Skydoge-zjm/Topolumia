@@ -3,6 +3,7 @@ import * as z from "zod/v4";
 import { versionHash } from "../../../lib/hash.js";
 import { extractContentBlockText } from "../../../domain/research/content-blocks.js";
 import { schemaRegistry } from "../../../domain/research/interfaces/schema-registry.js";
+import { changedSourceEvidence } from "../changes/source-evidence.js";
 import { candidateReceipt, readCandidates } from "./proposal-queries.js";
 import { scientificFactKeys, sourceCapabilities } from "./source-capabilities.js";
 import { omitFields } from "../../../domain/research/object-values.js";
@@ -27,7 +28,7 @@ export type QueryInput = {
 };
 type VisibleReceipt = Omit<ReadReceipt, "projectId" | "principalId" | "researchSessionId" | "at">;
 export type QueryEnvelope<T> = {
-  schemaVersion:string;kind:string;projectId:string;scope:{state:string;candidateId?:string;candidateRevision?:number};stateVersion:string;
+  schemaVersion:string;kind:string;projectId:string;scope:{state:string;candidateId?:string;candidateRevision?:number;changedSourceCount?:number};stateVersion:string;
   data:T;coverage:{complete:boolean;omissions:string[]};budget:{maxChars:number;returnedChars:number};readReceipts?:VisibleReceipt[];
 };
 type ReadDetails = {sourceRef?:{kind:"file";value:string};owner?:ResearchObjectRef;field?:string;source?:{ref:string;version:string|number|null|undefined};contentVersion?:string;blockId?:string;assetId?:string;checksum?:string;representationId?:string;sourceRefs?:StoredBlock["sourceRefs"];completeSourceAvailable?:boolean};
@@ -39,7 +40,8 @@ export class AgentResearchQueries {
     const maxChars=input.maxChars??(kind==="schema"?8000:kind==="context"?3000:kind==="search"?4000:6000);
     if(!Number.isInteger(maxChars)||maxChars<2000||maxChars>16000)fail("CONTEXT_BUDGET_INVALID","maxChars must be 2000–16000.");
     const candidate=input.candidateId?this.c.changes.candidate(input.candidateId,input.actor??fail("AUTH_REQUIRED","A candidate read requires its actor.",401)):null;
-    return {schemaVersion:"research-agent-result.v1",kind,projectId:this.c.projectId,scope:{state:candidate?"candidate":"formal",...(candidate?{candidateId:candidate.id,candidateRevision:candidate.revision}:{})},stateVersion:this.c.formalTopology().stateVersion,data,coverage:{complete:true,omissions:[]},...extra,budget:{maxChars,returnedChars:0}};
+    const stale = candidate && ["pending","deferred"].includes(candidate.status) ? changedSourceEvidence(this.c, candidate.evidenceReads).length : 0;
+    return {schemaVersion:"research-agent-result.v1",kind,projectId:this.c.projectId,scope:{state:candidate?"candidate":"formal",...(candidate?{candidateId:candidate.id,candidateRevision:candidate.revision,...(stale ? {changedSourceCount:stale} : {})}:{})},stateVersion:this.c.formalTopology().stateVersion,data,coverage:{complete:true,omissions:[]},...extra,budget:{maxChars,returnedChars:0}};
   }
   visibleReceipts(receipts: ReadReceipt[]): VisibleReceipt[] {
     return receipts.map(receipt => omitFields(receipt, ["projectId", "principalId", "researchSessionId", "at"]));

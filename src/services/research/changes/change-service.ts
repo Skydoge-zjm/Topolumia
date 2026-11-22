@@ -13,9 +13,9 @@ export class ResearchChangeService {
   constructor(public c:ResearchCommandService){this.store=c.store;}
   validate<S extends z.ZodType>(schema:S,input:unknown):z.output<S>{const p=schema.safeParse(input);if(!p.success)fail("INPUT_INVALID","Invalid change input.",422,p.error.issues.slice(0,6).map(x=>({path:x.path.join("."),message:x.message})));return p.data;}
   candidate(id:string,actor:ResearchActor):StoredCandidate{const p=this.store.get("candidates",id);if(!p||!this.c.visibleCandidate(p,actor))fail("CANDIDATE_NOT_FOUND","Candidate unavailable.",404);return p;}
-  simulate(operations:unknown, actor:ResearchActor, allocation:Record<string,string> = {}, candidateId = "direct", evidenceIds:string[]|undefined = undefined, checkEvidence = false):ChangeSimulation {
+  simulate(operations:unknown, actor:ResearchActor, allocation:Record<string,string> = {}, candidateId = "direct", evidenceIds:string[]|undefined = undefined, checkEvidence = false, purpose: "write" | "preview" = "write"):ChangeSimulation {
     const parsed = this.validate(operationsSchema, operations);
-    return simulateChange(this.c, parsed, actor, allocation, candidateId, evidenceIds, checkEvidence);
+    return simulateChange(this.c, parsed, actor, allocation, candidateId, evidenceIds, checkEvidence, purpose);
   }
   createCompiled(input:unknown,actor:ResearchActor):StoredCandidate{
     this.c.check(actor,"research.proposeChange");

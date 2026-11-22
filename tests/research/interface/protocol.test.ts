@@ -17,6 +17,10 @@ test("an amendment can re-pin a revised source while keeping historical and same
   const created = (await f.data("create_candidate", { reason: "Preliminary", evidenceReadIds: [a.id],
     nodes: [{ kind: "note", core: { nodeName: "Decision" } }] })).data;
   const b = await publish("Rule B");
+  const preview = await f.data("read_nodes", { nodeIds: [created.nodes[0].nodeId], candidateId: created.candidateId });
+  assert.equal(preview.scope.changedSourceCount, 1);
+  const summary = await f.data("read_candidates", { mode: "show", candidateId: created.candidateId });
+  assert.equal(summary.data.changedSource.readHint.expectedVersion, b.version);
   const change = { candidateId: created.candidateId, expectedRevision: 1, nodeChanges: [{ nodeId: created.nodes[0].nodeId, corePatch: { summary: "Amendment B" } }] };
   const stale = await f.call("edit_candidate", change);
   assert.equal(stale.structuredContent.error.code, "OBJECT_VERSION_CONFLICT");

@@ -1,3 +1,4 @@
+import { changedSourceEvidence } from "../changes/source-evidence.js";
 import { summarizeCandidate, candidateObjectRefs } from "../changes/candidate-summary.js";
 import { sameObject, nodeRef, groupRef } from "../../../domain/research/object-ref.js";
 import { extractContentBlockText } from "../../../domain/research/content-blocks.js";
@@ -25,5 +26,6 @@ export function readCandidates(queries:AgentResearchQueries,input:QueryInput){
   const p=c.changes.candidate(input.candidateId??"",input.actor),meta={id:p.id,revision:p.revision,status:p.status,reason:p.reason,idempotencyKey:p.requestKey};
   if(input.section==="evidence")return queries.page("candidates",p.evidenceReads,input,{candidate:p.id,revision:p.revision,section:"evidence"});
   if(["nodes","groups"].includes(input.section??"")){const view=c.snapshot(p.id,input.actor);const entries=candidateObjects(queries,p,input.actor).filter(entry=>entry.owner.kind===(input.section==="groups"?"group":"node")).map(({object})=>"members" in object?queries.groupSummary(object,view,p.id):queries.nodeSummary(object,view,p.id));return queries.page("candidates",entries,input,{candidate:p.id,revision:p.revision,section:input.section});}
-  return queries.finish(queries.envelope("candidates",{...meta,operationCount:p.operations.length,readHints:[{mode:"show",candidateId:p.id,section:"nodes"},{mode:"show",candidateId:p.id,section:"groups"}],contentHint:"Read exact nodes/groups/blocks with candidateId. Candidate IDs are pending until a human accepts."},input));
+  const change = ["pending","deferred"].includes(p.status) ? changedSourceEvidence(c,p.evidenceReads)[0] : undefined;
+  return queries.finish(queries.envelope("candidates",{...meta,...(change ? {changedSource:change} : {}),operationCount:p.operations.length,readHints:[{mode:"show",candidateId:p.id,section:"nodes"},{mode:"show",candidateId:p.id,section:"groups"}],contentHint:"Read exact nodes/groups/blocks with candidateId. Candidate IDs are pending until a human accepts."},input));
 }
