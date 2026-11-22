@@ -92,7 +92,8 @@ export function gradeObservatory(report, trace) {
       verifiedMembership: Boolean(group && calls.some(c => c.tool === "read_groups" && c.args.mode === "members" && c.args.groupId === group.id &&
         c.args.candidateId === last.id && c.result.data.items?.some(m => m.object?.id === o.nodes.reed))),
       verifiedTable: [[site.station,0],[site.other,site.otherOffset]].every(([station,value]) => seenRows.some(fields => fields.includes(station) && fields.some(v => sameNumber(v,value)))),
-      persistedPacket: Boolean(review?.applied && review.groups.some(g => g.id === group?.id && g.parentId === o.groups.operations) &&
+      persistedPacket: Boolean(review?.applied && review.groups.some(g => g.id === group?.id && g.parentId === o.groups.operations &&
+        g.members.length === 3 && expected.every(([id, role]) => g.members.some(m => m.nodeId === id && m.role?.toLowerCase() === role))) &&
         outgoing(review, group?.id, o.nodes.board) && assetAttached(review, o.basisAsset) && tableMatches(review, site, 0, site.otherOffset)),
     };
   }
@@ -126,6 +127,8 @@ export function gradeObservatory(report, trace) {
     certificate: assetAttached(last,file?.result.data.assetId),
     directedHandover: outgoing(last,finalNote?.id,o.nodes.board),
     verifiedAmendment: confirmedMetric(secondCalls,last,"Amended",o.corrected) && confirmedMetric(secondCalls,last,"Amended",o.finalGain),
-    persistedDecision: Boolean(review?.applied && outgoing(review,finalNote?.id,o.nodes.board) && named(items(review,"Amended"),/disposition|decision|verdict/i,decisionB)),
+    persistedDecision: Boolean(review?.applied && outgoing(review,finalNote?.id,o.nodes.board) &&
+      named(items(review,"Amended"),/reed/i,o.corrected) && named(items(review,"Amended"),/gain|improv|differ|delta/i,o.finalGain) &&
+      named(items(review,"Amended"),/disposition|decision|verdict/i,decisionB)),
   };
 }

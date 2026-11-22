@@ -97,6 +97,17 @@ export async function auditStudy(root, expectedRounds = 12) {
     assert.equal(records.filter(r=>r.batch===batch).length,6,batch);
   }
   const portable = await Promise.all(["Alder-plaza","Alder-quay","Alder-reviewed"].map(dir=>inspectProject(path.join(root,"workspaces",dir))));
+  const example = portable[2], submitted = records.find(r=>r.batch==="confirm-live-project");
+  if (submitted) {
+    const raw = await read("confirm-live-project", submitted.client + "-" + submitted.task + ".json");
+    const applied = example.candidates.find(c=>c.id===raw.stages.at(-1).candidates[0]?.id);
+    assert.ok(applied && applied.status==="applied" && applied.revision>=2);
+    assert.ok(applied.currentSources.some(s=>s.version===raw.oracle.revisedVersion));
+    assert.ok(applied.historicalSources.some(s=>s.version===raw.oracle.initialVersion));
+    const early=example.decisions.find(d=>d.stage==="Preliminary"),late=example.decisions.find(d=>d.stage==="Amended");
+    assert.ok(early && late && early.nodeId===late.nodeId);
+    assert.ok(late.values.some(i=>typeof i.value==="number" && Math.abs(i.value-raw.oracle.finalGain)<1e-6));
+  }
   const result = { model,studies,records,turns,portable,tools:[...usedTools].sort(),blockReads:Object.fromEntries([...blockViews].sort()),
     responseVerified:records.filter(r=>r.verifiedModel).length,usageComplete:records.filter(r=>r.providerTokens!==null).length };
   await writeFile(path.join(root,"audit.json"),JSON.stringify(result,null,2));

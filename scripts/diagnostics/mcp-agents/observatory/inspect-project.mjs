@@ -55,12 +55,14 @@ export async function inspectProject(directory) {
     const decisions = blocks.filter(b => b.type === "metric" && ["Preliminary","Amended"].includes(b.title)).map(b => ({
       stage: b.title, values: b.payload.items.map(i => ({ name: i.name, value: i.value })), nodeId: b.owner.id,
     }));
+    const sourceVersions = receipts => (receipts ?? []).filter(r => r.object.kind === "source").map(r => ({ ref: r.object.id, version: r.version }));
     return { projectId: manifest.id, name: manifest.name, workspace, nodes: nodes.length, groups: groups.length, groupDepth: depth,
       edges: state.topology.edges.length, blockCount: blocks.length, blockTypes: [...new Set(blocks.map(b => b.type))].sort(),
       nodeKinds: [...new Set(nodes.map(n => n.kind))].sort(), runCount: blocks.filter(b => b.type === "experimentRecord").reduce((n,b) => n + b.payload.runs.length,0),
       verifiedAssetBytes: assets.reduce((s, a) => s + a.sizeBytes, 0), verifiedAssets: assets.length,
       indexedSources: state.snapshot.files.files.map(f => ({ ref: f.ref, version: f.version })), decisions,
-      candidates: candidates.map(c => ({ id: c.id, status: c.status, revision: c.revision, history: c.revisions?.length ?? 0 })) };
+      candidates: candidates.map(c => ({ id: c.id, status: c.status, revision: c.revision, history: c.revisions?.length ?? 0,
+        currentSources: sourceVersions(c.evidenceReads), historicalSources: (c.revisions ?? []).flatMap(v => sourceVersions(v.evidenceReads)) })) };
   } finally { db.close(); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
