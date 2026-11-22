@@ -1226,6 +1226,10 @@ test("uploaded spreadsheet rows use immutable file coordinates and Agent row-rea
     view: "values",
     selection: { sheet: "Config", rowOffset: 1, rowLimit: 1 },
   });
+  assert.ok(asset.contentVersion, "the queued upload already identifies the table interpretation");
+  await Promise.all(c.assets.pending);
+  assert.equal(row.readReceipts[0].contentVersion, asset.contentVersion);
+  assert.equal(c.assets.assert(asset.id, agent).contentVersion, asset.contentVersion);
   const proposed = c.proposals.create(
     {
       ...candidateInput,
