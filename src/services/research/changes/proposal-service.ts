@@ -60,10 +60,27 @@ export class ResearchProposalService {
     const ownerRef = (owner:ResearchObjectRef):ResearchObjectRef => ({ ...owner, id: idRef(owner.id, owner.kind) });
     const findOp = <K extends ResearchOperationInput["op"]>(kind:K,test:(op:Extract<ResearchOperationInput,{op:K}>)=>boolean):Extract<ResearchOperationInput,{op:K}>|undefined => operations.find((op):op is Extract<ResearchOperationInput,{op:K}>=>op.op===kind && test(op as Extract<ResearchOperationInput,{op:K}>));
     const created = (owner:ResearchObjectRef) => owner.kind === "group" ? findOp("addGroup",op=>allocation["group:"+op.clientRef]===owner.id) : findOp("addNode",op=>allocation["node:"+op.clientRef]===owner.id);
+    let observations: ReadReceipt[] | undefined;
+    const observedRevision = (owner: ResearchObjectRef, kind: "object" | "membership") => {
+      if (!actor.isAgent || created(owner)) return undefined;
+      observations ??= this.c.store.all("receipts").filter(read => read.scope === "formal" &&
+        read.principalId === principal(actor) && read.researchSessionId === (actor.sessionId ?? null));
+      let latest: number | undefined;
+      for (const read of observations) {
+        if (read.object.kind === kind && read.object.id === owner.id && sameObject(read.owner, owner) && typeof read.version === "number")
+          latest = Math.max(latest ?? 0, read.version);
+      }
+      return latest;
+    };
     const addedBlock = (id:string) => findOp("addBlock",op=>allocation["block:" + op.clientRef] === id);
     const addBlocks = (owner:ResearchObjectRef, values:z.infer<typeof proposalBlock>[]|undefined, expectedCollectionRevision:number|undefined) => { for (const block of values ?? []) operations.push({ ...block, op: "addBlock", owner, clientRef: key(), ...(expectedCollectionRevision !== undefined ? { expectedCollectionRevision } : {}) }); };
     for (const node of input.nodes ?? []) { const clientRef = key(); operations.push({ op: "addNode", clientRef, kind: node.kind, core: node.core, sourceRefs: node.sourceRefs }); addBlocks(nodeRef("@" + clientRef), node.blocks, undefined); }
-    for (const group of input.groups ?? []) { const clientRef = key(); operations.push({ op: "addGroup", clientRef, core: group.core, members: group.members ?? [], parentId: group.parentId ? idRef(group.parentId, "group") : null, expectedParentRevision: group.expectedParentRevision, sourceRefs: group.sourceRefs }); addBlocks(groupRef("@" + clientRef), group.blocks, undefined); }
+    for (const group of input.groups ?? []) {
+      const clientRef = key(), parent = group.parentId ? groupRef(group.parentId) : undefined;
+      operations.push({ op: "addGroup", clientRef, core: group.core, members: group.members ?? [], parentId: parent ? idRef(parent.id, "group") : null,
+        expectedParentRevision: group.expectedParentRevision ?? (parent ? observedRevision(parent, "membership") : undefined), sourceRefs: group.sourceRefs });
+      addBlocks(groupRef("@" + clientRef), group.blocks, undefined);
+    }
     const changes:ObjectChange[] = [...(input.nodeChanges ?? []).map(change => ({ ...change, owner: nodeRef(change.nodeId) })), ...(input.groupChanges ?? []).map(change => ({ ...change, owner: groupRef(change.groupId) }))];
     const changed = new Set<string>();
     for (const change of changes) {
@@ -136,7 +153,16 @@ export class ResearchProposalService {
         }
       }
     }
-    for (const relation of input.relations ?? []) operations.push({ op: "addEdge", clientRef: key(), edge: { from: ownerRef(relation.from), to: ownerRef(relation.to), type: relation.type }, label: relation.label, expectedEndpointRevisions: relation.expectedEndpointRevisions });
+    for (const relation of input.relations ?? []) {
+      const versions = [...(relation.expectedEndpointRevisions ?? [])];
+      for (const object of [relation.from, relation.to]) {
+        if (versions.some(entry => sameObject(entry.object, object))) continue;
+        const revision = observedRevision(object, "object");
+        if (revision !== undefined) versions.push({ object, revision });
+      }
+      operations.push({ op: "addEdge", clientRef: key(), edge: { from: ownerRef(relation.from), to: ownerRef(relation.to), type: relation.type },
+        label: relation.label, expectedEndpointRevisions: versions });
+    }
     for (const change of input.relationChanges ?? []) {
       const added = findOp("addEdge", op => allocation["edge:" + op.clientRef] === change.relationId);
       if (added) { if (change.remove) { operations = operations.filter(op => op !== added); for (const op of operations) if (op.op === "setGroupPrimaryRelations") for (const field of ["incomingRelationId", "outgoingRelationId"] as const) if (op.patch[field] === change.relationId) op.patch[field] = null; } else { if (change.patch?.type) added.edge.type = change.patch.type; if (change.patch?.label !== undefined) added.label = change.patch.label; } }

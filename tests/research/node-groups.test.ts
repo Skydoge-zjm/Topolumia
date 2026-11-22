@@ -25,6 +25,22 @@ test("a missing parent receipt can be recovered without broadening the explicit 
   assert.equal(saved.data.status, "pending");
 });
 
+test("inferred relationship revisions are bound to actual observations and survive into approval", async t => {
+  const f = await fixture(t), c = f.runtime.researchCommands;
+  const make = name => c.researchNodes.createNode("note", { nodeName: name }, f.actor).node;
+  const a = make("Field report"), b = make("Review board");
+  const input = { reason: "Route review", relations: [{ from: node(a.id), to: node(b.id), type: "informs" }] };
+  assert.equal((await f.call("create_candidate", input)).isError, true);
+  const seen = await f.data("read_nodes", { nodeIds: [a.id, b.id] });
+  const created = await f.data("create_candidate", input);
+  const saved = c.store.get("candidates", created.data.candidateId);
+  assert.deepEqual(saved.operations[0].expectedEndpointRevisions,
+    seen.data.items.map(item => ({ object: node(item.id), revision: item.nodeRevision })));
+  c.changes.direct([{ op: "updateCore", owner: node(b.id), expectedCoreRevision: b.coreRevision, patch: { summary: "Board changed" } }], f.actor);
+  assert.throws(() => c.reviewCandidate({ actor: f.actor, candidateId: saved.id, expectedRevision: 1, decision: "accept" }), { code: "OBJECT_VERSION_CONFLICT" });
+  assert.equal((await f.call("create_candidate", input)).structuredContent.error.code, "OBJECT_VERSION_CONFLICT");
+});
+
 test("groups share content, typed boundaries and the real MCP/CLI candidate path", async t => {
   const f = await fixture(t), c = f.runtime.researchCommands;
   const createNode = async (name: string) => { const result = await f.api("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: name } }); assert.equal(result.status, 201, JSON.stringify(result.body)); return result.body.node.id; };
