@@ -129,7 +129,24 @@ export class AgentResearchQueries {
     this.c.check(input.actor,"research.view");const q=String(input.query??"").normalize("NFKC").toLowerCase(),terms=[...new Set(q.match(/[\p{L}\p{N}_.:-]+/gu)??[])],entries=[],target=input.target??"all";
     const rank=(fields:string[])=>{const body=fields.join(" ").normalize("NFKC").toLowerCase();return terms.reduce((s,t)=>s+(body.includes(t)?1:0),0)+(body.includes(q)?3:0);};
     const view=prepared??this.searchView(input),objectMap=new Map<string,StoredResearchObject>([...view.nodes.map(n=>[objectKey(nodeRef(n.id)),n] as const),...view.groups.map(g=>[objectKey(groupRef(g.id)),g] as const)]);
-    if(target==="all"||target==="nodes")for(const n of view.nodes){if(input.kinds?.length&&!input.kinds.includes(n.kind)||input.status&&n.status!==input.status)continue;const score=rank([n.id,JSON.stringify(n.core)]);if(score)entries.push({objectType:"node",id:n.id,nodeId:n.id,kind:n.kind,label:clip(n.core.nodeName,160),version:n.coreRevision,score,readHint:{nodeIds:[n.id]}});}
+    if (target === "all" || target === "nodes") {
+      const matchingRoles = new Map<string, { score: number; groupId: string; groupLabel: string; role: string }>();
+      for (const group of view.groups) for (const member of group.members) {
+        if (!member.role) continue;
+        const score = rank([group.core.nodeName, member.role]) / 2;
+        if (score > (matchingRoles.get(member.nodeId)?.score ?? 0))
+          matchingRoles.set(member.nodeId, { score, groupId: group.id, groupLabel: clip(group.core.nodeName, 120), role: member.role });
+      }
+      for (const node of view.nodes) {
+        if (input.kinds?.length && !input.kinds.includes(node.kind) || input.status && node.status !== input.status) continue;
+        const direct = rank([node.id, JSON.stringify(node.core)]), membership = matchingRoles.get(node.id);
+        const score = Math.max(direct, membership?.score ?? 0);
+        if (!score) continue;
+        entries.push({ objectType: "node", id: node.id, nodeId: node.id, kind: node.kind, label: clip(node.core.nodeName, 160),
+          version: node.coreRevision, score, readHint: { nodeIds: [node.id] },
+          ...(membership && membership.score >= direct ? { matchedMembership: { groupId: membership.groupId, groupLabel: membership.groupLabel, role: membership.role } } : {}) });
+      }
+    }
     if(target==="all"||target==="groups")for(const g of view.groups){const score=rank([g.id,JSON.stringify(g.core)]);if(score)entries.push({objectType:"group",id:g.id,object:groupRef(g.id),label:clip(g.core.nodeName,160),version:g.revision,score,readHint:{mode:"show",groupId:g.id}});}
     if(target==="all"||target==="blocks")for(const b of view.blocks){const n=objectMap.get(objectKey(b.owner));if(!n||b.lifecycle==="archived"||input.owner&&!sameObject(b.owner,input.owner)||input.kinds?.length&&!input.kinds.includes(b.type)||input.status&&b.review!==input.status)continue;const content=extractContentBlockText(b.type,b.payload),score=rank([b.title,content]);if(score){const at=Math.max(0,content.toLowerCase().indexOf(terms[0]??q));entries.push({objectType:"block",id:b.id,owner:b.owner,label:clip(b.title,160),version:b.revision,snippet:content.slice(Math.max(0,at-60),at+180),score,readHint:this.blockSummary(b).readHint});}}
     if(target==="all"||target==="sources")for(const s of this.c.sources()){const indexed=this.c.sourceText?.(s),body=indexed??s.excerpt??"",score=rank([s.ref,s.label??"",body]);if(score){const at=Math.max(0,body.toLowerCase().indexOf(terms[0]??q));entries.push({objectType:"source",ref:s.ref,label:clip(s.label??s.ref,160),version:s.version??(s.hash?"sha256:"+s.hash:null),snippet:body.slice(Math.max(0,at-60),at+180),score,...sourceCapabilities(s,indexed)});}}

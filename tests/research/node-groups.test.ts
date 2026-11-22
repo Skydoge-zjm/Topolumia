@@ -58,6 +58,8 @@ test("groups share content, typed boundaries and the real MCP/CLI candidate path
   assert.ok(brief.budget.returnedChars <= 2000);
   const batch = await f.data("search", { queries: ["Ablation", "Summary", "unrelated-string"], limit: 1, maxChars: 2000 });
   assert.deepEqual(batch.data.groups.map(row => row.hits[0]?.id ?? null), [id, summary, null]);
+  const role = await f.data("search", { target: "nodes", query: "Ablation variant" });
+  assert.ok(role.data.items.some(hit => hit.id === b && hit.matchedMembership?.role === "variant"));
   assert.equal((await f.call("search", { query: "A", queries: ["A", "B"] })).isError, true);
   const members = await f.data("read_groups", { mode: "members", groupId: id });
   assert.equal(members.kind, "groups");
