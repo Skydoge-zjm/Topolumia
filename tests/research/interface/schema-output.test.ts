@@ -3,6 +3,21 @@ import assert from "node:assert/strict";
 import * as z from "zod/v4";
 import { createProposalSchema } from "../../../src/domain/research/changes/proposals.js";
 import { compactSchemaOutput } from "../../../src/domain/research/interfaces/schema-output.js";
+import { toolDefinitions, transferSchema } from "../../../src/domain/research/interfaces/tools.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+
+test("transfer discovery exposes native object fields and preserves direction-specific validation", () => {
+  const shape = toolDefinitions().find(tool => tool.name === "transfer_asset").inputSchema;
+  assert.ok(shape.properties.direction);
+  assert.ok(shape.properties.relativePath);
+  const validate = new AjvJsonSchemaValidator().getValidator(shape);
+  const upload = { direction: "upload", relativePath: "out/x.txt", idempotencyKey: "x" };
+  const download = { direction: "download", relativePath: "in/x.txt", idempotencyKey: "x", variant: "original", target: { kind: "asset", assetId: "asset:x" } };
+  for (const input of [upload, download, { ...upload, variant: "original" }, { ...download, originalName: "x" },
+    { ...download, target: undefined }, { ...upload, extra: 1 }, { ...download, target: { kind: "block" } }]) {
+    assert.equal(validate(input).valid, transferSchema.safeParse(input).success, JSON.stringify(input));
+  }
+});
 
 function expand(value, root) {
   if (Array.isArray(value)) return value.map((item) => expand(item, root));

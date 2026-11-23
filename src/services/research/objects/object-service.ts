@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { contentBlockInput, extractContentBlockText, validateContentBlockPayload } from "../../../domain/research/content-blocks.js";
 import { sameObject, objectKey } from "../../../domain/research/object-ref.js";
 import { objectRefSchema } from "../../../domain/research/object-schemas.js";
+import { schemaRegistry } from "../../../domain/research/interfaces/schema-registry.js";
 import { fail, actorIdentity } from "../../../domain/research/access.js";
 import type { ResearchCommandService } from "../research-command-service.js";
 import type { GroupRef, NodeRef, ResearchObjectRef } from "../../../domain/research/object-ref.js";
@@ -27,9 +28,18 @@ export class ResearchObjectService {
     const parsed = contentBlockInput.safeParse(input);
     if (!parsed.success) fail("CONTENT_BLOCK_INVALID", "Invalid block.", 422, parsed.error.issues.slice(0, 6));
     const value: ValidatedBlock = {...parsed.data, payload:parsed.data.payload as ContentPayload | undefined};
-    if (value.role === "body" && value.type !== "richText") fail("CONTENT_BLOCK_INVALID", "A note body must be rich text.");
+    if (value.role === "body" && value.type !== "richText")
+      fail("CONTENT_BLOCK_INVALID", `Omit role on a ${value.type} block. Only a note's primary richText block accepts role="body".`);
     if (actor.isAgent && ["confirmed", "rejected"].includes(value.review)) fail("REVIEW_REQUIRES_USER", "Only humans confirm scientific content.", 403);
-    if (value.payload !== undefined) { const checked = validateContentBlockPayload(value.type, value.payload); if (!checked.success) fail("CONTENT_BLOCK_PAYLOAD_INVALID", "Invalid content payload.", 422, checked.issues); value.payload = checked.data; }
+    if (value.payload !== undefined) {
+      const checked = validateContentBlockPayload(value.type, value.payload);
+      if (!checked.success) fail("CONTENT_BLOCK_PAYLOAD_INVALID", `Invalid ${value.type} payload in block "${value.title}".`, 422,
+        checked.issues.map((issue, index) => ({
+          ...issue, path: ["payload", ...issue.path],
+          ...(index === 0 ? { blockType: value.type, blockTitle: value.title, example: schemaRegistry.contentBlock[value.type].example } : {}),
+        })));
+      value.payload = checked.data;
+    }
     const representationOnly = ["table", "image", "document", "spreadsheet", "link", "file"].includes(value.type);
     if (!value.payload && (!representationOnly || !value.representations.length)) fail("CONTENT_BLOCK_EMPTY", "Provide content or a supported representation.");
     if (["image", "document", "spreadsheet", "file"].includes(value.type) && !value.representations.some(rep => rep.kind === "asset")) fail("CONTENT_BLOCK_ASSET_REQUIRED", "A file representation is required.");

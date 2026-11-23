@@ -17,7 +17,7 @@ export async function executeResearchTool(runtime:EnvironmentRuntime&{researchCo
     case"read_experiment":return c.records.read(validate(name),actor);
     case"get_context":return q.brief(params(name));
     case"get_environment":{const value=params(name);return q.finish(q.envelope("environment",await readResearchEnvironmentContext({runtime,actor,sshEnvironments,locale:value.locale??"zh"}),{...value,maxChars:4000}));}
-    case"search":return q.search(params(name));
+    case"search":return c.search(params(name));
     case"read_nodes":return q.readNodes(params(name));
     case"read_groups":return q.readGroups(params(name));
     case"neighbors":return q.neighbors(params(name));

@@ -676,10 +676,11 @@ export class RecordIngestionService {
       capabilities: recordIngestionCapabilities,
     };
   }
-  snapshot(blockId: string, actor: ResearchActor): RecordSnapshot {
+  snapshot(blockId: string, actor: ResearchActor, expectedNodeId?: string): RecordSnapshot {
     const block = this.block(blockId, actor),
       watermark = this.watermark(blockId);
     if (block.owner.kind !== "node" || !block.recordCollection) fail("INGESTION_SCOPE_MISMATCH", "请先选择实验记录块。", 422);
+    if (expectedNodeId && block.owner.id !== expectedNodeId) fail("INGESTION_SCOPE_MISMATCH", "记录块不属于所选实验。", 403);
     const node = this.c.store.get("nodes", block.owner.id);
     if (!node) fail("NODE_NOT_EXPERIMENT", "实验节点不存在。", 404);
     const value: RecordSnapshot = {

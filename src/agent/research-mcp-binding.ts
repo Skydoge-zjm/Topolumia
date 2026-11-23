@@ -26,7 +26,7 @@ export function buildResearchMcpBinding({
       destinationRoot: path.join(dataRoot, "agent-skills"),
       researchSessionId,
     });
-    skillInstructions = `Skill topolumia-paper-reading: only when a paper task uses Topolumia nodes, blocks, assets or candidates, read ${entryPath} using your native file tools; load references only as needed.`;
+    skillInstructions = `Skill topolumia-paper-reading: only when a paper task uses Topolumia nodes, blocks, assets or candidates, read ${entryPath} using your native file tools. For a full reading, use the user's language, save an overview followed by separate evidence blocks, and attach the original PDF last. Crop useful figures and large tables from the source. Use a compiled TeX table for a small table or key result when feasible.`;
     skillDelivery = { name: "topolumia-paper-reading", mode: "manifestFile", version: bundleHash.slice(0, 12), bundleHash };
   } catch {
     // Optional task guidance must never prevent the Agent or MCP from starting.
@@ -37,7 +37,10 @@ export function buildResearchMcpBinding({
     command: process.execPath,
     args: [path.join(bundledRoot, "src/mcp/research-stdio.js")],
     cwd,
-    instructions: [`Research file transfer directory: ${transferRoot}. Prepare uploads in out/; downloads arrive in in/.`, skillInstructions].filter(Boolean).join(" "),
+    instructions: [
+      `Research file transfer directory: ${transferRoot}. Prepare new files in out/. For an already staged out/ file, call transfer_asset directly with direction="upload", its relativePath and an idempotencyKey. The receipt supplies the assetId and checksum. Downloads arrive in in/.`,
+      skillInstructions,
+    ].filter(Boolean).join(" "),
     skillDelivery,
     env: {
       TOPOLUMIA_URL: baseUrl,

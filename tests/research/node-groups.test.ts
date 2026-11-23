@@ -8,6 +8,39 @@ import path from "node:path";
 const node = (id: string) => ({ kind: "node", id });
 const group = (id: string) => ({ kind: "group", id });
 
+test("a missing parent receipt can be recovered without broadening the explicit evidence scope", async t => {
+  const f = await fixture(t);
+  const parent = (await f.api("POST", "/api/research-groups", { core: { nodeName: "Operations" } })).body.group;
+  const input = { reason: "New packet", evidenceReadIds: [], groups: [{ core: { nodeName: "Evidence packet" },
+    parentId: parent.id, expectedParentRevision: parent.membershipRevision }] };
+  const unseen = (await f.call("create_candidate", input)).structuredContent.error;
+  assert.equal(unseen.code, "EVIDENCE_SCOPE_INSUFFICIENT");
+  assert.equal(unseen.detail.includeEvidenceReadId, undefined);
+  const { tool, ...args } = unseen.detail.readHint;
+  const page = await f.data(tool, args);
+  const observed = page.readReceipts.find(r => r.object.kind === "membership");
+  const omitted = (await f.call("create_candidate", input)).structuredContent.error;
+  assert.equal(omitted.detail.includeEvidenceReadId, observed.id);
+  const saved = await f.data("create_candidate", { ...input, evidenceReadIds: [observed.id] });
+  assert.equal(saved.data.status, "pending");
+});
+
+test("inferred relationship revisions are bound to actual observations and survive into approval", async t => {
+  const f = await fixture(t), c = f.runtime.researchCommands;
+  const make = async name => (await f.api("POST", "/api/research-nodes", { kind: "note", core: { nodeName: name } })).body.node;
+  const a = await make("Field report"), b = await make("Review board");
+  const input = { reason: "Route review", relations: [{ from: node(a.id), to: node(b.id), type: "informs" }] };
+  assert.equal((await f.call("create_candidate", input)).isError, true);
+  const seen = await f.data("read_nodes", { nodeIds: [a.id, b.id] });
+  const created = await f.data("create_candidate", input);
+  const saved = c.store.get("candidates", created.data.candidateId);
+  assert.deepEqual(saved.operations[0].expectedEndpointRevisions,
+    seen.data.items.map(item => ({ object: node(item.id), revision: item.nodeRevision })));
+  c.changes.direct([{ op: "updateCore", owner: node(b.id), expectedCoreRevision: c.nodes.node(b.id).coreRevision, patch: { summary: "Board changed" } }], f.actor);
+  assert.throws(() => c.reviewCandidate({ actor: f.actor, candidateId: saved.id, expectedRevision: 1, decision: "accept" }), { code: "OBJECT_VERSION_CONFLICT" });
+  assert.equal((await f.call("create_candidate", input)).structuredContent.error.code, "OBJECT_VERSION_CONFLICT");
+});
+
 test("groups share content, typed boundaries and the real MCP/CLI candidate path", async t => {
   const f = await fixture(t), c = f.runtime.researchCommands;
   const createNode = async (name: string) => { const result = await f.api("POST", "/api/research-nodes", { kind: "experiment", core: { nodeName: name } }); assert.equal(result.status, 201, JSON.stringify(result.body)); return result.body.node.id; };
@@ -20,6 +53,22 @@ test("groups share content, typed boundaries and the real MCP/CLI candidate path
   const block = await f.api("POST", `/api/research-objects/group/${encodeURIComponent(id)}/content-blocks`, { title: "Protocol", type: "richText", payload: { format: "markdown", body: "Keep evaluation and data split identical. " + "Detailed protocol. ".repeat(100) + "ONLY_IN_FULL_PROTOCOL" } });
   assert.equal(block.status, 201, JSON.stringify(block.body)); assert.deepEqual(block.body.contentBlock.owner, group(id));
   const shown = await f.data("read_groups", { mode: "show", groupId: id });
+  const brief = await f.data("get_context", { query: "Ablation", maxChars: 2000 });
+  assert.ok(brief.data.matches.items.some(item => item.objectType === "group" && item.id === id));
+  assert.ok(brief.budget.returnedChars <= 2000);
+  const batch = await f.data("search", { queries: ["Ablation", "Summary", "unrelated-string"], limit: 1, maxChars: 2000 });
+  assert.deepEqual(batch.data.groups.map(row => row.hits[0]?.id ?? null), [id, summary, null]);
+  const role = await f.data("search", { target: "nodes", query: "Ablation variant" });
+  assert.ok(role.data.items.some(hit => hit.id === b && hit.matchedMembership?.role === "variant"));
+  assert.equal((await f.call("search", { query: "A", queries: ["A", "B"] })).isError, true);
+  const members = await f.data("read_groups", { mode: "members", groupId: id });
+  assert.equal(members.kind, "groups");
+  assert.ok(members.data.items.some(item => item.object.id === a && item.memberships[0].role === "baseline"));
+  const impact = await f.data("read_groups", { mode: "show", groupId: id, section: "deleteImpact" });
+  assert.equal(impact.kind, "groups");
+  assert.equal(impact.data.counts.relations, 2);
+  const neighbors = await f.data("neighbors", { object: group(id), direction: "out" });
+  assert.deepEqual(neighbors.data.items.map(item => [item.neighbor.id, item.neighborLabel]), [[summary, "Summary"]]);
   assert.equal(shown.data.counts.recursiveUniqueNodes, 2); assert.equal(shown.data.primaryRelations.outgoingRelationId, outgoing.id);
   const cli = await promisify(execFile)(process.execPath, [path.resolve("dist/src/cli.js"), "group", "show", id], { env: { ...process.env, ...f.binding.env } }); assert.equal(JSON.parse(cli.stdout).data.id, id);
   assert.doesNotMatch(JSON.stringify(shown), /ONLY_IN_FULL_PROTOCOL/);

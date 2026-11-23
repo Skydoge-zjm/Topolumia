@@ -15,6 +15,7 @@ export type UploadMetadata={originalName?:string;mediaType?:string;idempotencyKe
 export type AssetExportInput={target:ExportTarget;variant:string;destinationDigest?:string;idempotencyKey:string};
 const message=(error:unknown)=>error instanceof Error?error.message:String(error);
 const MAX_BYTES = 20 * 1024 * 1024;
+const interpretationVersion = (checksum: string) => versionHash({ checksum, processor: "table-v2" });
 const hash = (b:string|NodeJS.ArrayBufferView) => "sha256:" + createHash("sha256").update(b).digest("hex");
 export class ResearchAssetService {
   store;
@@ -37,7 +38,7 @@ export class ResearchAssetService {
       const shared=this.store.all("candidates").some(c=>c.assetIds?.includes(id) && this.commands.visibleCandidate(c,actor));
       if (!canReview && !actor.isServerAdmin && !shared) fail("ASSET_NOT_FOUND","Asset unavailable.",404);
     }
-    return a;
+    return a.contentVersion ? a : { ...a, contentVersion: interpretationVersion(a.checksum) };
   }
   file(a:Pick<StoredAsset,"storageKey">) { const file=path.resolve(this.root,a.storageKey);if(!file.startsWith(path.resolve(this.root)+path.sep))fail("ASSET_UNAVAILABLE","Invalid asset storage key.",404);return file; }
   textSync(id:string,actor:ResearchActor) { const a=this.assert(id,actor), bytes=readFileSync(this.file(a)); if (bytes.length>MAX_BYTES) fail("ASSET_SIZE_INVALID","File too large.",413); try { return new TextDecoder("utf-8",{fatal:true}).decode(bytes).replace(/^\uFEFF/,""); } catch { fail("ASSET_ENCODING_INVALID","A valid UTF-8 text file is required."); } }
@@ -60,7 +61,7 @@ export class ResearchAssetService {
       if(previous) { if(previous.fingerprint!==fingerprint) fail("IDEMPOTENCY_CONFLICT","Upload key was reused for different bytes.",409); return this.public(this.assert(previous.assetId,actor)); }
       const id="asset:"+randomUUID(), storageKey="objects/"+id.slice(6)+"/original";
       await mkdir(path.dirname(path.join(this.root,storageKey)),{recursive:true}); await rename(path.join(this.root,temp),path.join(this.root,storageKey));
-      const asset:StoredAsset={id,projectId:this.commands.projectId,originalName:name,mediaType,sizeBytes:size,checksum,storageKey,owner:principal(actor),sessionId:actor.sessionId??null,bindingState:"staged",processing:"queued",createdAt:new Date().toISOString(),createdBy:actor.user?.id??principal(actor)};
+      const asset:StoredAsset={id,projectId:this.commands.projectId,originalName:name,mediaType,sizeBytes:size,checksum,contentVersion:interpretationVersion(checksum),storageKey,owner:principal(actor),sessionId:actor.sessionId??null,bindingState:"staged",processing:"queued",createdAt:new Date().toISOString(),createdBy:actor.user?.id??principal(actor)};
       this.store.transaction(()=>{ const again=this.store.get("uploads",key);if(again) fail("IDEMPOTENCY_CONFLICT","Concurrent upload; retry the original key.",409); this.store.put("assets",id,asset);this.store.put("uploads",key,{assetId:id,fingerprint});this.store.put("jobs",id,{id,assetId:id,type:"index",status:"queued"}); });
       this.enqueue(this.store.get("jobs",id)); return this.public(asset);
     } finally { await rm(path.join(this.root,temp),{force:true}); }
@@ -83,7 +84,7 @@ export class ResearchAssetService {
       let previewKey:string|undefined,compiled:StoredAsset["compiled"]=null;
       if(preview) { previewKey="derived/"+a.id.slice(6)+"/table-v2/preview.json";await mkdir(path.dirname(path.join(this.root,previewKey)),{recursive:true});await writeFile(path.join(this.root,previewKey),JSON.stringify(preview)); }
       if(/\.tex$/i.test(a.originalName)) compiled=await compileTexTable(bytes,path.join(this.root,"derived",a.id.slice(6),"tex-v1"));
-      const current=this.store.get("assets",a.id); if(!current)return;this.store.put("assets",a.id,{...current,previewKey,compiled,processing:preview||compiled?"ready":"notSupported",sheetNames:preview?.sheetNames??(preview?.sheetName?[preview.sheetName]:[]),defaultSheet:preview?.sheetName,availableRows:preview&&preview.totalRows!==undefined?preview.totalRows+1:undefined,contentVersion:versionHash({checksum:a.checksum,processor:"table-v2"})});
+      const current=this.store.get("assets",a.id); if(!current)return;this.store.put("assets",a.id,{...current,previewKey,compiled,processing:preview||compiled?"ready":"notSupported",sheetNames:preview?.sheetNames??(preview?.sheetName?[preview.sheetName]:[]),defaultSheet:preview?.sheetName,availableRows:preview&&preview.totalRows!==undefined?preview.totalRows+1:undefined,contentVersion:interpretationVersion(a.checksum)});
       this.store.put("jobs",job.id,{...job,status:"ready"});
     } catch(error) { const a=job.assetId?this.store.get("assets",job.assetId):null; if(a)this.store.put("assets",a.id,{...a,processing:"failed",diagnostic:message(error).slice(0,240)});this.store.put("jobs",job.id,{...job,status:"failed",error:message(error).slice(0,240)}); }
   }

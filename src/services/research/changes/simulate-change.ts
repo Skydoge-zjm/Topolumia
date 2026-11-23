@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { fail, principal, actorIdentity } from "../../../domain/research/access.js";
 import { objectKey, sameObject, nodeRef, groupRef } from "../../../domain/research/object-ref.js";
 import { applyExperimentPatch, registerRecordRuns } from "./experiment-mutations.js";
+import { changedSourceEvidence } from "./source-evidence.js";
 
 import { storedResearchNodeKind } from "../../../domain/research/node-kinds.js";
 import type { ResearchCommandService } from "../research-command-service.js";
@@ -17,7 +18,7 @@ type VersionField = "revision"|"coreRevision"|"blockCollectionRevision"|"members
 const objectVersion = (value:StoredResearchObject|undefined,field:VersionField) => field === "membershipRevision" ? value && "members" in value ? value.membershipRevision : undefined : value?.[field];
 
 /** Pure simulation; all persistent writes are performed by the shared transaction. */
-export function simulateChange(c:ResearchCommandService, operations:ResearchOperation[], actor:ResearchActor, allocation:Record<string,string> = {}, candidateId = "direct", evidenceIds?:string[], checkEvidence = false):ChangeSimulation {
+export function simulateChange(c:ResearchCommandService, operations:ResearchOperation[], actor:ResearchActor, allocation:Record<string,string> = {}, candidateId = "direct", evidenceIds?:string[], checkEvidence = false, purpose: "write" | "preview" = "write"):ChangeSimulation {
   const graph = c.formalTopology(), nodeValues = structuredClone(c.nodes.nodes()), groupValues = structuredClone(c.groups.list());
   const objects = new Map<string,StoredResearchObject>([...nodeValues.map(value => [objectKey(nodeRef(value.id)), value] as const), ...groupValues.map(value => [objectKey(groupRef(value.id)), value] as const)]);
   const original = structuredClone(objects), blocks = new Map(c.store.all("blocks").map(block => [block.id, structuredClone(block)])), originalBlocks = structuredClone(blocks);
@@ -31,16 +32,36 @@ export function simulateChange(c:ResearchCommandService, operations:ResearchOper
   const touch = (owner:ResearchObjectRef, part?:Set<string>) => { const key = objectKey(owner); touched.set(key, owner); part?.add(key); };
   const cas = (actual:unknown, expected:unknown, id:string) => { if (actual !== expected) fail("OBJECT_VERSION_CONFLICT", "Research object changed. Reload and review.", 409, { id, expected, current: actual }); };
   const reads = c.store.all("receipts").filter(read => read.principalId === principal(actor) && read.researchSessionId === (actor.sessionId ?? null));
-  if (evidenceIds?.some(id => !reads.some(read => read.id === id))) fail("READ_RECEIPT_INVALID", "Unknown or foreign reading receipt.");
+  if (evidenceIds?.length) {
+    const known = new Set(reads.map(r => r.id));
+    const invalidIndices = evidenceIds.flatMap((id, i) => known.has(id) ? [] : [i]);
+    if (invalidIndices.length) fail("READ_RECEIPT_INVALID", "Use the id from the exact read's readReceipts array at the indicated positions.", 422,
+      { field: "evidenceReadIds", invalidIndices, recovery: "Source references, snapshot IDs and transfer delivery receipts have separate fields." });
+  }
   const permitted = evidenceIds === undefined ? reads : reads.filter(read => evidenceIds.includes(read.id));
   for (const read of evidenceIds ? permitted : []) {
     if (read.scope === "candidate" && read.candidateId !== candidateId) fail("READ_RECEIPT_INVALID", "Candidate evidence belongs to another proposal.");
-    if (read.object.kind === "source") { const source = c.sources().find(item => item.ref === read.object.id); if (!source || (source.version ?? (source.hash ? "sha256:" + source.hash : null)) !== read.version) fail("OBJECT_VERSION_CONFLICT", "Evidence source changed.", 409); }
     if (read.object.kind === "asset") { const asset = c.assets.assert(read.object.id, actor); if (asset.checksum !== read.version || read.contentVersion && asset.contentVersion && read.contentVersion !== asset.contentVersion) fail("OBJECT_VERSION_CONFLICT", "Asset evidence changed.", 409); }
+  }
+  if (evidenceIds && purpose === "write") {
+    const changed = changedSourceEvidence(c, permitted)[0];
+    if (changed) fail("OBJECT_VERSION_CONFLICT", "The cited source changed. Read its current text and supply the new receipt in the candidate edit.", 409, changed);
   }
   const evidence = (kind:string, id:string, version:ReadReceipt["version"], owner:ResearchObjectRef, content = false) => {
     if (!checkEvidence || !actor.isAgent || newObjects.has(objectKey(owner))) return;
-    if (!permitted.some(read => read.scope === "formal" && read.object.kind === kind && read.object.id === id && sameObject(read.owner, owner) && read.version === version && (!content || read.disclosure !== "summary"))) fail("EVIDENCE_SCOPE_INSUFFICIENT", "Read this object at its current version before changing it.", 422, { kind, id, version, owner });
+    const matches = (read: ReadReceipt) => read.scope === "formal" && read.object.kind === kind && read.object.id === id &&
+      sameObject(read.owner, owner) && read.version === version && (!content || read.disclosure !== "summary");
+    if (permitted.some(matches)) return;
+    const observed = reads.find(matches);
+    if (observed) fail("EVIDENCE_SCOPE_INSUFFICIENT", "Include this session's matching receipt in evidenceReadIds along with the scientific citations.", 422,
+      { kind, id, version, owner, includeEvidenceReadId: observed.id });
+    const block = kind === "block" ? originalBlocks.get(id) : undefined;
+    const readHint = block ? { tool: "read_blocks", ...c.queries.blockReadHint(block) } :
+      kind === "collection" ? { tool: "read_blocks", mode: "list", owner } :
+      kind === "relation" ? { tool: "neighbors", object: owner } :
+      owner.kind === "group" ? { tool: "read_groups", mode: "show", groupId: owner.id, ...(kind === "impact" ? { section: "deleteImpact" } : {}) } :
+      { tool: "read_nodes", nodeIds: [owner.id] };
+    fail("EVIDENCE_SCOPE_INSUFFICIENT", "Read the formal object and include the matching returned receipt in evidenceReadIds.", 422, { kind, id, version, owner, readHint });
   };
   const checkObject = (owner:ResearchObjectRef, field:VersionField, expected:number|undefined, kind = "core", content = false) => { if (newObjects.has(objectKey(owner))) return; const base = original.get(objectKey(owner)), version=objectVersion(base,field); cas(version, expected, owner.id); evidence(kind, owner.id, version, owner, content); };
   const localize = <T extends {sourceRefs?:SourceReference[];representations?:Representation[]}>(input:T, key:string) => { const value = structuredClone(input); value.sourceRefs = (value.sourceRefs ?? []).map((source, i) => { const rest=omitFields(source,["delivery"]); return { ...rest, id: source.id ?? allocate("source", key + ":" + (source.clientRef ?? i)) }; }); value.representations = (value.representations ?? []).map((rep, i) => ({ ...rep, id: rep.id ?? allocate("representation", key + ":" + (rep.clientRef ?? i)) })); return value; };

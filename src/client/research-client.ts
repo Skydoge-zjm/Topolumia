@@ -51,7 +51,8 @@ export class ResearchClient {
     try { return researchResultSchema.parse(await this.request(r.path, { method: r.method, ...(r.body ? { body: r.body } : {}) })); }
     catch (cause) {
       const error = clientError(cause);
-      if (name === "create_candidate") error.detail = { cause: error.detail, idempotencyKey: value.idempotencyKey, recovery: "Read candidates with this idempotencyKey or retry identical input and key." };
+      if (name === "create_candidate" && (error.status === undefined || error.status >= 500))
+        error.detail = { cause: error.detail, idempotencyKey: value.idempotencyKey, recovery: "Check read_candidates with this idempotencyKey before resubmitting." };
       throw error;
     }
   }

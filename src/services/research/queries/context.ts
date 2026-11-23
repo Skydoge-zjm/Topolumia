@@ -3,8 +3,10 @@ import * as z from "zod/v4";
 import { versionHash } from "../../../lib/hash.js";
 import { extractContentBlockText } from "../../../domain/research/content-blocks.js";
 import { schemaRegistry } from "../../../domain/research/interfaces/schema-registry.js";
+import { changedSourceEvidence } from "../changes/source-evidence.js";
 import { candidateReceipt, readCandidates } from "./proposal-queries.js";
 import { scientificFactKeys, sourceCapabilities } from "./source-capabilities.js";
+import { omitFields } from "../../../domain/research/object-values.js";
 import { fail, principal } from "../../../domain/research/access.js";
 import { nodeRef, groupRef, objectKey, sameObject } from "../../../domain/research/object-ref.js";
 import { readGroups, groupSummary } from "./group-queries.js";
@@ -18,17 +20,18 @@ export type QueryInput = {
   actor:ResearchActor; maxChars?:number; limit?:number; cursor?:string; locale?:string;
   candidateId?:string; patchId?:string; nodeId?:string; nodeIds?:string[]; groupId?:string; blockId?:string; assetId?:string;
   owner?:ResearchObjectRef; object?:ResearchObjectRef; mode?:string; view?:string; section?:string; scope?:string;
-  query?:string; target?:string; kinds?:string[]; status?:string; idempotencyKey?:string; direction?:string; relationTypes?:string[];
+  query?:string; queries?:string[]; target?:string; kinds?:string[]; status?:string; idempotencyKey?:string; direction?:string; relationTypes?:string[];
   expectedRevision?:number; revision?:number; expectedVersion?:string; expectedContentVersion?:string; expectedChecksum?:string;
   ref?:string; offset?:number; factPaths?:string[]; name?:string; topic?:string;
   titleQuery?:string; types?:string[]; review?:string; representationId?:string; selection?:QuerySelection;
   decision?:string; reason?:string; [field:string]:unknown;
 };
+type VisibleReceipt = Omit<ReadReceipt, "projectId" | "principalId" | "researchSessionId" | "at">;
 export type QueryEnvelope<T> = {
-  schemaVersion:string;kind:string;projectId:string;scope:{state:string;candidateId?:string;candidateRevision?:number};stateVersion:string;
-  data:T;coverage:{complete:boolean;omissions:string[]};budget:{maxChars:number;returnedChars:number};readReceipts?:ReadReceipt[];
+  schemaVersion:string;kind:string;projectId:string;scope:{state:string;candidateId?:string;candidateRevision?:number;changedSourceCount?:number};stateVersion:string;
+  data:T;coverage:{complete:boolean;omissions:string[]};budget:{maxChars:number;returnedChars:number};readReceipts?:VisibleReceipt[];
 };
-type ReadDetails = {owner?:ResearchObjectRef;field?:string;source?:{ref:string;version:string|number|null|undefined};contentVersion?:string;blockId?:string;assetId?:string;checksum?:string;representationId?:string;sourceRefs?:StoredBlock["sourceRefs"];completeSourceAvailable?:boolean};
+type ReadDetails = {sourceRef?:{kind:"file";value:string};owner?:ResearchObjectRef;field?:string;source?:{ref:string;version:string|number|null|undefined};contentVersion?:string;blockId?:string;assetId?:string;checksum?:string;representationId?:string;sourceRefs?:StoredBlock["sourceRefs"];completeSourceAvailable?:boolean};
 const clip=(v:unknown,n:number)=>String(v??"").slice(0,n),size=(v:unknown)=>JSON.stringify(v).length;
 export class AgentResearchQueries {
   store;
@@ -37,10 +40,14 @@ export class AgentResearchQueries {
     const maxChars=input.maxChars??(kind==="schema"?8000:kind==="context"?3000:kind==="search"?4000:6000);
     if(!Number.isInteger(maxChars)||maxChars<2000||maxChars>16000)fail("CONTEXT_BUDGET_INVALID","maxChars must be 2000–16000.");
     const candidate=input.candidateId?this.c.changes.candidate(input.candidateId,input.actor??fail("AUTH_REQUIRED","A candidate read requires its actor.",401)):null;
-    return {schemaVersion:"research-agent-result.v1",kind,projectId:this.c.projectId,scope:{state:candidate?"candidate":"formal",...(candidate?{candidateId:candidate.id,candidateRevision:candidate.revision}:{})},stateVersion:this.c.formalTopology().stateVersion,data,coverage:{complete:true,omissions:[]},...extra,budget:{maxChars,returnedChars:0}};
+    const stale = candidate && ["pending","deferred"].includes(candidate.status) ? changedSourceEvidence(this.c, candidate.evidenceReads).length : 0;
+    return {schemaVersion:"research-agent-result.v1",kind,projectId:this.c.projectId,scope:{state:candidate?"candidate":"formal",...(candidate?{candidateId:candidate.id,candidateRevision:candidate.revision,...(stale ? {changedSourceCount:stale} : {})}:{})},stateVersion:this.c.formalTopology().stateVersion,data,coverage:{complete:true,omissions:[]},...extra,budget:{maxChars,returnedChars:0}};
+  }
+  visibleReceipts(receipts: ReadReceipt[]): VisibleReceipt[] {
+    return receipts.map(receipt => omitFields(receipt, ["projectId", "principalId", "researchSessionId", "at"]));
   }
   finish<T,R extends QueryEnvelope<T>>(r:R,receipts:ReadReceipt[]=[]):R {
-    if(receipts.length)r.readReceipts=receipts;
+    if (receipts.length || r.readReceipts) r.readReceipts = this.visibleReceipts(receipts);
     for(let i=0;i<6;i++)r.budget.returnedChars=size(r);
     if(size(r)>r.budget.maxChars)fail("CONTEXT_ITEM_TOO_LARGE","Requested item exceeds budget; narrow the selection or increase maxChars.");
     for(const receipt of receipts)this.store.put("receipts",receipt.id,receipt);
@@ -55,20 +62,91 @@ export class AgentResearchQueries {
     const r=this.envelope(kind,{...data,items:[] as T[]},input,{page:{nextCursor:null as string|null,total:entries.length}}),limit=input.limit??10;
     const update=()=>{const next=offset+r.data.items.length;if(next<entries.length){const b=Buffer.from(JSON.stringify({binding:fingerprint,offset:next})).toString("base64url");r.page.nextCursor=b+"."+signature(b);r.coverage={complete:false,omissions:["moreItems"]};}else{r.page.nextCursor=null;r.coverage={complete:true,omissions:[]};}};
     const receipts=()=>receiptFactory?receiptFactory(r.data.items):[];
-    for(const item of entries.slice(offset,offset+limit)){r.data.items.push(item);update();r.readReceipts=receipts();if(size(r)+100>r.budget.maxChars){r.data.items.pop();break;}}
+    for(const item of entries.slice(offset,offset+limit)){r.data.items.push(item);update();r.readReceipts=this.visibleReceipts(receipts());if(size(r)+100>r.budget.maxChars){r.data.items.pop();break;}}
     if(!r.data.items.length&&entries.length>offset)fail("CONTEXT_ITEM_TOO_LARGE","A directory item exceeds the budget.");update();return this.finish(r,receipts());
   }
   coreRef(n:StoredResearchObject,field:string,owner:ResearchObjectRef=nodeRef(n.id)){return"core:"+Buffer.from(JSON.stringify({owner,field,version:n.coreRevision})).toString("base64url");}
-  groupSummary(group:StoredGroup,view:ResearchView){return groupSummary(this,group,view);}
+  groupSummary(group:StoredGroup,view:ResearchView,candidateId?:string){return groupSummary(this,group,view,candidateId);}
   readGroups(input:QueryInput){return readGroups(this,input);}
-  blockSummary(b:StoredBlock){return{id:b.id,owner:b.owner,title:b.title,type:b.type,revision:b.revision,review:b.review,excerpt:clip(extractContentBlockText(b.type,b.payload),100),representations:(b.representations??[]).map(r=>({id:r.id,kind:r.kind,role:r.role})),readHint:{mode:"read",owner:b.owner,blockId:b.id,expectedRevision:b.revision,view:["metric","table","spreadsheet"].includes(b.type)?"values":["image","document","file","chart","experimentRecord"].includes(b.type)?"manifest":"text"}};}
-  nodeSummary(n:StoredNode,view:ResearchView){const blocks=view.blocks.filter(b=>sameObject(b.owner,nodeRef(n.id))&&b.lifecycle!=="archived").sort((a,b)=>a.order-b.order);const core:ResearchCore & {authorCount?:number;[field:string]:unknown}={...n.core};if(core.authors){core.authorCount=core.authors.length;core.authors=core.authors.slice(0,3);}if(core.tags)core.tags=core.tags.slice(0,5);for(const[k,v]of Object.entries(core))if(typeof v==="string")core[k]=clip(v,k==="abstract"?240:500);return{id:n.id,kind:n.kind,label:n.core.nodeName,status:n.status,nodeRevision:n.revision,coreRevision:n.coreRevision,blockCollectionRevision:n.blockCollectionRevision,...(n.kind==="experiment"?{recordCollections:blocks.filter(b=>b.type==="experimentRecord").slice(0,6).map(b=>({blockId:b.id,title:b.title,revision:b.recordCollection?.revision??1,runCount:this.c.records.collectionRunCount(b)})),experimentReadHint:{tool:"read_experiment",mode:"runs",nodeId:n.id}}:{}),coreSummary:core,coreRefs:Object.fromEntries(Object.keys(n.core).map(k=>[k,{ref:this.coreRef(n,k),expectedVersion:String(n.coreRevision)}])),blockCount:blocks.length,blocks:blocks.slice(0,6).map(b=>this.blockSummary(b)),omittedBlocks:Math.max(0,blocks.length-6),groups:(view.groups??[]).filter(g=>g.members.some(m=>m.nodeId===n.id)).slice(0,5).map(g=>({id:g.id,label:clip(g.core.nodeName,80),readHint:{mode:"show",groupId:g.id}})),readHint:{mode:"list",owner:nodeRef(n.id)}};}
-  brief(input:QueryInput){this.c.check(input.actor,"research.view");const graph=this.c.formalTopology(),nodes=this.c.nodes.nodes(),counts:Record<string,number>={};for(const n of nodes)counts[n.kind]=(counts[n.kind]??0)+1;return this.finish(this.envelope("context",{project:{id:this.c.projectId,name:this.c.projectName},counts:{nodes:nodes.length,groups:this.c.groups.list().length,relations:graph.edges.length,byKind:counts,pendingCandidates:this.store.all("candidates").filter(c=>c.status==="pending").length},retrieval:{method:"lexical",fullGraphIncluded:false,flow:"search → node overview → exact block/source range"}},input));}
-  search(input:QueryInput){
+  blockReadHint(block: StoredBlock, candidateId?: string) {
+    const view = ["metric", "table", "spreadsheet"].includes(block.type) ? "values" :
+      ["image", "document", "file", "chart", "experimentRecord"].includes(block.type) ? "manifest" : "text";
+    return { mode: "read" as const, owner: block.owner, blockId: block.id, expectedRevision: block.revision, view,
+      ...(candidateId ? { candidateId } : {}) };
+  }
+  blockSummary(block: StoredBlock, candidateId?: string) {
+    return { id: block.id, owner: block.owner, title: block.title, type: block.type, revision: block.revision, review: block.review,
+      excerpt: clip(extractContentBlockText(block.type, block.payload), 100),
+      representations: (block.representations ?? []).map(rep => ({ id: rep.id, kind: rep.kind, role: rep.role })),
+      readHint: this.blockReadHint(block, candidateId) };
+  }
+  nodeSummary(n:StoredNode,view:ResearchView,candidateId?:string){const blocks=view.blocks.filter(b=>sameObject(b.owner,nodeRef(n.id))&&b.lifecycle!=="archived").sort((a,b)=>a.order-b.order);const core:ResearchCore & {authorCount?:number;[field:string]:unknown}={...n.core};if(core.authors){core.authorCount=core.authors.length;core.authors=core.authors.slice(0,3);}if(core.tags)core.tags=core.tags.slice(0,5);for(const[k,v]of Object.entries(core))if(typeof v==="string")core[k]=clip(v,k==="abstract"?240:500);return{id:n.id,kind:n.kind,label:n.core.nodeName,status:n.status,nodeRevision:n.revision,coreRevision:n.coreRevision,blockCollectionRevision:n.blockCollectionRevision,...(n.kind==="experiment"?{recordCollections:blocks.filter(b=>b.type==="experimentRecord").slice(0,6).map(b=>({blockId:b.id,title:b.title,revision:b.recordCollection?.revision??1,runCount:this.c.records.collectionRunCount(b)})),experimentReadHint:{tool:"read_experiment",mode:"runs",nodeId:n.id}}:{}),coreSummary:core,coreRefs:Object.fromEntries(Object.keys(n.core).map(k=>[k,{ref:this.coreRef(n,k),expectedVersion:String(n.coreRevision)}])),blockCount:blocks.length,blocks:blocks.slice(0,6).map(b=>this.blockSummary(b,candidateId)),omittedBlocks:Math.max(0,blocks.length-6),groups:(view.groups??[]).filter(g=>g.members.some(m=>m.nodeId===n.id)).slice(0,5).map(g=>({id:g.id,label:clip(g.core.nodeName,80),readHint:{mode:"show",groupId:g.id}})),readHint:{mode:"list",owner:nodeRef(n.id)}};}
+  brief(input: QueryInput) {
+    this.c.check(input.actor, "research.view");
+    const graph = this.c.formalTopology(), nodes = this.c.nodes.nodes(), byKind: Record<string, number> = {};
+    for (const node of nodes) byKind[node.kind] = (byKind[node.kind] ?? 0) + 1;
+    const brief = {
+      project: { id: this.c.projectId, name: this.c.projectName },
+      counts: { nodes: nodes.length, groups: this.c.groups.list().length, relations: graph.edges.length, byKind,
+        pendingCandidates: this.store.all("candidates").filter(candidate => candidate.status === "pending" && this.c.visibleCandidate(candidate, input.actor)).length },
+      retrieval: { method: "lexical", fullGraphIncluded: false, flow: "search → overview → exact block/source range" },
+    };
+    const query = input.query?.trim();
+    if (!query) return this.finish(this.envelope("context", brief, input));
+    const result = this.search({ actor: input.actor, query, target: "all", limit: 3, maxChars: 6000 });
+    const items = result.data.items.map(hit => ({
+      objectType: hit.objectType, label: hit.label, ...("ref" in hit ? { ref: hit.ref } : { id: hit.id }),
+      ...(hit.readHint ? { readHint: hit.readHint } : {}),
+    }));
+    const envelope = this.envelope("context", { ...brief, matches: { items, total: result.page.total } }, input);
+    while (items.length && size(envelope) + 80 > envelope.budget.maxChars) items.pop();
+    if (items.length < result.page.total) envelope.coverage = { complete: false, omissions: ["moreMatches"] };
+    return this.finish(envelope);
+  }
+  searchBatch(input: QueryInput) {
+    this.c.check(input.actor, "research.view");
+    const view = this.searchView(input);
+    const pages = (input.queries ?? []).map(query => this.search({ ...input, query, limit: input.limit ?? 2, maxChars: 16000 }, view));
+    type Hit = (typeof pages)[number]["data"]["items"][number];
+    const groups = pages.map((page, index) => ({ queryIndex: index, query: clip(input.queries?.[index], 100), total: page.page.total, hits: [] as Hit[] }));
+    const result = this.envelope("search", { groups }, input);
+    for (let rank = 0; rank < (input.limit ?? 2); rank++) {
+      for (const [i, group] of groups.entries()) {
+        const hit = pages[i].data.items[rank];
+        if (!hit || group.hits.length !== rank) continue;
+        group.hits.push(hit);
+        if (size(result) + 80 > result.budget.maxChars) group.hits.pop();
+      }
+    }
+    if (groups.some(group => group.hits.length < group.total)) result.coverage = { complete: false, omissions: ["moreHits"] };
+    return this.finish(result);
+  }
+  private searchView(input: QueryInput) {
+    return this.c.snapshot(null, input.actor, { includeBlocks: !input.target || ["all", "blocks"].includes(input.target),
+      owners: input.owner ? [input.owner] : undefined });
+  }
+  search(input:QueryInput, prepared?: ResearchView){
     this.c.check(input.actor,"research.view");const q=String(input.query??"").normalize("NFKC").toLowerCase(),terms=[...new Set(q.match(/[\p{L}\p{N}_.:-]+/gu)??[])],entries=[],target=input.target??"all";
     const rank=(fields:string[])=>{const body=fields.join(" ").normalize("NFKC").toLowerCase();return terms.reduce((s,t)=>s+(body.includes(t)?1:0),0)+(body.includes(q)?3:0);};
-    const view=this.c.snapshot(null,input.actor,{includeBlocks:target==="all"||target==="blocks",owners:input.owner?[input.owner]:undefined}),objectMap=new Map<string,StoredResearchObject>([...view.nodes.map(n=>[objectKey(nodeRef(n.id)),n] as const),...view.groups.map(g=>[objectKey(groupRef(g.id)),g] as const)]);
-    if(target==="all"||target==="nodes")for(const n of view.nodes){if(input.kinds?.length&&!input.kinds.includes(n.kind)||input.status&&n.status!==input.status)continue;const score=rank([n.id,JSON.stringify(n.core)]);if(score)entries.push({objectType:"node",id:n.id,nodeId:n.id,kind:n.kind,label:clip(n.core.nodeName,160),version:n.coreRevision,score,readHint:{nodeIds:[n.id]}});}
+    const view=prepared??this.searchView(input),objectMap=new Map<string,StoredResearchObject>([...view.nodes.map(n=>[objectKey(nodeRef(n.id)),n] as const),...view.groups.map(g=>[objectKey(groupRef(g.id)),g] as const)]);
+    if (target === "all" || target === "nodes") {
+      const matchingRoles = new Map<string, { score: number; groupId: string; groupLabel: string; role: string }>();
+      for (const group of view.groups) for (const member of group.members) {
+        if (!member.role) continue;
+        const score = rank([group.core.nodeName, member.role]) / 2;
+        if (score > (matchingRoles.get(member.nodeId)?.score ?? 0))
+          matchingRoles.set(member.nodeId, { score, groupId: group.id, groupLabel: clip(group.core.nodeName, 120), role: member.role });
+      }
+      for (const node of view.nodes) {
+        if (input.kinds?.length && !input.kinds.includes(node.kind) || input.status && node.status !== input.status) continue;
+        const direct = rank([node.id, JSON.stringify(node.core)]), membership = matchingRoles.get(node.id);
+        const score = Math.max(direct, membership?.score ?? 0);
+        if (!score) continue;
+        entries.push({ objectType: "node", id: node.id, nodeId: node.id, kind: node.kind, label: clip(node.core.nodeName, 160),
+          version: node.coreRevision, score, readHint: { nodeIds: [node.id] },
+          ...(membership && membership.score >= direct ? { matchedMembership: { groupId: membership.groupId, groupLabel: membership.groupLabel, role: membership.role } } : {}) });
+      }
+    }
     if(target==="all"||target==="groups")for(const g of view.groups){const score=rank([g.id,JSON.stringify(g.core)]);if(score)entries.push({objectType:"group",id:g.id,object:groupRef(g.id),label:clip(g.core.nodeName,160),version:g.revision,score,readHint:{mode:"show",groupId:g.id}});}
     if(target==="all"||target==="blocks")for(const b of view.blocks){const n=objectMap.get(objectKey(b.owner));if(!n||b.lifecycle==="archived"||input.owner&&!sameObject(b.owner,input.owner)||input.kinds?.length&&!input.kinds.includes(b.type)||input.status&&b.review!==input.status)continue;const content=extractContentBlockText(b.type,b.payload),score=rank([b.title,content]);if(score){const at=Math.max(0,content.toLowerCase().indexOf(terms[0]??q));entries.push({objectType:"block",id:b.id,owner:b.owner,label:clip(b.title,160),version:b.revision,snippet:content.slice(Math.max(0,at-60),at+180),score,readHint:this.blockSummary(b).readHint});}}
     if(target==="all"||target==="sources")for(const s of this.c.sources()){const indexed=this.c.sourceText?.(s),body=indexed??s.excerpt??"",score=rank([s.ref,s.label??"",body]);if(score){const at=Math.max(0,body.toLowerCase().indexOf(terms[0]??q));entries.push({objectType:"source",ref:s.ref,label:clip(s.label??s.ref,160),version:s.version??(s.hash?"sha256:"+s.hash:null),snippet:body.slice(Math.max(0,at-60),at+180),score,...sourceCapabilities(s,indexed)});}}
@@ -81,13 +159,23 @@ export class AgentResearchQueries {
     }
     entries.sort((a,b)=>b.score-a.score||String(a.id??a.ref).localeCompare(String(b.id??b.ref)));return this.page("search",entries,{...input,maxChars:input.maxChars??4000,limit:input.limit??5},{query:q,target,nodeId:input.nodeId,kinds:input.kinds,status:input.status,versions:entries.map(e=>[e.id??e.ref,e.version])});
   }
-  readNodes(input:QueryInput){this.c.check(input.actor,"research.view");const view=this.c.snapshot(input.candidateId,input.actor,{owners:input.nodeIds!.map(nodeRef)}),entries=input.nodeIds!.map(id=>{const n=view.nodes.find(n=>n.id===id);if(!n)fail("RESEARCH_NODE_NOT_FOUND","Node unavailable.",404);return this.nodeSummary(n,view);});return this.page("nodes",entries,{...input,limit:8},{ids:input.nodeIds,versions:entries.map(n=>n.nodeRevision),candidate:input.candidateId},items=>items.flatMap(n=>[this.receipt(input.actor,"core",n.id,n.coreRevision,"summary",{fields:Object.keys(n.coreSummary)},input,{owner:nodeRef(n.id)}),this.receipt(input.actor,"object",n.id,n.nodeRevision,"summary",{},input,{owner:nodeRef(n.id)})]));}
+  readNodes(input:QueryInput){this.c.check(input.actor,"research.view");const view=this.c.snapshot(input.candidateId,input.actor,{owners:input.nodeIds!.map(nodeRef)}),entries=input.nodeIds!.map(id=>{const n=view.nodes.find(n=>n.id===id);if(!n)fail("RESEARCH_NODE_NOT_FOUND","Node unavailable.",404);return this.nodeSummary(n,view,input.candidateId);});return this.page("nodes",entries,{...input,limit:8},{ids:input.nodeIds,versions:entries.map(n=>n.nodeRevision),candidate:input.candidateId},items=>items.flatMap(n=>[this.receipt(input.actor,"core",n.id,n.coreRevision,"summary",{fields:Object.keys(n.coreSummary)},input,{owner:nodeRef(n.id)}),this.receipt(input.actor,"object",n.id,n.nodeRevision,"summary",{},input,{owner:nodeRef(n.id)})]));}
   neighbors(input:QueryInput){
     this.c.check(input.actor,"research.view");const view=this.c.snapshot(input.candidateId,input.actor,{includeBlocks:false}),direction=input.direction??"both",owner=input.object??fail("INPUT_INVALID","Supply an object reference.");
     const edges=this.c.objects.relations(owner,input.scope??"direct",view);
     const range=owner.kind==="group"&&input.scope==="groupBoundary"?this.c.groups.range(owner.id,view):null;
     const inside=(r:ResearchObjectRef)=>range?range.nodeIds.includes(r.id)&&r.kind==="node"||range.groupIds.includes(r.id)&&r.kind==="group":sameObject(r,owner);
-    const entries=edges.filter(e=>(direction!=="in"&&inside(e.from)||direction!=="out"&&inside(e.to))&&(!input.relationTypes?.length||input.relationTypes.includes(e.type))).map(e=>({relation:e,neighbor:inside(e.from)?e.to:e.from}));
+    const labels = new Map([
+      ...view.nodes.map(node => [objectKey(nodeRef(node.id)), node.core.nodeName] as const),
+      ...view.groups.map(group => [objectKey(groupRef(group.id)), group.core.nodeName] as const),
+    ]);
+    const entries = edges.filter(edge =>
+      (direction !== "in" && inside(edge.from) || direction !== "out" && inside(edge.to)) &&
+      (!input.relationTypes?.length || input.relationTypes.includes(edge.type))
+    ).map(relation => {
+      const neighbor = inside(relation.from) ? relation.to : relation.from;
+      return { relation, neighbor, neighborLabel: clip(labels.get(objectKey(neighbor)), 160) };
+    });
     const object=this.c.objects.from(view,owner);
     return this.page("neighbors",entries,input,{owner,direction,scope:input.scope,relations:input.relationTypes,version:versionHash(entries),candidate:input.candidateId},items=>[this.receipt(input.actor,"relation",owner.id,object.relationRevision,"directory",{relationIds:items.map(item=>item.relation.id)},input,{owner})]);
   }
@@ -96,7 +184,7 @@ export class AgentResearchQueries {
     const selection=input.selection??{offset:input.offset??0},start=selection.offset??0;
     if(!Number.isSafeInteger(start)||start<0||start>body.length||start>0&&/[\uDC00-\uDFFF]/.test(body[start]??""))fail("RANGE_INVALID","Invalid UTF-16 text boundary.");
     let end=Math.min(body.length,start+(selection.length??Math.max(1,(input.maxChars??6000)-1800)));const r=this.envelope(kind,{...details,text:"",range:{start,end,availableChars:body.length,nextOffset:null as number|null}},input);let receipt;
-    for(;;){if(end>start&&/[\uD800-\uDBFF]/.test(body[end-1]??""))end--;r.data.text=body.slice(start,end);r.data.range={start,end,availableChars:body.length,nextOffset:end<body.length?end:null};receipt=this.receipt(input.actor,object.kind,object.id,version,"content",{textRanges:[{start,end}],...(details.field?{fields:[details.field]}:{})},input,details.contentVersion?{contentVersion:details.contentVersion}:{});r.readReceipts=[receipt];if(size(r)+40<=r.budget.maxChars)break;if(end<=start+1)fail("CONTEXT_ITEM_TOO_LARGE","Text metadata exceeds budget.");end=start+Math.floor((end-start)*.75);}
+    for(;;){if(end>start&&/[\uD800-\uDBFF]/.test(body[end-1]??""))end--;r.data.text=body.slice(start,end);r.data.range={start,end,availableChars:body.length,nextOffset:end<body.length?end:null};receipt=this.receipt(input.actor,object.kind,object.id,version,"content",{textRanges:[{start,end}],...(details.field?{fields:[details.field]}:{})},input,details.contentVersion?{contentVersion:details.contentVersion}:{});r.readReceipts=this.visibleReceipts([receipt]);if(size(r)+40<=r.budget.maxChars)break;if(end<=start+1)fail("CONTEXT_ITEM_TOO_LARGE","Text metadata exceeds budget.");end=start+Math.floor((end-start)*.75);}
     r.coverage={complete:end>=Math.min(body.length,start+(selection.length??body.length)),omissions:end<body.length?["remainingText"]:[]};return this.finish(r,[receipt]);
   }
   async readSource(input:QueryInput){
@@ -111,7 +199,10 @@ export class AgentResearchQueries {
     const before=this.c.state.snapshot?.stateVersion;
     const source=s.ref.startsWith("file:")&&this.c.sourceReader?await this.c.sourceReader(s):{text:s.excerpt??null,complete:false};
     if(before!==this.c.state.snapshot?.stateVersion)fail("OBJECT_VERSION_CONFLICT","Source index changed during reading.",409);
-    if(typeof source.text==="string")return this.textResult("source",source.text,input,{kind:"source",id:s.ref},version,{source:{ref:s.ref,version},completeSourceAvailable:Boolean(source.complete)});
+    if (typeof source.text === "string") return this.textResult("source", source.text, input, { kind: "source", id: s.ref }, version, {
+      source: { ref: s.ref, version }, completeSourceAvailable: Boolean(source.complete),
+      ...(s.ref.startsWith("file:") ? { sourceRef: { kind: "file" as const, value: s.ref } } : {}),
+    });
     const roots=scientificFactKeys,facts:Record<string,unknown>={};for(const pointer of input.factPaths??[]){const keys=pointer.slice(1).split("/").map(k=>k.replace(/~1/g,"/").replace(/~0/g,"~"));if(!pointer.startsWith("/")||!roots.includes(keys[0])||keys.some(k=>/secret|token|credential|password|apikey/i.test(k)))fail("FACT_PATH_FORBIDDEN","Only scientific facts can be read.");let v:unknown=s;for(const k of keys){if(v===null||typeof v!=="object"||!Object.hasOwn(v,k))fail("FACT_PATH_NOT_FOUND","Unknown fact path.");v=(v as Record<string,unknown>)[k];}facts[pointer]=v;}
     if(!Object.keys(facts).length){const availability=sourceCapabilities(s);fail("NOT_INDEXED",availability.capabilities.valuesAvailable?"No text index; use the returned scientific fact paths.":availability.capabilities.originalAvailable?"No text index; read the original using native tools.":"No readable content is available for this source.",422,availability);}
     const receipt=this.receipt(input.actor,"source",s.ref,version,"structuredValues",{fields:Object.keys(facts)},input);return this.finish(this.envelope("source",{source:{ref:s.ref,version},facts},input),[receipt]);
@@ -119,9 +210,37 @@ export class AgentResearchQueries {
   async readBlocks(input:QueryInput){
     this.c.check(input.actor,"research.view");const view=this.c.snapshot(input.candidateId,input.actor,{owners:[input.owner!]}),node=this.c.objects.from(view,input.owner!);
     const siblings=view.blocks.filter(b=>sameObject(b.owner,input.owner)&&b.lifecycle!=="archived").sort((a,b)=>a.order-b.order);
-    if(input.mode==="list"){const items=siblings.filter(b=>(!input.titleQuery||b.title.toLowerCase().includes(input.titleQuery.toLowerCase()))&&(!input.types?.length||input.types.includes(b.type))&&(!input.review||b.review===input.review)).map(b=>this.blockSummary(b));return this.page("blocks",items,{...input,maxChars:input.maxChars??4000},{owner:input.owner!,query:input.titleQuery,types:input.types,review:input.review,version:node.blockCollectionRevision,blockVersions:items.map(b=>b.revision),candidate:input.candidateId},()=>[this.receipt(input.actor,"collection",input.owner!.id,node.blockCollectionRevision,"directory",{},input,{owner:input.owner})]);}
+    if(input.mode==="list"){const items=siblings.filter(b=>(!input.titleQuery||b.title.toLowerCase().includes(input.titleQuery.toLowerCase()))&&(!input.types?.length||input.types.includes(b.type))&&(!input.review||b.review===input.review)).map(b=>this.blockSummary(b,input.candidateId));return this.page("blocks",items,{...input,maxChars:input.maxChars??4000},{owner:input.owner!,query:input.titleQuery,types:input.types,review:input.review,version:node.blockCollectionRevision,blockVersions:items.map(b=>b.revision),candidate:input.candidateId},()=>[this.receipt(input.actor,"collection",input.owner!.id,node.blockCollectionRevision,"directory",{},input,{owner:input.owner})]);}
     const current=siblings.find(b=>b.id===input.blockId),b=input.revision!==undefined&&current?.revision!==input.revision?this.c.objects.blockVersion(input.owner!,input.blockId!,input.revision):current;if(!b)fail("CONTENT_BLOCK_NOT_FOUND","Block unavailable.",404);this.checkVersion(input.expectedRevision,b.revision);
-    if(input.view==="manifest"){const receipt=this.receipt(input.actor,"block",b.id,b.revision,"summary",{fields:["title","type","representations","sourceRefs"]},input);return this.finish(this.envelope("blocks",{block:this.blockSummary(b),representations:b.representations,sourceRefs:b.sourceRefs,...(b.type==="experimentRecord"?{provider:b.payload?.provider,recordCollectionId:b.id,runCount:this.c.records.collectionRunCount(b),readHint:{tool:"read_experiment",mode:"runs",nodeId:input.owner!.id,blockId:b.id}}:{})},input),[receipt]);}
+    if (input.view === "manifest") {
+      const fields = ["title", "type", "representations", "sourceRefs"];
+      const data = { block: this.blockSummary(b, input.candidateId), representations: b.representations, sourceRefs: b.sourceRefs };
+      const extra: Record<string, unknown> = {};
+      const omissions: string[] = [];
+      if (b.type === "chart") {
+        const sourceId = b.payload?.dataBlockId;
+        const source = sourceId ? view.blocks.find(block => block.id === sourceId) ?? this.store.get("blocks", sourceId) : undefined;
+        const readable = source && source.lifecycle !== "archived" && ["metric", "table", "spreadsheet"].includes(source.type);
+        extra.chart = { chartType: b.payload?.chartType, dataBlockId: sourceId,
+          ...(readable ? { readHint: { tool: "read_blocks", ...this.blockReadHint(source, input.candidateId) } } : {}) };
+        fields.push("chartType", "dataBlockId");
+      } else if (b.type === "image") {
+        const alt = b.payload?.alt ?? "", caption = b.payload?.caption ?? "";
+        extra.image = { alt: clip(alt, 320), caption: clip(caption, 240), locator: b.payload?.locator,
+          descriptionReadHint: { tool: "read_blocks", ...this.blockReadHint(b, input.candidateId), view: "text", representationId: "inline" } };
+        if (alt.length > 320 || caption.length > 240) omissions.push("imageDescription");
+        fields.push("alt", "caption");
+      } else if (b.type === "experimentRecord") {
+        Object.assign(extra, { provider: b.payload?.provider, recordCollectionId: b.id, runCount: this.c.records.collectionRunCount(b),
+          readHint: { tool: "read_experiment", mode: "runs", nodeId: input.owner!.id, blockId: b.id, ...(input.candidateId ? { candidateId: input.candidateId } : {}) } });
+      }
+      const receipt = this.receipt(input.actor, "block", b.id, b.revision, "summary", { fields }, input);
+      return this.finish(this.envelope("blocks", { ...data, ...extra }, input, omissions.length ? { coverage: { complete: false, omissions } } : {}), [receipt]);
+    }
+    if (b.type === "image" && input.view === "text" && input.representationId === "inline") {
+      const description = [b.payload?.alt, b.payload?.caption].filter(Boolean).join("\n");
+      return this.textResult("blocks", description, input, { kind: "block", id: b.id }, b.revision, { field: "imageDescription", blockId: b.id });
+    }
     const rep=input.representationId==="inline"?null:input.representationId?b.representations.find(r=>r.id===input.representationId):b.primaryRepresentationId?b.representations.find(r=>r.id===b.primaryRepresentationId):b.payload&&(["richText","metric","link","quote","code","chart"].includes(b.type)||b.type==="table"&&b.payload.columns)?null:b.representations[0];
     if(input.representationId&&input.representationId!=="inline"&&!rep)fail("VIEW_UNAVAILABLE","Representation unavailable.");
     if(rep){if(rep.kind!=="asset")fail("VIEW_UNAVAILABLE","Link representation is not indexed content.");return this.readAssets({...input,assetId:rep.assetId,view:input.view}, {kind:"block",id:b.id,version:b.revision,representationId:rep.id});}
@@ -153,7 +272,7 @@ export class AgentResearchQueries {
     }
     if(items.length*(fields.columns?.length??1)>2000)fail("RANGE_INVALID","Select at most 2000 cells.");
     const requestedCount=items.length,result=this.envelope(kind,{...details,...fields,items,range,nextSelection:null as QuerySelection|null},input);let receipt:ReadReceipt;
-    for(;;){range.end=range.start+result.data.items.length;receipt=this.receipt(input.actor,object.kind,object.id,version,"structuredValues",type==="metric"?{itemRanges:[{...range}]}:{tableRanges:[{...range,sheet:table?.sheetName,columns:fields.columns?.map(column=>column.key)??[]}]},input,details.contentVersion?{contentVersion:details.contentVersion}:{});result.readReceipts=[receipt];if(size(result)+50<=result.budget.maxChars)break;if(result.data.items.length<=1)fail("CONTEXT_ITEM_TOO_LARGE","One row exceeds budget; narrow columns.");result.data.items.pop();}
+    for(;;){range.end=range.start+result.data.items.length;receipt=this.receipt(input.actor,object.kind,object.id,version,"structuredValues",type==="metric"?{itemRanges:[{...range}]}:{tableRanges:[{...range,sheet:table?.sheetName,columns:fields.columns?.map(column=>column.key)??[]}]},input,details.contentVersion?{contentVersion:details.contentVersion}:{});result.readReceipts=this.visibleReceipts([receipt]);if(size(result)+50<=result.budget.maxChars)break;if(result.data.items.length<=1)fail("CONTEXT_ITEM_TOO_LARGE","One row exceeds budget; narrow columns.");result.data.items.pop();}
     const available=fields.totalItems??fields.availableRows??0;result.data.nextSelection=range.end<available?{...(type==="metric"?{itemOffset:range.end}:{rowOffset:range.end})}:null;result.coverage={complete:result.data.items.length===requestedCount,omissions:result.data.items.length<requestedCount?["remainingRows"]:[]};return this.finish(result,[receipt]);
   }
   async readAssets(input:QueryInput,block:{kind:string;id:string;version:ReadReceipt["version"];representationId?:string}|null=null){
@@ -175,6 +294,10 @@ export class AgentResearchQueries {
       field: "name", actual: input.name, topic: input.topic, availableNames: names,
       recovery: { tool: "get_schema", input: { topic: input.topic, name: names[0] } },
     });
+    if (input.view === "example") return this.finish(this.envelope("schema", {
+      schemaId: input.topic + ":" + input.name, example: entry.example,
+      readHint: { tool: "get_schema", topic: input.topic, name: input.name, view: "schema" },
+    }, input));
     const json = compactSchemaOutput(z.toJSONSchema(entry.schema, { reused: "ref" })); delete json.$schema;
     return this.finish(this.envelope("schema", {
       schemaId: input.topic + ":" + input.name, schemaVersion: "2", schemaHash: versionHash(json),

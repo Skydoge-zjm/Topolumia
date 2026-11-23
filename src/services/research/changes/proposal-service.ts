@@ -6,7 +6,7 @@ import { nodeRef, groupRef, sameObject, objectKey } from "../../../domain/resear
 import type * as z from "zod/v4";
 import type { nodeChange, groupChange, proposalBlock } from "../../../domain/research/changes/proposals.js";
 import type { ResearchCommandService } from "../research-command-service.js";
-import type { ResearchActor, ResearchOperationInput, StoredCandidate } from "../../../domain/research/types.js";
+import type { ReadReceipt, ResearchActor, ResearchOperationInput, StoredCandidate } from "../../../domain/research/types.js";
 import type { ResearchObjectRef } from "../../../domain/research/object-ref.js";
 const merge = <T extends object>(old:T, patch:object):T => { const value = { ...old } as Record<string,unknown>; for (const [key, item] of Object.entries(patch)) { if(item===null)delete value[key];else value[key]=item; } return value as T; };
 type ProposalInput = z.infer<typeof createProposalSchema> | z.infer<typeof reviseProposalSchema>;
@@ -29,8 +29,26 @@ export class ResearchProposalService {
     const fingerprint = versionHash(value);
     if (!["pending", "deferred"].includes(candidate.status)) fail("CANDIDATE_TERMINAL", "Candidate has already been reviewed.", 409);
     if (candidate.revision !== value.expectedRevision) { if (candidate.proposalEditFingerprint === fingerprint) return { ...candidate, idempotent: true }; fail("CANDIDATE_REVISION_CONFLICT", "Read the latest candidate.", 409, { current: candidate.revision }); }
-    const evidenceReadIds = candidate.evidenceReadIds === undefined && value.evidenceReadIds === undefined ? undefined : [...new Set([...(candidate.evidenceReadIds ?? []), ...(value.evidenceReadIds ?? [])])];
+    const evidenceReadIds = this.revisedEvidence(candidate, value.evidenceReadIds, actor);
     return this.c.changes.editCompiled({ candidateId: candidate.id, expectedRevision: value.expectedRevision, reason: value.reason ?? candidate.reason, operations: this.compile(value, actor, candidate), evidenceReadIds }, actor, fingerprint);
+  }
+  private revisedEvidence(candidate: StoredCandidate, supplied: string[] | undefined, actor: ResearchActor) {
+    if (supplied === undefined) return candidate.evidenceReadIds;
+    const observed = new Map<string, ReadReceipt["version"]>();
+    for (const id of supplied) {
+      const receipt = this.c.store.get("receipts", id);
+      if (receipt?.scope === "formal" && receipt.object.kind === "source" &&
+        receipt.principalId === principal(actor) && receipt.researchSessionId === (actor.sessionId ?? null)) {
+        observed.set(receipt.object.id, receipt.version);
+      }
+    }
+    // The simulator validates all supplied IDs and their current source versions before committing.
+    // Prior revisions keep their original receipts. Ranges from the same version remain pinned.
+    const superseded = new Set(candidate.evidenceReads.filter(read =>
+      read.scope === "formal" && read.object.kind === "source" && observed.has(read.object.id) &&
+      observed.get(read.object.id) !== read.version
+    ).map(read => read.id));
+    return [...new Set([...(candidate.evidenceReadIds ?? []).filter(id => !superseded.has(id)), ...supplied])];
   }
   compile(input:ProposalInput, actor:ResearchActor, candidate:StoredCandidate|null = null):ResearchOperationInput[] {
     if ((input.nodes?.length ?? 0) + (input.groups?.length ?? 0) > 8) fail("INPUT_INVALID", "Create at most eight research objects per request.");
@@ -42,10 +60,27 @@ export class ResearchProposalService {
     const ownerRef = (owner:ResearchObjectRef):ResearchObjectRef => ({ ...owner, id: idRef(owner.id, owner.kind) });
     const findOp = <K extends ResearchOperationInput["op"]>(kind:K,test:(op:Extract<ResearchOperationInput,{op:K}>)=>boolean):Extract<ResearchOperationInput,{op:K}>|undefined => operations.find((op):op is Extract<ResearchOperationInput,{op:K}>=>op.op===kind && test(op as Extract<ResearchOperationInput,{op:K}>));
     const created = (owner:ResearchObjectRef) => owner.kind === "group" ? findOp("addGroup",op=>allocation["group:"+op.clientRef]===owner.id) : findOp("addNode",op=>allocation["node:"+op.clientRef]===owner.id);
+    let observations: ReadReceipt[] | undefined;
+    const observedRevision = (owner: ResearchObjectRef, kind: "object" | "membership") => {
+      if (!actor.isAgent || created(owner)) return undefined;
+      observations ??= this.c.store.all("receipts").filter(read => read.scope === "formal" &&
+        read.principalId === principal(actor) && read.researchSessionId === (actor.sessionId ?? null));
+      let latest: number | undefined;
+      for (const read of observations) {
+        if (read.object.kind === kind && read.object.id === owner.id && sameObject(read.owner, owner) && typeof read.version === "number")
+          latest = Math.max(latest ?? 0, read.version);
+      }
+      return latest;
+    };
     const addedBlock = (id:string) => findOp("addBlock",op=>allocation["block:" + op.clientRef] === id);
     const addBlocks = (owner:ResearchObjectRef, values:z.infer<typeof proposalBlock>[]|undefined, expectedCollectionRevision:number|undefined) => { for (const block of values ?? []) operations.push({ ...block, op: "addBlock", owner, clientRef: key(), ...(expectedCollectionRevision !== undefined ? { expectedCollectionRevision } : {}) }); };
     for (const node of input.nodes ?? []) { const clientRef = key(); operations.push({ op: "addNode", clientRef, kind: node.kind, core: node.core, sourceRefs: node.sourceRefs }); addBlocks(nodeRef("@" + clientRef), node.blocks, undefined); }
-    for (const group of input.groups ?? []) { const clientRef = key(); operations.push({ op: "addGroup", clientRef, core: group.core, members: group.members ?? [], parentId: group.parentId ? idRef(group.parentId, "group") : null, expectedParentRevision: group.expectedParentRevision, sourceRefs: group.sourceRefs }); addBlocks(groupRef("@" + clientRef), group.blocks, undefined); }
+    for (const group of input.groups ?? []) {
+      const clientRef = key(), parent = group.parentId ? groupRef(group.parentId) : undefined;
+      operations.push({ op: "addGroup", clientRef, core: group.core, members: group.members ?? [], parentId: parent ? idRef(parent.id, "group") : null,
+        expectedParentRevision: group.expectedParentRevision ?? (parent ? observedRevision(parent, "membership") : undefined), sourceRefs: group.sourceRefs });
+      addBlocks(groupRef("@" + clientRef), group.blocks, undefined);
+    }
     const changes:ObjectChange[] = [...(input.nodeChanges ?? []).map(change => ({ ...change, owner: nodeRef(change.nodeId) })), ...(input.groupChanges ?? []).map(change => ({ ...change, owner: groupRef(change.groupId) }))];
     const changed = new Set<string>();
     for (const change of changes) {
@@ -118,7 +153,16 @@ export class ResearchProposalService {
         }
       }
     }
-    for (const relation of input.relations ?? []) operations.push({ op: "addEdge", clientRef: key(), edge: { from: ownerRef(relation.from), to: ownerRef(relation.to), type: relation.type }, label: relation.label, expectedEndpointRevisions: relation.expectedEndpointRevisions });
+    for (const relation of input.relations ?? []) {
+      const versions = [...(relation.expectedEndpointRevisions ?? [])];
+      for (const object of [relation.from, relation.to]) {
+        if (versions.some(entry => sameObject(entry.object, object))) continue;
+        const revision = observedRevision(object, "object");
+        if (revision !== undefined) versions.push({ object, revision });
+      }
+      operations.push({ op: "addEdge", clientRef: key(), edge: { from: ownerRef(relation.from), to: ownerRef(relation.to), type: relation.type },
+        label: relation.label, expectedEndpointRevisions: versions });
+    }
     for (const change of input.relationChanges ?? []) {
       const added = findOp("addEdge", op => allocation["edge:" + op.clientRef] === change.relationId);
       if (added) { if (change.remove) { operations = operations.filter(op => op !== added); for (const op of operations) if (op.op === "setGroupPrimaryRelations") for (const field of ["incomingRelationId", "outgoingRelationId"] as const) if (op.patch[field] === change.relationId) op.patch[field] = null; } else { if (change.patch?.type) added.edge.type = change.patch.type; if (change.patch?.label !== undefined) added.label = change.patch.label; } }
