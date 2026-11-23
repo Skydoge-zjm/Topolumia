@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://skydoge-zjm.github.io/Topolumia/sitemap.xml
