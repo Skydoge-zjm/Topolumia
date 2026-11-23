@@ -14,13 +14,19 @@ export async function compileTexTable(source: Uint8Array, directory: string) {
   if (!table) return { state: "failed", error: "没有找到可编译的 tabular 表格。" };
   if (forbidden.test(table) || table.length > 150_000) return { state: "failed", error: "表格包含不支持的 TeX 命令或超过编译长度限制。" };
   await mkdir(directory, { recursive: true });
+  const cjkFamily = /\p{Script=Hangul}/u.test(table) ? "mj"
+    : /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(table) ? "min"
+    : /\p{Script=Han}/u.test(table) ? "gbsn" : undefined;
   const wrapper = [
     "\\documentclass[border=8pt]{standalone}",
     "\\usepackage{booktabs,array,multirow,amsmath}",
     "\\usepackage[table]{xcolor}",
+    ...(cjkFamily ? ["\\usepackage{CJKutf8}"] : []),
     "\\pagestyle{empty}",
     "\\begin{document}",
+    ...(cjkFamily ? ["\\begin{CJK*}{UTF8}{" + cjkFamily + "}"] : []),
     table,
+    ...(cjkFamily ? ["\\end{CJK*}"] : []),
     "\\end{document}",
   ].join("\n");
   await writeFile(path.join(directory, "preview.tex"), wrapper, "utf8");

@@ -1,7 +1,5 @@
-# Output language
+# 输出语言
 
-Use the user's requested language for new research prose. If the request does not specify one, follow the surrounding conversation and the project's current UI language. The paper's source language does not choose the output language.
+用户指定的输出语言优先，否则采用用户本轮请求的语言。请求本身无法判定时沿用对话语言。用选定语言填写节点的核心摘要、解释性标题、方法、讨论、局限、复现说明，以及自制表头、图注、替代文本和附件标签。
 
-Keep model names, dataset names, metrics, equations, code tokens, URLs, DOI/arXiv identifiers and original figure/table labels when they are stable technical names. Translate ordinary explanatory prose naturally; do not leave copied English sentences inside Chinese analysis or mechanically replace words one by one.
-
-Keep quoted source text visibly separate from translated or analyzed text. A translated quotation must be marked as a translation and retain its original locator. Do not translate identifiers or alter numbers, units, decimal precision or metric direction.
+保留论文正式题名、作者、模型、数据集、数学符号、标识符与原图中的文字。直接引语标明出处；译文注明为翻译。检查候选中实际保存的正文，特别是英文论文对应的中文阅读笔记。

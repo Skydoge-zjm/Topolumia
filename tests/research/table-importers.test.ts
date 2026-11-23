@@ -1,7 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { runCommand } from "../../src/lib/command.js";
+import { compileTexTable } from "../../src/services/topology/tex-preview.js";
 import { exportTexTable, exportXlsxTable, parseTexTable, parseXlsxTable } from "../../src/services/topology/table-importers.js";
 import { styledTexFixture, styledXlsxFixture } from "../../fixtures/research/styled-table-fixture.js";
+
+test("a Chinese research table renders as a single PDF page with its labels and exact value", async t => {
+  const requirements = await Promise.all([
+    runCommand("pdflatex", ["--version"]), runCommand("pdftotext", ["-v"]),
+    ...["standalone.cls", "booktabs.sty", "multirow.sty", "CJKutf8.sty", "c70gbsn.fd"].map(file => runCommand("kpsewhich", [file])),
+  ]);
+  if (requirements.some(check => !check.ok)) return t.skip("Requires pdfLaTeX, its table/CJK packages and pdftotext");
+  const directory = await mkdtemp(path.join(tmpdir(), "topolumia-cjk-table-"));
+  try {
+    const fragment = String.raw`\begin{tabular}{lr} 方法 & 成本 \\ 基线 & 487.92 \\ \end{tabular}`;
+    const compiled = await compileTexTable(Buffer.from(fragment), directory);
+    assert.equal(compiled.state, "ready", compiled.error ?? undefined);
+    const text = await runCommand("pdftotext", ["-enc", "UTF-8", path.join(directory, "preview.pdf"), "-"]);
+    assert.equal(text.ok, true);
+    assert.equal(text.stdout.split("\f").filter(page => page.trim()).length, 1);
+    assert.match(text.stdout.replace(/\s/g, ""), /方法/);
+    assert.match(text.stdout, /487\.92/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("TeX tabular import extracts headers, values, escaped symbols and booktabs rules", () => {
   const tex = [

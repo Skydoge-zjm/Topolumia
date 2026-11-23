@@ -1,12 +1,9 @@
-# Review a substantial reading result
+# 核对交付给读者的笔记
 
-Review what matters for the user's task:
+- 首个 Markdown 块能否单独读懂问题、贡献、主要实验、少量主结果、讨论、局限和复现条件？数字能否按标注查回原表？
+- 后续的每个独立块回答了什么问题？核心结论是否有具体比较支撑？作者主张、实验观察和笔记者推断能否区分？
+- 实际保存的摘要、解释性标题、正文、表头、图注和说明是否采用用户语言？
+- 图表裁片是否覆盖目标与必要标注，四周去除了无关正文？大表可否直接查看原表？小表、核心实验重排后是否有可读的单表 PDF，且数值、条件、单位一致？
+- 最后一个块能否打开完整原文 PDF？原件的总页数和读到的页段是否分别核对？
 
-- Can the reader trace important claims and numbers to their source and conditions?
-- Does the explanation clarify the mechanism or protocol rather than repeat the abstract?
-- Are comparisons meaningful, with units, baseline and evaluation settings preserved?
-- Are author claims, reported evidence, your analysis and untested assumptions distinguishable?
-- Are limitations and useful implications stated at the depth the task needs?
-- Are attached originals, transcriptions and renderings clearly identified?
-
-Correct a material gap by checking the source, narrowing the claim or recording the limitation. A metric lookup need not become a complete technical review; do not add generic sections or numerical scores to satisfy a checklist.
+单独查数或书目操作按该请求的实际范围核查。
