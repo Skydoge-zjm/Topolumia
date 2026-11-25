@@ -55,6 +55,8 @@
   min-height: 0;
   overflow: hidden;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
   cursor: grab;
   background-color: var(--color-paper);
   background-image: radial-gradient(rgb(18 51 43 / 13%) 1px, transparent 1.2px);

@@ -109,9 +109,13 @@ test("compact previews expand into containers, keep edge context and restore nes
   await expect(container.getByRole("button", { name: "展开 摄像机交互实验组", exact: true })).toHaveAttribute("aria-expanded", "false");
   await expect(container.getByLabel("5 个节点的缩略预览", { exact: true })).toBeVisible();
   await expect(canvas.getByRole("status")).toHaveCount(0);
-  const outside = page.getByRole("button", { name: /^Separate research context/ });
+  const outside = canvas.getByRole("button", { name: /^Separate research context/ });
   const expand = container.getByRole("button", { name: "展开 摄像机交互实验组", exact: true });
   await expand.click({ trial: true });
+  const preview = (await expand.getByText("摄像机交互实验组", { exact: true }).boundingBox())!;
+  await page.mouse.move(preview.x + 4, preview.y + 4); await page.mouse.down(); await page.mouse.move(preview.x + 24, preview.y + 14, { steps: 6 }); await page.mouse.up();
+  await expect(expand).toBeFocused(); await expect(expand).toHaveAttribute("aria-expanded", "false");
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
   const before = (await outside.boundingBox())!;
   await expand.click();
   await expect(container.getByRole("button", { name: "收起 摄像机交互实验组", exact: true })).toHaveAttribute("aria-expanded", "true");
@@ -121,7 +125,7 @@ test("compact previews expand into containers, keep edge context and restore nes
       return Boolean(a && b && a.x > b.x && a.y > b.y && a.x + a.width < b.x + b.width && a.y + a.height < b.y + b.height);
     }).toBe(true);
   };
-  const baselineNode = page.getByRole("button", { name: /^Camera baseline/ });
+  const baselineNode = canvas.getByRole("button", { name: /^Camera baseline/ });
   await assertInside(baselineNode, container); await assertInside(child, container);
   await expect(container).toBeInViewport({ ratio: 1 });
   await expect(canvas.getByRole("button", { name: "设计指导整个实验组", exact: true })).toBeVisible(); await expect(canvas.getByRole("button", { name: "汇总到实验结论", exact: true })).toBeVisible();
@@ -132,7 +136,7 @@ test("compact previews expand into containers, keep edge context and restore nes
   await expandChild.click({ trial: true });
   const focused = (await container.boundingBox())!;
   await expandChild.click(); await expect(child.getByRole("button", { name: "收起 重复实验子组", exact: true })).toHaveAttribute("aria-expanded", "true");
-  await assertInside(page.getByRole("button", { name: /^Nested seed 13/ }), child);
+  await assertInside(canvas.getByRole("button", { name: /^Nested seed 13/ }), child);
   await canvas.getByRole("button", { name: "返回上一级视角", exact: true }).click(); await expect(child.getByRole("button", { name: "展开 重复实验子组", exact: true })).toHaveAttribute("aria-expanded", "false");
   await expect.poll(async () => {
     const frame = (await container.boundingBox())!;
@@ -147,6 +151,14 @@ test("compact previews expand into containers, keep edge context and restore nes
   expect(movedMember.x - movedContainer.x).toBeCloseTo(oldMember.x - oldContainer.x, 0);
   expect(movedMember.y - movedContainer.y).toBeCloseTo(oldMember.y - oldContainer.y, 0);
   await assertInside(baselineNode, container);
+  await page.screenshot({ path: testInfo.outputPath("drag-text-selection.png"), fullPage: true });
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
+  const nodeTitle = (await baselineNode.getByText("Camera baseline", { exact: true }).boundingBox())!;
+  await page.mouse.move(nodeTitle.x + 4, nodeTitle.y + 4); await page.mouse.down(); await page.mouse.move(nodeTitle.x + 16, nodeTitle.y + 14, { steps: 6 }); await page.mouse.up();
+  const draggedMember = (await baselineNode.boundingBox())!;
+  expect(draggedMember.x - movedMember.x).toBeCloseTo(12, 0); expect(draggedMember.y - movedMember.y).toBeCloseTo(10, 0);
+  await expect(baselineNode).toBeFocused(); await assertInside(baselineNode, container);
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
   await container.getByRole("button", { name: "收起 摄像机交互实验组", exact: true }).click(); await expect(container.getByRole("button", { name: "展开 摄像机交互实验组", exact: true })).toHaveAttribute("aria-expanded", "false");
   await expect.poll(async () => {
     const frame = (await outside.boundingBox())!;
@@ -154,6 +166,45 @@ test("compact previews expand into containers, keep edge context and restore nes
   }).toBeLessThan(2);
   await expect(canvas.getByRole("button", { name: /旁支研究关系/ })).toHaveCount(1);
   expect(c.groups.get(id).revision).toBe(originalRevision);
+  const view = (await canvas.boundingBox())!, heading = (await page.getByRole("heading", { name: "科研拓扑", exact: true }).boundingBox())!;
+  await page.mouse.move(view.x + view.width - 8, view.y + view.height / 2); await page.mouse.down(); await page.mouse.move(heading.x + 10, heading.y + 10, { steps: 12 }); await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
+  await page.mouse.move(heading.x + 2, heading.y + heading.height / 2); await page.mouse.down(); await page.mouse.move(heading.x + heading.width - 2, heading.y + heading.height / 2, { steps: 6 }); await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).not.toBe("");
   await page.reload(); await expect(container.getByRole("button", { name: "展开 摄像机交互实验组", exact: true })).toHaveAttribute("aria-expanded", "false"); await expect(canvas.getByRole("status")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("compact-container.png"), fullPage: true });
+});
+
+test("group title clicks transfer keyboard focus away from the previously selected member", async ({ page }) => {
+  const name = "Keyboard focus group", memberName = "Keyboard focus member";
+  const memberId = app.researchNodes.createNode("experiment", { nodeName: memberName }, actor).node.id;
+  app.researchCommands.changes.direct([{ op: "addGroup", clientRef: "focus-group", core: { nodeName: name }, members: [{ nodeId: memberId }] }], actor);
+  await page.goto(app.url + "/#/topology");
+  const topologyUrl = page.url(), canvas = page.getByLabel("科研拓扑画布", { exact: true });
+  const group = canvas.getByRole("region", { name, exact: true }), member = canvas.getByRole("button", { name: new RegExp("^" + memberName) });
+  await group.getByRole("button", { name: "展开 " + name, exact: true }).click();
+  await member.click();
+  await expect(member).toBeFocused();
+  await group.getByRole("heading", { name, exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "对象预览", exact: true }).getByRole("heading", { name, exact: true })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(topologyUrl);
+  await expect(canvas).toBeVisible();
+  await expect(member).not.toBeFocused();
+});
+
+test("blank canvas clicks transfer keyboard focus away from the search input", async ({ page }) => {
+  await page.goto(app.url + "/#/topology");
+  const search = page.getByRole("textbox", { name: "搜索科研对象", exact: true }), canvas = page.getByLabel("科研拓扑画布", { exact: true });
+  await search.fill("Baseline experiment");
+  await expect(canvas.getByRole("button", { name: /^Baseline experiment/ })).toBeVisible();
+  await expect(canvas.getByRole("button", { name: /^Experiment summary/ })).toHaveCount(0);
+  const bounds = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: bounds.width - 8, y: bounds.height / 2 } });
+  await page.keyboard.press("Escape");
+  await expect(search).toHaveValue("Baseline experiment");
+  await expect(search).not.toBeFocused();
+  await search.click();
+  await page.keyboard.press("Escape");
+  await expect(search).toHaveValue("");
 });
