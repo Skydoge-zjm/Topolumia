@@ -229,6 +229,8 @@ export function TopologyCanvas({ graph, en, onOpen, onExpand, storageScope, sele
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, id?: string) => {
     if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
     event.stopPropagation(); cancelCamera(); suppressClick.current = false;
     drag.current = { start: { x: event.clientX, y: event.clientY }, camera: { ...cameraRef.current }, id, layout: structuredClone(layoutRef.current), moved: false };
     event.currentTarget.setPointerCapture(event.pointerId);
