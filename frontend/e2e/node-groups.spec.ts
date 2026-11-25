@@ -174,3 +174,37 @@ test("compact previews expand into containers, keep edge context and restore nes
   await page.reload(); await expect(container.getByRole("button", { name: "展开 摄像机交互实验组", exact: true })).toHaveAttribute("aria-expanded", "false"); await expect(canvas.getByRole("status")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("compact-container.png"), fullPage: true });
 });
+
+test("group title clicks transfer keyboard focus away from the previously selected member", async ({ page }) => {
+  const name = "Keyboard focus group", memberName = "Keyboard focus member";
+  const memberId = app.researchNodes.createNode("experiment", { nodeName: memberName }, actor).node.id;
+  app.researchCommands.changes.direct([{ op: "addGroup", clientRef: "focus-group", core: { nodeName: name }, members: [{ nodeId: memberId }] }], actor);
+  await page.goto(app.url + "/#/topology");
+  const topologyUrl = page.url(), canvas = page.getByLabel("科研拓扑画布", { exact: true });
+  const group = canvas.getByRole("region", { name, exact: true }), member = canvas.getByRole("button", { name: new RegExp("^" + memberName) });
+  await group.getByRole("button", { name: "展开 " + name, exact: true }).click();
+  await member.click();
+  await expect(member).toBeFocused();
+  await group.getByRole("heading", { name, exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "对象预览", exact: true }).getByRole("heading", { name, exact: true })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(topologyUrl);
+  await expect(canvas).toBeVisible();
+  await expect(member).not.toBeFocused();
+});
+
+test("blank canvas clicks transfer keyboard focus away from the search input", async ({ page }) => {
+  await page.goto(app.url + "/#/topology");
+  const search = page.getByRole("textbox", { name: "搜索科研对象", exact: true }), canvas = page.getByLabel("科研拓扑画布", { exact: true });
+  await search.fill("Baseline experiment");
+  await expect(canvas.getByRole("button", { name: /^Baseline experiment/ })).toBeVisible();
+  await expect(canvas.getByRole("button", { name: /^Experiment summary/ })).toHaveCount(0);
+  const bounds = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: bounds.width - 8, y: bounds.height / 2 } });
+  await page.keyboard.press("Escape");
+  await expect(search).toHaveValue("Baseline experiment");
+  await expect(search).not.toBeFocused();
+  await search.click();
+  await page.keyboard.press("Escape");
+  await expect(search).toHaveValue("");
+});
